@@ -115,6 +115,8 @@ If no display time is set, the image must be stopped using the playback controls
 
 Playlists, including all their settings, can be saved for later use.
 
+When an image is followed by a video the framerate of the output for the image is set to the video framerate before it is displayed. This means there is no need to renegotiate the handshake with the projector when the video starts.
+
 ### Preview
 
 The preview displays a video in a window within the control panel. The source can be switched between the live video output being sent to the projector (**Live**) and a video from the playlist (**Preview**) by clicking the preview status.
