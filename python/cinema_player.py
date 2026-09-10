@@ -8,15 +8,16 @@ Two mpv instances:
 """
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
 import subprocess
 import socket
 import json
 import os
 import re
+import math
+import shutil
 import time
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields
 from fractions import Fraction
 
 
@@ -24,6 +25,59 @@ VIDEO_OUTPUT = None
 PREVIEW_WIDTH = 480
 PREVIEW_HEIGHT = 270
 PREVIEW_MARGIN = 20
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".dpx"}
+VIDEO_EXTS = {
+    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m2ts", ".ts",
+    ".mxf", ".mpg", ".mpeg", ".m4v", ".ogv",
+}
+
+FONT_TITLE = ("DejaVu Sans", 18, "bold")
+FONT_STATUS = ("DejaVu Sans", 11, "bold")
+FONT_UI = ("DejaVu Sans", 10)
+FONT_UI_BOLD = ("DejaVu Sans", 10, "bold")
+FONT_SMALL = ("DejaVu Sans", 9)
+FONT_ROW = ("DejaVu Sans", 9)
+FONT_ROW_BOLD = ("DejaVu Sans", 10, "bold")
+
+
+def mpv_supports_x11(path):
+    try:
+        result = subprocess.run(
+            [path, "--gpu-context=help"],
+            capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    text = f"{result.stdout}\n{result.stderr}".lower()
+    return "x11" in text
+
+
+def find_mpv():
+    candidates = []
+    env_path = os.environ.get("CINEMA_MPV")
+    if env_path:
+        candidates.append(env_path)
+    candidates.extend([
+        os.path.join(ROOT_DIR, ".tools", "bin", "mpv"),
+        "/usr/bin/mpv",
+    ])
+    which = shutil.which("mpv")
+    if which:
+        candidates.append(which)
+
+    seen = set()
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        if os.path.isfile(path) and os.access(path, os.X_OK) and mpv_supports_x11(path):
+            return path
+
+    raise RuntimeError(
+        "Kein X11-fähiges mpv gefunden. "
+        "Bitte `sudo apt install mpv` ausführen oder scripts/fetch-mpv.sh."
+    )
 
 
 @dataclass
@@ -34,10 +88,27 @@ class DisplayMode:
     refresh: float
     x: int = 0
     y: int = 0
+    name: str = ""
 
     @property
     def mode(self):
-        return f"{self.width}x{self.height}"
+        return self.name or f"{self.width}x{self.height}"
+
+
+@dataclass
+class ModeTiming:
+    width: int
+    height: int
+    pixel_clock: float
+    hsync_start: int
+    hsync_end: int
+    htotal: int
+    vsync_start: int
+    vsync_end: int
+    vtotal: int
+    hsync: str
+    vsync: str
+    refresh: float
 
 
 @dataclass
@@ -49,19 +120,187 @@ class VideoInfo:
     fps_fraction: Fraction
 
 
+@dataclass
+class PlaylistEntry:
+    path: str
+    filename: str = ""
+    duration: float = 0.0
+    container: str = ""
+    video_codec: str = ""
+    audio_codec: str = ""
+    width: int = 0
+    height: int = 0
+    fps: float = 0.0
+    aspect: str = "--"
+    pixel_aspect: str = "--"
+    resolution_label: str = ""
+    autoplay: bool = False
+    audio_tracks: list = field(default_factory=list)
+    subtitle_tracks: list = field(default_factory=list)
+    audio_track: str = "--"
+    subtitle_track: str = "--"
+    in_point: float | None = None
+    out_point: float | None = None
+    # Seconds a still image stays on screen; 0 keeps it until the operator resumes.
+    display_time: float = 0.0
+    is_image: bool = False
+    refresh_ok: bool = True
+    aspect_warning: bool = False
+    played: bool = False
+
+    def __post_init__(self):
+        if not self.filename:
+            self.filename = os.path.basename(self.path)
+
+    @classmethod
+    def from_dict(cls, data):
+        """Load an entry, ignoring keys from older playlist versions."""
+        names = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in names})
+
+
+def format_fps_label(fps):
+    if not fps:
+        return "--"
+    known = (
+        ("23.976p", 24000 / 1001),
+        ("29.97p", 30000 / 1001),
+        ("59.94p", 60000 / 1001),
+    )
+    for label, value in known:
+        if abs(fps - value) < 0.02:
+            return label
+    if abs(fps - round(fps)) < 0.02:
+        return f"{int(round(fps))}p"
+    return f"{fps:.3f}p"
+
+
+def resolution_label(width, height):
+    if width >= 4096:
+        return "DCI 4K"
+    if width >= 3800:
+        return "UHD"
+    if width >= 1900:
+        return "HD"
+    if width and height:
+        return f"{width}x{height}"
+    return "--"
+
+
+def aspect_label(width, height, display_ar=None):
+    ratio = 0.0
+    if display_ar and ":" in str(display_ar) and display_ar not in ("0:1", "N/A"):
+        try:
+            left, right = display_ar.split(":")
+            if float(right):
+                ratio = float(left) / float(right)
+        except ValueError:
+            ratio = 0.0
+    if not ratio and width and height:
+        ratio = width / height
+    if not ratio:
+        return "--"
+    presets = (
+        (2.39, "21:9"), (2.35, "21:9"), (1.85, "1.85"),
+        (16 / 9, "16:9"), (4 / 3, "4:3"), (2.0, "2:1"),
+    )
+    for value, label in presets:
+        if abs(ratio - value) < 0.05:
+            return label
+    gcd = math.gcd(width, height) if width and height else 1
+    if gcd:
+        return f"{width // gcd}:{height // gcd}"
+    return "--"
+
+
+def format_clock(seconds):
+    if seconds is None or seconds < 0:
+        return "--:--"
+    seconds = int(seconds)
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours:02}:{minutes:02}:{secs:02}"
+    return f"{minutes:02}:{secs:02}"
+
+
+def probe_media(path):
+    entry = PlaylistEntry(path=path)
+    entry.is_image = os.path.splitext(path)[1].lower() in IMAGE_EXTS
+    command = [
+        "ffprobe", "-v", "error",
+        "-show_format", "-show_streams",
+        "-of", "json", path,
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+    fmt = data.get("format") or {}
+    entry.duration = float(fmt.get("duration") or 0)
+    ext = os.path.splitext(path)[1].replace(".", "").upper()
+    entry.container = ext or (fmt.get("format_name") or "").split(",")[0].upper()
+
+    streams = data.get("streams") or []
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audios = [s for s in streams if s.get("codec_type") == "audio"]
+    subs = [s for s in streams if s.get("codec_type") == "subtitle"]
+
+    if video:
+        entry.width = int(video.get("width") or 0)
+        entry.height = int(video.get("height") or 0)
+        rate = video.get("avg_frame_rate") or video.get("r_frame_rate") or "0/1"
+        if rate in ("0/0", "0/1", "", None):
+            rate = video.get("r_frame_rate") or "0/1"
+        try:
+            entry.fps = float(Fraction(rate))
+        except (ZeroDivisionError, ValueError):
+            entry.fps = 0.0
+        entry.video_codec = (video.get("codec_name") or "").upper()
+        entry.pixel_aspect = video.get("sample_aspect_ratio") or "--"
+        entry.aspect = aspect_label(
+            entry.width, entry.height, video.get("display_aspect_ratio")
+        )
+        entry.resolution_label = resolution_label(entry.width, entry.height)
+
+    if audios:
+        names = []
+        for index, stream in enumerate(audios, start=1):
+            codec = (stream.get("codec_name") or "audio").upper()
+            lang = stream.get("tags", {}).get("language", "")
+            label = f"{index}: {codec}"
+            if lang:
+                label += f" ({lang})"
+            names.append(label)
+        entry.audio_tracks = names
+        entry.audio_codec = (audios[0].get("codec_name") or "").upper()
+        entry.audio_track = names[0]
+    if subs:
+        names = ["--"]
+        for index, stream in enumerate(subs, start=1):
+            codec = (stream.get("codec_name") or "sub").upper()
+            lang = stream.get("tags", {}).get("language", "")
+            label = f"{index}: {codec}"
+            if lang:
+                label += f" ({lang})"
+            names.append(label)
+        entry.subtitle_tracks = names
+        entry.subtitle_track = "--"
+    return entry
+
+
 class VideoOutputManager:
     def __init__(self, video_output=None):
         self.video_output = video_output
         self.original_mode = None
         self.video_mode = None
+        self.target_refresh = None
 
     @staticmethod
     def run(command):
         result = subprocess.run(command, capture_output=True, text=True, check=True)
         return result.stdout
 
-    def xrandr(self):
-        return self.run(["xrandr", "--query"])
+    def xrandr(self, *extra):
+        return self.run(["xrandr", "--query", *extra])
 
     def get_outputs(self):
         outputs = []
@@ -123,21 +362,36 @@ class VideoOutputManager:
                 continue
             if not inside:
                 continue
+            if re.match(r"^\S+", line):
+                break
 
-            match = re.match(r"^\s*(\d+)x(\d+)\s+(.+)$", line)
+            match = re.match(r"^\s*(\S+)\s+(.+)$", line)
             if not match:
                 continue
 
-            width = int(match.group(1))
-            height = int(match.group(2))
+            name = match.group(1)
+            dim = re.search(r"(\d+)x(\d+)", name)
+            if not dim or re.search(r"\di(?:\s|$)", name.lower()):
+                continue
 
-            for rate in match.group(3).split():
-                rate = rate.replace("*", "").replace("+", "")
+            width = int(dim.group(1))
+            height = int(dim.group(2))
+
+            for token in match.group(2).split():
+                current = "*" in token
+                token = token.replace("*", "").replace("+", "")
+                if token.endswith("i"):
+                    continue
                 try:
-                    refresh = float(rate)
+                    refresh = float(token)
                 except ValueError:
                     continue
-                modes.append(DisplayMode(output_name, width, height, refresh))
+                modes.append(DisplayMode(
+                    output_name, width, height, refresh,
+                    name=name, x=0, y=0
+                ))
+                if current:
+                    modes[-1].name = name
         return modes
 
     def get_current_mode(self, output_name):
@@ -155,27 +409,128 @@ class VideoOutputManager:
                     width, height, x, y = map(int, match.groups())
                 continue
 
-            if inside and re.match(r"^\S+\s+", line):
-                if not line.startswith(" "):
-                    break
+            if inside and re.match(r"^\S+", line):
+                break
 
             if not inside or width is None or height is None:
                 continue
 
-            match = re.match(rf"\s*{width}x{height}\s+(.+)", line)
+            match = re.match(r"^\s*(\S+)\s+(.+)$", line)
             if not match:
                 continue
 
-            for rate in match.group(1).split():
-                if "*" not in rate:
+            name = match.group(1)
+            dim = re.search(r"(\d+)x(\d+)", name)
+            if not dim:
+                continue
+            if int(dim.group(1)) != width or int(dim.group(2)) != height:
+                continue
+
+            for token in match.group(2).split():
+                if "*" not in token:
                     continue
-                rate = rate.replace("*", "").replace("+", "")
+                token = token.replace("*", "").replace("+", "")
                 try:
-                    refresh = float(rate)
-                    return DisplayMode(output_name, width, height, refresh, x, y)
+                    refresh = float(token)
                 except ValueError:
-                    pass
+                    continue
+                return DisplayMode(
+                    output_name, width, height, refresh, x, y, name=name
+                )
         return None
+
+    def get_preferred_mode(self, output_name):
+        inside = False
+        for line in self.xrandr().splitlines():
+            if re.match(r"^\S+\s+connected", line):
+                inside = line.startswith(output_name + " ")
+                continue
+            if not inside:
+                continue
+            if re.match(r"^\S+", line):
+                break
+            if "+" not in line:
+                continue
+            match = re.match(r"^\s*(\S+)\s+(.+)$", line)
+            if not match:
+                continue
+            name = match.group(1)
+            dim = re.search(r"(\d+)x(\d+)", name)
+            if not dim:
+                continue
+            for token in match.group(2).split():
+                if "+" not in token:
+                    continue
+                token = token.replace("*", "").replace("+", "")
+                try:
+                    refresh = float(token)
+                except ValueError:
+                    continue
+                return DisplayMode(
+                    output_name,
+                    int(dim.group(1)), int(dim.group(2)),
+                    refresh, name=name
+                )
+        return None
+
+    def get_timings(self, output_name):
+        timings = []
+        inside = False
+        lines = self.run(["xrandr", "--verbose"]).splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if re.match(r"^\S+\s+(dis)?connected", line):
+                inside = line.startswith(output_name + " ")
+                i += 1
+                continue
+            if not inside:
+                i += 1
+                continue
+
+            header = re.match(
+                r"^\s+(\d+)x(\d+)\s+\(\S+\)\s+([\d.]+)MHz\s+"
+                r"([+-])HSync\s+([+-])VSync",
+                line,
+            )
+            if not header:
+                i += 1
+                continue
+
+            h_line = lines[i + 1] if i + 1 < len(lines) else ""
+            v_line = lines[i + 2] if i + 2 < len(lines) else ""
+            h = re.search(
+                r"h:\s+width\s+(\d+)\s+start\s+(\d+)\s+end\s+(\d+)\s+total\s+(\d+)",
+                h_line,
+            )
+            v = re.search(
+                r"v:\s+height\s+(\d+)\s+start\s+(\d+)\s+end\s+(\d+)\s+total\s+(\d+)"
+                r".*?clock\s+([\d.]+)Hz",
+                v_line,
+            )
+            if h and v:
+                pixel_clock = float(header.group(3))
+                htotal = int(h.group(4))
+                vtotal = int(v.group(4))
+                refresh = float(v.group(5))
+                if htotal and vtotal:
+                    refresh = pixel_clock * 1_000_000 / (htotal * vtotal)
+                timings.append(ModeTiming(
+                    width=int(header.group(1)),
+                    height=int(header.group(2)),
+                    pixel_clock=pixel_clock,
+                    hsync_start=int(h.group(2)),
+                    hsync_end=int(h.group(3)),
+                    htotal=htotal,
+                    vsync_start=int(v.group(2)),
+                    vsync_end=int(v.group(3)),
+                    vtotal=vtotal,
+                    hsync=f"{header.group(4)}HSync",
+                    vsync=f"{header.group(5)}VSync",
+                    refresh=refresh,
+                ))
+            i += 3
+        return timings
 
     def get_video_info(self, filename):
         result = subprocess.run(
@@ -196,6 +551,42 @@ class VideoOutputManager:
         return VideoInfo(filename, width, height, float(fps_fraction), fps_fraction)
 
     @staticmethod
+    def refresh_matches(fps, refresh):
+        if fps <= 0 or refresh <= 0:
+            return False
+        if abs(fps - refresh) < 0.03:
+            return True
+        for multiplier in range(1, 5):
+            if abs(refresh - fps * multiplier) / fps < 0.01:
+                return True
+        return False
+
+    @staticmethod
+    def refresh_close(left, right):
+        return abs(left - right) <= max(0.15, right * 0.003)
+
+    @staticmethod
+    def target_refresh_rates(fps):
+        """Rates that give judder-free playback, best first.
+
+        For 24/25 fps prefer 48/50 Hz over 24/25 Hz (less flicker).
+        """
+        candidates = []
+        for multiplier in range(1, 5):
+            rate = fps * multiplier
+            if rate < 20 or rate > 120:
+                continue
+            if multiplier == 2 and fps < 48:
+                rank = 0
+            elif multiplier == 1 and fps < 48:
+                rank = 1
+            else:
+                rank = multiplier + 1
+            candidates.append((rank, multiplier, rate))
+        candidates.sort()
+        return [(rate, multiplier) for rank, multiplier, rate in candidates]
+
+    @staticmethod
     def refresh_score(fps, refresh):
         if abs(fps - refresh) < 0.03:
             return abs(fps - refresh)
@@ -212,48 +603,180 @@ class VideoOutputManager:
             return best
         return 10 + abs(refresh - fps) / fps
 
-    def find_best_mode(self, video):
-        modes = self.get_modes(self.video_output)
+    def native_resolution(self, output_name):
+        current = self.get_current_mode(output_name)
+        if current:
+            return current.width, current.height
+        preferred = self.get_preferred_mode(output_name)
+        if preferred:
+            return preferred.width, preferred.height
+        modes = self.get_modes(output_name)
         if not modes:
             return None
+        best = max(modes, key=lambda m: m.width * m.height)
+        return best.width, best.height
 
-        exact = [
+    def find_refresh_mode(self, modes, width, height, rate):
+        matches = [
             m for m in modes
-            if m.width == video.width and m.height == video.height
+            if m.width == width and m.height == height
+            and self.refresh_close(m.refresh, rate)
         ]
+        if matches:
+            return matches[0]
+        return None
 
-        if exact:
-            modes = exact
-        else:
-            aspect = video.width / video.height
-            modes.sort(key=lambda m: abs(m.width / m.height - aspect))
-            best = modes[0]
-            best_error = abs(best.width / best.height - aspect)
-            modes = [
+    def find_best_mode(self, video, create=True):
+        modes = self.get_modes(self.video_output)
+        if not modes:
+            return None, False
+
+        native = self.native_resolution(self.video_output)
+        targets = self.target_refresh_rates(video.fps)
+        self.target_refresh = targets[0][0] if targets else video.fps
+
+        if native:
+            native_modes = [
                 m for m in modes
-                if abs(m.width / m.height - aspect) <= best_error + 0.01
+                if m.width == native[0] and m.height == native[1]
             ]
+            for rate, _multiplier in targets:
+                found = self.find_refresh_mode(modes, native[0], native[1], rate)
+                if found:
+                    return found, True
+
+            if create:
+                for rate, _multiplier in targets:
+                    created = self.ensure_custom_mode(
+                        self.video_output, native[0], native[1], rate
+                    )
+                    if created:
+                        return created, True
+
+            if native_modes:
+                native_modes.sort(key=lambda m: self.refresh_score(video.fps, m.refresh))
+                fallback = native_modes[0]
+                return fallback, self.refresh_matches(video.fps, fallback.refresh)
+
+        for rate, _multiplier in targets:
+            rated = [
+                m for m in modes
+                if self.refresh_close(m.refresh, rate)
+            ]
+            if not rated:
+                continue
+            if native:
+                rated.sort(
+                    key=lambda m: abs(m.width * m.height - native[0] * native[1])
+                )
+            return rated[0], True
 
         modes.sort(key=lambda m: self.refresh_score(video.fps, m.refresh))
-        return modes[0]
+        fallback = modes[0]
+        return fallback, self.refresh_matches(video.fps, fallback.refresh)
+
+    def ensure_custom_mode(self, output_name, width, height, refresh):
+        modes = self.get_modes(output_name)
+        existing = self.find_refresh_mode(modes, width, height, refresh)
+        if existing:
+            return existing
+
+        timing = None
+        for candidate in self.get_timings(output_name):
+            if candidate.width == width and candidate.height == height:
+                timing = candidate
+                break
+        if timing is None:
+            timings = self.get_timings(output_name)
+            timing = timings[0] if timings else None
+            if timing is None or timing.width != width or timing.height != height:
+                return None
+
+        name, modeline = self.modeline_for_refresh(timing, refresh)
+        try:
+            subprocess.run(
+                ["xrandr", "--newmode", name, *modeline],
+                capture_output=True, text=True, check=False,
+            )
+            added = subprocess.run(
+                ["xrandr", "--addmode", output_name, name],
+                capture_output=True, text=True, check=False,
+            )
+        except OSError:
+            return None
+
+        if added.returncode != 0:
+            print(
+                f"xrandr --addmode {output_name} {name} fehlgeschlagen: "
+                f"{added.stderr.strip() or added.stdout.strip()}"
+            )
+            return None
+
+        for mode in self.get_modes(output_name):
+            if mode.name == name or self.find_refresh_mode(
+                [mode], width, height, refresh
+            ):
+                return mode
+        return DisplayMode(output_name, width, height, refresh, name=name)
+
+    @staticmethod
+    def modeline_for_refresh(timing, refresh):
+        current = timing.refresh or (
+            timing.pixel_clock * 1_000_000 / (timing.htotal * timing.vtotal)
+        )
+        clock = timing.pixel_clock * (refresh / current)
+        name = f"cinema_{timing.width}x{timing.height}_{refresh:.2f}".replace(".", "p")
+        modeline = [
+            f"{clock:.4f}",
+            str(timing.width),
+            str(timing.hsync_start),
+            str(timing.hsync_end),
+            str(timing.htotal),
+            str(timing.height),
+            str(timing.vsync_start),
+            str(timing.vsync_end),
+            str(timing.vtotal),
+            timing.hsync,
+            timing.vsync,
+        ]
+        return name, modeline
 
     def set_mode(self, mode):
         if self.original_mode is None:
             self.original_mode = self.get_current_mode(mode.output)
 
-        subprocess.run(
-            [
-                "xrandr", "--output", mode.output,
-                "--mode", mode.mode,
-                "--rate", f"{mode.refresh:.6f}"
-            ],
-            check=True
-        )
+        current = self.get_current_mode(mode.output)
+        if (
+            current
+            and current.width == mode.width
+            and current.height == mode.height
+            and self.refresh_close(current.refresh, mode.refresh)
+        ):
+            mode.x, mode.y = current.x, current.y
+            self.video_mode = mode
+            return
+
+        command = [
+            "xrandr", "--output", mode.output,
+            "--mode", mode.mode,
+        ]
+        if re.fullmatch(r"\d+x\d+", mode.mode):
+            command.extend(["--rate", f"{mode.refresh:.3f}"])
+
+        subprocess.run(command, capture_output=True, text=True, check=True)
+        time.sleep(0.2)
 
         geometry = self.get_output_geometry(mode.output)
         if geometry:
             mode.x = geometry[2]
             mode.y = geometry[3]
+
+        actual = self.get_current_mode(mode.output)
+        if actual:
+            mode.refresh = actual.refresh
+            mode.width = actual.width
+            mode.height = actual.height
+            mode.x, mode.y = actual.x, actual.y
 
         self.video_mode = mode
 
@@ -262,28 +785,52 @@ class VideoOutputManager:
             self.select_video_output()
 
         video = self.get_video_info(filename)
-        mode = self.find_best_mode(video)
+        mode, matched = self.find_best_mode(video)
         if mode is None:
             raise RuntimeError("Kein geeigneter Display-Modus gefunden.")
 
         self.set_mode(mode)
-        return video, mode
+        actual = self.get_current_mode(self.video_output) or mode
+        matched = self.refresh_matches(video.fps, actual.refresh)
+        self.video_mode = actual if actual.output else mode
+        if actual:
+            actual.name = actual.name or mode.name
+            self.video_mode = actual
+        return video, self.video_mode, matched
+
+    def effective_mode(self):
+        """The mode the video window covers, even before a clip was prepared."""
+        if self.video_mode:
+            return self.video_mode
+        if not self.video_output:
+            self.select_video_output()
+        return self.get_current_mode(self.video_output)
 
     def get_mpv_geometry(self):
-        if not self.video_mode:
+        mode = self.effective_mode()
+        if not mode:
             raise RuntimeError("Kein Video-Modus gesetzt.")
-        m = self.video_mode
-        return f"{m.width}x{m.height}+{m.x}+{m.y}"
+        return f"{mode.width}x{mode.height}+{mode.x}+{mode.y}"
 
     def get_mpv_arguments(self):
+        mode = self.effective_mode()
+        if not mode:
+            raise RuntimeError("Kein Video-Modus gesetzt.")
         return [
             "--no-border",
             "--fullscreen=no",
             "--keepaspect=yes",
             "--video-sync=display-resample",
+            f"--override-display-fps={mode.refresh:.3f}",
             "--hwdec=auto-safe",
-            "--vo=gpu-next",
+            "--vo=gpu",
+            "--gpu-context=x11egl",
             "--force-window=yes",
+            "--osd-level=0",
+            "--osc=no",
+            "--cursor-autohide=always",
+            # Stills stay up until the player decides otherwise, not for mpv's default second.
+            "--image-display-duration=inf",
             f"--geometry={self.get_mpv_geometry()}",
         ]
 
@@ -309,14 +856,34 @@ class VideoOutputManager:
 
 
 class MPVController:
-    def __init__(self, name):
+    def __init__(self, name, mpv_path):
         self.name = name
+        self.mpv_path = mpv_path
         self.socket_path = f"/tmp/mpv_{name}_{os.getpid()}.sock"
+        self.log_path = f"/tmp/mpv_{name}_{os.getpid()}.log"
         self.process = None
         self.socket = None
         self.running = False
         self.callbacks = []
         self.reader_thread = None
+        self._send_lock = threading.Lock()
+        self.loaded_path = None
+        self.pending_start = None
+        self.pending_end = None
+        self.play_on_load = False
+
+    def _read_log_tail(self, limit=2000):
+        try:
+            with open(self.log_path, encoding="utf-8", errors="replace") as handle:
+                return handle.read()[-limit:]
+        except OSError:
+            return ""
+
+    def _startup_error(self, reason):
+        details = self._read_log_tail()
+        if details:
+            return f"{reason}\n\nmpv-Log ({self.log_path}):\n{details}"
+        return reason
 
     def start(self, arguments):
         try:
@@ -324,10 +891,12 @@ class MPVController:
         except FileNotFoundError:
             pass
 
-        command = ["mpv"] + list(arguments) + [
+        command = [self.mpv_path] + list(arguments) + [
             "--idle=yes",
+            "--keep-open=yes",
             "--input-ipc-server=" + self.socket_path,
             "--terminal=no",
+            "--log-file=" + self.log_path,
         ]
 
         self.process = subprocess.Popen(
@@ -337,14 +906,18 @@ class MPVController:
         )
 
         for _ in range(100):
+            if self.process.poll() is not None:
+                raise RuntimeError(self._startup_error(
+                    f"mpv {self.name} ist beim Start beendet."
+                ))
             if os.path.exists(self.socket_path):
                 break
             time.sleep(0.05)
 
         if not os.path.exists(self.socket_path):
-            raise RuntimeError(
+            raise RuntimeError(self._startup_error(
                 f"IPC-Socket von mpv {self.name} wurde nicht erzeugt."
-            )
+            ))
 
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.connect(self.socket_path)
@@ -354,6 +927,17 @@ class MPVController:
             target=self._reader, daemon=True
         )
         self.reader_thread.start()
+
+        self.observe("time-pos", 1)
+        self.observe("duration", 2)
+        self.observe("pause", 3)
+        self.observe("eof-reached", 4)
+
+    def set_vid(self, enabled):
+        self.command("set_property", "vid", "auto" if enabled else "no")
+
+    def set_loop_file(self, enabled):
+        self.command("set_property", "loop-file", "inf" if enabled else "no")
 
     def _reader(self):
         buffer = b""
@@ -390,15 +974,46 @@ class MPVController:
 
         data = (json.dumps({"command": list(args)}) + "\n").encode()
         try:
-            self.socket.sendall(data)
-        except Exception:
-            pass
+            with self._send_lock:
+                self.socket.sendall(data)
+        except Exception as exc:
+            print(f"mpv {self.name} IPC-Fehler: {exc}")
 
     def observe(self, property_name, observer_id):
         self.command("observe_property", observer_id, property_name)
 
-    def load_file(self, filename):
-        self.command("loadfile", filename, "replace")
+    def load_file(self, filename, start=None, end=None, play=True):
+        self.loaded_path = os.path.abspath(filename)
+        self.pending_start = None if start is None else float(start)
+        self.pending_end = None if end is None else float(end)
+        self.play_on_load = play
+        options = {}
+        if self.pending_start is not None:
+            options["start"] = str(self.pending_start)
+        if self.pending_end is not None:
+            options["end"] = str(self.pending_end)
+        if options:
+            option_str = ",".join(f"{key}={value}" for key, value in options.items())
+            self.command("loadfile", filename, "replace", option_str)
+        else:
+            self.command("loadfile", filename, "replace")
+
+    def apply_pending_range(self):
+        if self.pending_start is not None:
+            self.set_position(self.pending_start)
+        if self.pending_end is not None:
+            self.command("set_property", "end", self.pending_end)
+        else:
+            self.command("set_property", "end", "no")
+        if self.play_on_load:
+            self.set_pause(False)
+        else:
+            self.set_pause(True)
+
+    def has_file(self, path):
+        if not self.loaded_path or not path:
+            return False
+        return os.path.abspath(self.loaded_path) == os.path.abspath(path)
 
     def play_pause(self):
         self.command("cycle", "pause")
@@ -407,6 +1022,9 @@ class MPVController:
         self.command("set_property", "pause", bool(value))
 
     def stop(self):
+        self.loaded_path = None
+        self.pending_start = None
+        self.pending_end = None
         self.command("stop")
 
     def seek(self, seconds):
@@ -446,318 +1064,11 @@ class MPVController:
             pass
 
 
-class VideoPlayerGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("X11 MPV Video Player")
-        self.root.geometry("800x600")
-
-        self.output_manager = VideoOutputManager(VIDEO_OUTPUT)
-        self.main_mpv = MPVController("main")
-        self.preview_mpv = MPVController("preview")
-
-        self.current_file = None
-        self.duration = 0.0
-        self.position = 0.0
-        self.main_pause = False
-        self.dragging = False
-
-        self.create_gui()
-
-        self.main_mpv.add_callback(self.main_mpv_event)
-
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
-        self.update_gui()
-
-    def create_gui(self):
-        top = tk.Frame(self.root)
-        top.pack(fill="x", padx=10, pady=10)
-
-        tk.Button(
-            top, text="Datei öffnen", command=self.open_file
-        ).pack(side="left")
-
-        self.file_label = tk.Label(
-            top, text="Keine Datei", anchor="w"
-        )
-        self.file_label.pack(side="left", padx=10, fill="x", expand=True)
-
-        info = tk.Frame(self.root)
-        info.pack(fill="x", padx=10)
-
-        self.video_info_label = tk.Label(info, text="Video: -", anchor="w")
-        self.video_info_label.pack(side="left")
-
-        self.display_info_label = tk.Label(info, text="Display: -", anchor="e")
-        self.display_info_label.pack(side="right")
-
-        preview_info = tk.Frame(self.root, background="black")
-        preview_info.pack(fill="both", expand=True, padx=10, pady=10)
-
-        tk.Label(
-            preview_info,
-            text="Vorschau läuft in einem separaten mpv-Fenster",
-            foreground="white",
-            background="black",
-            font=("Arial", 16),
-        ).pack(expand=True)
-
-        self.position_scale = tk.Scale(
-            self.root, from_=0, to=100, orient="horizontal",
-            showvalue=False, resolution=0.1
-        )
-        self.position_scale.pack(fill="x", padx=10)
-        self.position_scale.bind("<ButtonPress-1>", self.start_seek)
-        self.position_scale.bind("<ButtonRelease-1>", self.end_seek)
-
-        self.time_label = tk.Label(self.root, text="00:00 / 00:00")
-        self.time_label.pack()
-
-        controls = tk.Frame(self.root)
-        controls.pack(pady=8)
-
-        tk.Button(
-            controls, text="⏪ -10 s", width=9,
-            command=lambda: self.seek(-10)
-        ).pack(side="left", padx=3)
-
-        tk.Button(
-            controls, text="▶ / ❚❚", width=12,
-            command=self.play_pause
-        ).pack(side="left", padx=3)
-
-        tk.Button(
-            controls, text="■ Stop", width=9,
-            command=self.stop
-        ).pack(side="left", padx=3)
-
-        tk.Button(
-            controls, text="+10 s ⏩", width=9,
-            command=lambda: self.seek(10)
-        ).pack(side="left", padx=3)
-
-        volume_frame = tk.Frame(self.root)
-        volume_frame.pack(fill="x", padx=20)
-
-        tk.Label(volume_frame, text="Lautstärke").pack(side="left")
-
-        self.volume = tk.Scale(
-            volume_frame, from_=0, to=100,
-            orient="horizontal", command=self.volume_changed
-        )
-        self.volume.set(100)
-        self.volume.pack(side="left", fill="x", expand=True)
-
-        self.status = tk.Label(
-            self.root, text="Bereit", anchor="w"
-        )
-        self.status.pack(fill="x", padx=10, pady=5)
-
-    def get_preview_geometry(self):
-        primary = self.output_manager.get_primary_output()
-
-        if not primary:
-            return (
-                f"{PREVIEW_WIDTH}x{PREVIEW_HEIGHT}"
-                f"+{PREVIEW_MARGIN}+{PREVIEW_MARGIN}"
-            )
-
-        geometry = self.output_manager.get_output_geometry(primary)
-
-        if not geometry:
-            return (
-                f"{PREVIEW_WIDTH}x{PREVIEW_HEIGHT}"
-                f"+{PREVIEW_MARGIN}+{PREVIEW_MARGIN}"
-            )
-
-        width, height, x, y = geometry
-
-        preview_x = x + width - PREVIEW_WIDTH - PREVIEW_MARGIN
-        preview_y = y + PREVIEW_MARGIN
-
-        return (
-            f"{PREVIEW_WIDTH}x{PREVIEW_HEIGHT}"
-            f"+{preview_x}+{preview_y}"
-        )
-
-    def start_preview(self):
-        if self.preview_mpv.process:
-            return
-
-        arguments = [
-            "--no-border",
-            "--fullscreen=no",
-            f"--geometry={self.get_preview_geometry()}",
-            f"--autofit={PREVIEW_WIDTH}x{PREVIEW_HEIGHT}",
-            "--keepaspect=yes",
-            "--hwdec=auto-safe",
-            "--vo=gpu-next",
-            "--force-window=yes",
-            "--title=MPV Vorschau",
-        ]
-
-        self.preview_mpv.start(arguments)
-        self.preview_mpv.set_volume(0)
-
-    def open_file(self):
-        filename = filedialog.askopenfilename(
-            title="Videodatei öffnen",
-            filetypes=[
-                (
-                    "Videodateien",
-                    "*.mp4 *.mkv *.mov *.avi *.webm *.m2ts *.ts"
-                ),
-                ("Alle Dateien", "*.*"),
-            ],
-        )
-        if filename:
-            self.play_file(filename)
-
-    def play_file(self, filename):
-        try:
-            self.status.config(text="Analysiere Video ...")
-            self.root.update_idletasks()
-
-            video, mode = self.output_manager.prepare_for_video(filename)
-
-            if not self.main_mpv.process:
-                self.main_mpv.start(
-                    self.output_manager.get_mpv_arguments()
-                )
-
-            self.start_preview()
-
-            self.main_mpv.load_file(filename)
-            self.preview_mpv.load_file(filename)
-
-            self.current_file = filename
-            self.duration = 0
-            self.position = 0
-
-            self.file_label.config(
-                text=os.path.basename(filename)
-            )
-
-            self.video_info_label.config(
-                text=(
-                    f"Video: {video.width}×{video.height} "
-                    f"{video.fps:.3f} fps"
-                )
-            )
-
-            self.display_info_label.config(
-                text=(
-                    f"Display: {mode.width}×{mode.height} "
-                    f"{mode.refresh:.3f} Hz"
-                )
-            )
-
-            self.status.config(
-                text=f"Wiedergabe: {mode.refresh:.3f} Hz"
-            )
-
-        except Exception as e:
-            messagebox.showerror("Fehler", str(e))
-            self.status.config(text="Fehler")
-
-    def play_pause(self):
-        self.main_mpv.play_pause()
-        self.preview_mpv.play_pause()
-
-    def seek(self, seconds):
-        self.main_mpv.seek(seconds)
-        self.preview_mpv.seek(seconds)
-
-    def stop(self):
-        self.main_mpv.stop()
-        self.preview_mpv.stop()
-        self.status.config(text="Gestoppt")
-
-    def volume_changed(self, value):
-        self.main_mpv.set_volume(float(value))
-        self.preview_mpv.set_volume(0)
-
-    def start_seek(self, event):
-        self.dragging = True
-
-    def end_seek(self, event):
-        self.dragging = False
-
-        if self.duration <= 0:
-            return
-
-        position = self.position_scale.get() / 100 * self.duration
-        self.main_mpv.set_position(position)
-        self.preview_mpv.set_position(position)
-
-    def main_mpv_event(self, mpv, message):
-        if message.get("event") != "property-change":
-            return
-
-        name = message.get("name")
-        value = message.get("data")
-
-        if name == "time-pos" and value is not None:
-            self.position = float(value)
-
-        elif name == "duration" and value is not None:
-            self.duration = float(value)
-
-        elif name == "pause" and value is not None:
-            self.main_pause = bool(value)
-
-    def synchronize_preview(self):
-        if not self.preview_mpv.process or not self.main_mpv.process:
-            return
-
-        if self.duration > 0:
-            self.preview_mpv.set_position(self.position)
-            self.preview_mpv.set_pause(self.main_pause)
-
-    @staticmethod
-    def format_time(seconds):
-        if seconds is None:
-            return "00:00"
-
-        seconds = max(0, int(seconds))
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        seconds %= 60
-
-        if hours:
-            return f"{hours:02}:{minutes:02}:{seconds:02}"
-
-        return f"{minutes:02}:{seconds:02}"
-
-    def update_gui(self):
-        if self.duration > 0 and not self.dragging:
-            percentage = self.position / self.duration * 100
-            percentage = max(0, min(100, percentage))
-            self.position_scale.set(percentage)
-
-        self.time_label.config(
-            text=(
-                self.format_time(self.position)
-                + " / "
-                + self.format_time(self.duration)
-            )
-        )
-
-        self.synchronize_preview()
-        self.root.after(500, self.update_gui)
-
-    def close(self):
-        try:
-            self.preview_mpv.quit()
-            self.main_mpv.quit()
-        finally:
-            self.output_manager.restore_original_mode()
-            self.root.destroy()
-
 
 def main():
+    import cinema_gui
     root = tk.Tk()
-    VideoPlayerGUI(root)
+    cinema_gui.VideoPlayerGUI(root)
     root.mainloop()
 
 

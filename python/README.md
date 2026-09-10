@@ -16,17 +16,38 @@ Two-instance mpv video player for X11/NVIDIA.
 
 ## Install
 
+The project uses a local Pixi environment with Python 3.12, Tkinter and ffmpeg.
+
+mpv must be the distro build with X11 (the conda-forge mpv cannot open a GPU window on X11).
+
 ```bash
-sudo apt install mpv ffmpeg x11-xserver-utils python3-tk
+# Once: install Pixi (https://pixi.sh)
+curl -fsSL https://pixi.sh/install.sh | bash
+
+# In the repository root
+pixi install
+./scripts/fetch-mpv.sh
 ```
+
+Alternatively: `sudo apt install mpv`.
+
+`xrandr` comes from the system package `x11-xserver-utils` (already typical on Linux Mint).
 
 ## Run
 
+From the repository root:
+
 ```bash
-python3 video_player.py
+pixi run start
 ```
 
-Set `VIDEO_OUTPUT` in `video_player.py` if you want to force a specific X11 output, for example:
+Or with the environment interpreter:
+
+```bash
+.venv/bin/python python/cinema_player.py
+```
+
+Set `VIDEO_OUTPUT` in `cinema_player.py` if you want to force a specific X11 output, for example:
 
 ```python
 VIDEO_OUTPUT = "HDMI-1"
