@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
+
 import json
+import math
 import os
 import time
 import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, ttk
 
+from language import LANGUAGES, t, set_language
 from cinema_player import (
+    APP_VERSION,
+    FONT_FAMILY,
     FONT_ROW,
     FONT_ROW_BOLD,
     FONT_SMALL,
@@ -23,18 +29,26 @@ from cinema_player import (
     VIDEO_EXTS,
     VIDEO_OUTPUT,
     VideoOutputManager,
+    apply_playlist_warnings,
+    clamp_volume,
     find_mpv,
     format_clock,
+    format_codec_rate,
     format_fps_label,
+    mark_missing_media,
+    media_file_available,
     probe_media,
+    refresh_entry_aspect,
 )
 
 LOGO_BG = "#000000"
 LOGO_ACCENT = "#4d9be6"
-FONT_LOGO = ("DejaVu Sans", 17, "bold")
-FONT_LOGO_LIGHT = ("DejaVu Sans", 17)
+FONT_LOGO = (FONT_FAMILY, 17, "bold")
+FONT_LOGO_LIGHT = (FONT_FAMILY, 17)
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "cinema-player-logo-header.png")
 LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "cinema-player-icon.png")
+ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
+TRANSPORT_ICON_PX = 52
 DRAG_THRESHOLD = 12
 
 # Status colours keep their meaning in every design.
@@ -66,6 +80,7 @@ PALETTES = {
         "playhead": "#1a1a1a",
         "marker": "#16324f",
         "accent": "#1565c0",
+        "volume": "#0c8f88",
     },
     "dark": {
         "bg": "#262626",
@@ -87,6 +102,7 @@ PALETTES = {
         "playhead": "#f5f5f5",
         "marker": "#9dc4ec",
         "accent": "#6cb0ee",
+        "volume": "#2ee8dc",
     },
 }
 
@@ -98,7 +114,7 @@ def apply_theme(name):
     """Rebind the palette names so widgets built afterwards use the chosen design."""
     global THEME, COLOR_BG, COLOR_PANEL, COLOR_ROW, COLOR_TEXT, COLOR_MUTED, COLOR_PLAYED
     global COLOR_BORDER, COLOR_READOUT, COLOR_BADGE_IDLE, COLOR_BUTTON, COLOR_BUTTON_ACTIVE
-    global COLOR_FIELD, COLOR_VIDEO, TRACK_BG, TRACK_EDGE, RANGE_FILL, PLAYHEAD, MARKER, ACCENT
+    global COLOR_FIELD, COLOR_VIDEO, TRACK_BG, TRACK_EDGE, RANGE_FILL, PLAYHEAD, MARKER, ACCENT, COLOR_VOLUME
 
     THEME = name if name in PALETTES else DEFAULT_THEME
     palette = PALETTES[THEME]
@@ -121,6 +137,7 @@ def apply_theme(name):
     PLAYHEAD = palette["playhead"]
     MARKER = palette["marker"]
     ACCENT = palette["accent"]
+    COLOR_VOLUME = palette["volume"]
     return THEME
 
 
@@ -149,12 +166,22 @@ class RangeProgressBar(tk.Canvas):
         self.bind("<ButtonRelease-1>", self._release)
 
     def set_state(self, duration, position, in_point=None, out_point=None):
-        self.duration = max(0.0, float(duration or 0))
+        self.duration = self._finite_time(duration)
         if not self.dragging:
-            self.position = max(0.0, float(position or 0))
+            self.position = self._finite_time(position)
         self.in_point = in_point
         self.out_point = out_point
         self.redraw()
+
+    @staticmethod
+    def _finite_time(value):
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(seconds) or seconds < 0:
+            return 0.0
+        return seconds
 
     def _track_box(self):
         left, top, right, bottom = 8, 8, 8, 6
@@ -202,11 +229,11 @@ class RangeProgressBar(tk.Canvas):
             self.create_line(rx0, y0 - 3, rx0, y1 + 3, fill=MARKER, width=2)
             self.create_line(rx1, y0 - 3, rx1, y1 + 3, fill=MARKER, width=2)
             if rx1 - rx0 > 48:
-                self.create_text(rx0 + 3, 1, text="In", anchor="nw", fill=MARKER, font=FONT_SMALL)
-                self.create_text(rx1 - 3, 1, text="Out", anchor="ne", fill=MARKER, font=FONT_SMALL)
+                self.create_text(rx0 + 3, 1, text=t("in_mark"), anchor="nw", fill=MARKER, font=FONT_SMALL)
+                self.create_text(rx1 - 3, 1, text=t("out_mark"), anchor="ne", fill=MARKER, font=FONT_SMALL)
             else:
-                self.create_text(rx0, 1, text="In", anchor="n", fill=MARKER, font=FONT_SMALL)
-                self.create_text(rx1, 1, text="Out", anchor="n", fill=MARKER, font=FONT_SMALL)
+                self.create_text(rx0, 1, text=t("in_mark"), anchor="n", fill=MARKER, font=FONT_SMALL)
+                self.create_text(rx1, 1, text=t("out_mark"), anchor="n", fill=MARKER, font=FONT_SMALL)
         if self.duration > 0:
             px = self._x_for_time(self.position)
             self.create_line(px, y0, px, y1, fill=PLAYHEAD, width=2)
@@ -241,6 +268,121 @@ class RangeProgressBar(tk.Canvas):
         self._seek_at(event, dragging=False)
 
 
+class VolumeBar(tk.Canvas):
+    """Filled bar from the left up to the current volume; click or drag to set it."""
+
+    def __init__(self, master, on_change, **kwargs):
+        kwargs.setdefault("height", 22)
+        kwargs.setdefault("highlightthickness", 0)
+        kwargs.setdefault("bd", 0)
+        kwargs.setdefault("bg", COLOR_PANEL)
+        kwargs.setdefault("cursor", "hand2")
+        super().__init__(master, **kwargs)
+        self.on_change = on_change
+        self.volume = 100
+        self.dragging = False
+        self.bind("<Configure>", lambda e: self.redraw())
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", self._release)
+
+    def set_volume(self, volume, notify=False):
+        self.volume = clamp_volume(volume)
+        self.redraw()
+        if notify:
+            self.on_change(self.volume)
+
+    def _track_box(self):
+        pad = 1
+        width = max(1, self.winfo_width() - pad * 2)
+        height = max(8, self.winfo_height() - 6)
+        top = (self.winfo_height() - height) // 2
+        return pad, top, pad + width, top + height
+
+    def _volume_for_x(self, x):
+        x0, _, x1, _ = self._track_box()
+        if x1 <= x0:
+            return 0
+        ratio = max(0.0, min(1.0, (x - x0) / (x1 - x0)))
+        return clamp_volume(round(ratio * 100))
+
+    def redraw(self):
+        self.delete("all")
+        x0, y0, x1, y1 = self._track_box()
+        self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
+        fill_x = x0 + (x1 - x0) * (self.volume / 100.0)
+        if self.volume > 0:
+            self.create_rectangle(
+                x0 + 1, y0 + 1, max(x0 + 2, fill_x), y1 - 1,
+                fill=COLOR_VOLUME, outline="",
+            )
+
+    def _set_at(self, event, dragging):
+        self.volume = self._volume_for_x(event.x)
+        self.redraw()
+        self.on_change(self.volume)
+
+    def _press(self, event):
+        self.dragging = True
+        self._set_at(event, dragging=True)
+
+    def _drag(self, event):
+        if self.dragging:
+            self._set_at(event, dragging=True)
+
+    def _release(self, event):
+        if not self.dragging:
+            return
+        self.dragging = False
+        self._set_at(event, dragging=False)
+
+
+class IconTooltip:
+    """Translated hover text for icon-only buttons."""
+
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self._window = None
+        self._after_id = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._after_id = self.widget.after(400, self._show)
+
+    def _cancel(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._window is not None:
+            self._window.destroy()
+            self._window = None
+
+    def _show(self):
+        self._after_id = None
+        if self._window is not None or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx()
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        except tk.TclError:
+            return
+        tip = tk.Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(
+            tip, text=self.text, font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_TEXT,
+            relief="solid", bd=1, padx=8, pady=4,
+        ).pack()
+        self._window = tip
+
+
 def format_seconds(value):
     seconds = max(0.0, float(value or 0))
     return str(int(seconds)) if seconds == int(seconds) else f"{seconds:g}"
@@ -272,7 +414,7 @@ def save_settings(settings):
 class VideoPlayerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Cinema Player")
+        self.root.title(f"Cinema Player {APP_VERSION}")
         self.icon_image = self._load_image(LOGO_ICON_FILE)
         if self.icon_image is not None:
             self.root.iconphoto(True, self.icon_image)
@@ -280,11 +422,25 @@ class VideoPlayerGUI:
         self.root.geometry("1600x900")
 
         self.settings = load_settings()
+        self.language = set_language(self.settings.get("language", "en"))
         self.theme = apply_theme(self.settings.get("theme", DEFAULT_THEME))
         self.root.configure(bg=COLOR_BG)
         self.apply_widget_defaults()
+        self.transport_icons = {}
 
-        self.output_manager = VideoOutputManager(VIDEO_OUTPUT)
+        preferred_output = self.settings.get("video_output") or VIDEO_OUTPUT
+        self.output_manager = VideoOutputManager(preferred_output)
+        try:
+            if preferred_output:
+                self.output_manager.select_video_output(preferred_output)
+            else:
+                self.output_manager.select_video_output()
+        except Exception:
+            self.output_manager.video_output = None
+            try:
+                self.output_manager.select_video_output()
+            except Exception:
+                pass
         self.mpv_path = find_mpv()
         self.main_mpv = MPVController("main", self.mpv_path)
         self.preview_mpv = MPVController("preview", self.mpv_path)
@@ -293,6 +449,7 @@ class VideoPlayerGUI:
         self.playlist_path = ""
         self.program_state = "OFF"
         self.program_index = 0
+        self.zoom_confirmed_index = None
         self.preview_index = None
         self.preview_live = True
         self.live_parked = None
@@ -301,6 +458,8 @@ class VideoPlayerGUI:
         self.position = 0.0
         self.preview_duration = 0.0
         self.preview_position = 0.0
+        self.preview_paused = True
+        self.preview_stopped = False
         self.main_pause = False
         self.blackout = False
         self.idle_media_path = ""
@@ -319,22 +478,32 @@ class VideoPlayerGUI:
         self.last_import_dir = self.settings.get("last_import_dir") or ""
         if self.last_import_dir and not os.path.isdir(self.last_import_dir):
             self.last_import_dir = ""
+        self.last_playlist_dir = self.settings.get("last_playlist_dir") or ""
+        if self.last_playlist_dir and not os.path.isdir(self.last_playlist_dir):
+            self.last_playlist_dir = ""
 
         self.projection_zoom = tk.BooleanVar(value=False)
         self.autoplay_delay = tk.StringVar(value="0")
-        self.idle_media = tk.StringVar(value="none")
+        self.idle_media = tk.StringVar(value=t("idle_none"))
         self.autoplay_var = tk.BooleanVar(value=False)
         self.played_var = tk.BooleanVar(value=False)
         self.display_time = tk.StringVar(value="0")
         self.audio_var = tk.StringVar(value="--")
         self.subtitle_var = tk.StringVar(value="--")
+        self.program_volume = tk.DoubleVar(value=100)
+        self.preview_volume = tk.DoubleVar(value=100)
+        self.beamer_output = tk.StringVar(value=self.output_manager.video_output or "")
+        self._volume_preview_key = None
+        self._volume_program_key = None
 
         self.create_gui()
         self.main_mpv.add_callback(self.main_mpv_event)
         self.preview_mpv.add_callback(self.preview_mpv_event)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(200, self.start_preview_player)
-        self.root.after(400, lambda: self.ensure_main_output(auto=True))
+        # Honor a saved / forced output even if it is the primary display.
+        explicit_output = bool(self.settings.get("video_output") or VIDEO_OUTPUT)
+        self.root.after(400, lambda: self.ensure_main_output(auto=not explicit_output))
         self.update_gui()
         self.refresh_all()
 
@@ -368,24 +537,38 @@ class VideoPlayerGUI:
         header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 6))
 
         self.theme_button = tk.Button(
-            header, text=f"{'light' if self.theme == 'dark' else 'dark'} design",
+            header, text=t("theme_to_light") if self.theme == "dark" else t("theme_to_dark"),
             font=FONT_SMALL, command=self.toggle_theme,
         )
         self.theme_button.pack(side="right")
+        self.language_button = tk.Menubutton(
+            header, text=LANGUAGES.get(self.language, self.language), font=FONT_SMALL,
+            indicatoron=True, relief="raised",
+        )
+        language_menu = tk.Menu(
+            self.language_button, tearoff=0, bg=COLOR_PANEL, fg=COLOR_TEXT,
+            activebackground=COLOR_PROGRAM, activeforeground=COLOR_WHITE,
+        )
+        for code, name in LANGUAGES.items():
+            language_menu.add_command(label=name, command=lambda c=code: self.change_language(c))
+        self.language_button.config(menu=language_menu)
+        self.language_button.pack(side="right", padx=(0, 8))
 
         self.logo_image = self._load_image(LOGO_HEADER_FILE)
         if self.logo_image is not None:
             tk.Label(header, image=self.logo_image, bg=LOGO_BG, bd=0).pack(side="left")
-            return
-
-        plate = tk.Frame(header, bg=LOGO_BG)
-        plate.pack(side="left")
+        else:
+            plate = tk.Frame(header, bg=LOGO_BG)
+            plate.pack(side="left")
+            tk.Label(
+                plate, text="CINEMA", bg=LOGO_BG, fg=COLOR_WHITE, font=FONT_LOGO,
+            ).pack(side="left", padx=(10, 0), pady=4)
+            tk.Label(
+                plate, text="PLAYER", bg=LOGO_BG, fg=LOGO_ACCENT, font=FONT_LOGO_LIGHT,
+            ).pack(side="left", padx=(7, 10), pady=4)
         tk.Label(
-            plate, text="CINEMA", bg=LOGO_BG, fg=COLOR_WHITE, font=FONT_LOGO,
-        ).pack(side="left", padx=(10, 0), pady=4)
-        tk.Label(
-            plate, text="PLAYER", bg=LOGO_BG, fg=LOGO_ACCENT, font=FONT_LOGO_LIGHT,
-        ).pack(side="left", padx=(7, 10), pady=4)
+            header, text=f"v{APP_VERSION}", bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_UI,
+        ).pack(side="left", padx=(10, 0), pady=(0, 8), anchor="s")
 
     def _load_image(self, path):
         try:
@@ -393,9 +576,26 @@ class VideoPlayerGUI:
         except tk.TclError:
             return None
 
+    def _load_icon(self, name, size=TRANSPORT_ICON_PX):
+        """Load a transport PNG and scale it down for the button bar."""
+        image = self._load_image(os.path.join(ICONS_DIR, f"{name}.png"))
+        if image is None:
+            return None
+        # Scale by height so wide icons such as reset-played match the others.
+        factor = max(1, round(image.height() / size))
+        if factor > 1:
+            image = image.subsample(factor)
+        return image
+
+    def _transport_icon(self, name):
+        if name not in self.transport_icons:
+            self.transport_icons[name] = self._load_icon(name)
+        return self.transport_icons[name]
+
     def apply_widget_defaults(self):
         """Colour the widget classes that are built without explicit colours."""
         for pattern, value in (
+            ("*Font", f"{FONT_FAMILY} {FONT_UI[1]}"),
             ("*Label.foreground", COLOR_TEXT),
             ("*Button.background", COLOR_BUTTON),
             ("*Button.foreground", COLOR_TEXT),
@@ -443,6 +643,17 @@ class VideoPlayerGUI:
             pass
         self.rebuild_gui()
 
+    def change_language(self, code):
+        if set_language(code) == self.language:
+            return
+        self.language = code
+        self.settings["language"] = code
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self.rebuild_gui()
+
     def rebuild_gui(self):
         """Rebuild the window for the current design and re-embed the preview player."""
         self.preview_mpv.quit()
@@ -452,6 +663,8 @@ class VideoPlayerGUI:
         self.drop_marker = None
         self.drag_index = None
         self.drag_moved = False
+        self._volume_preview_key = None
+        self._volume_program_key = None
         self.root.configure(bg=COLOR_BG)
         self.apply_widget_defaults()
         self.create_gui()
@@ -485,13 +698,13 @@ class VideoPlayerGUI:
         bar.columnconfigure(1, weight=1)
 
         self.state_label = tk.Label(
-            bar, text="OFF", font=FONT_STATUS, bg=COLOR_OFF, fg=COLOR_WHITE,
+            bar, text=t("state_off"), font=FONT_STATUS, bg=COLOR_OFF, fg=COLOR_WHITE,
             width=12, pady=6,
         )
         self.state_label.grid(row=0, column=0, sticky="nsw")
 
         self.now_playing = tk.Label(
-            bar, text="No program", font=FONT_UI_BOLD, bg=COLOR_READOUT,
+            bar, text=t("no_program"), font=FONT_UI_BOLD, bg=COLOR_READOUT,
             fg=COLOR_TEXT, anchor="w", padx=10,
         )
         self.now_playing.grid(row=0, column=1, sticky="nsew")
@@ -512,25 +725,30 @@ class VideoPlayerGUI:
         )
         self.main_progress.grid(row=0, column=0, sticky="ew")
 
+        volume = self._build_volume_row(
+            progress, self.program_volume, self._on_program_volume, COLOR_BG,
+        )
+        volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
+
         marks = tk.Frame(progress, bg=COLOR_BG)
-        marks.grid(row=1, column=0, sticky="ew", padx=8)
+        marks.grid(row=2, column=0, sticky="ew", padx=8)
         for col in range(3):
             marks.columnconfigure(col, weight=1)
-        self.main_in = tk.Label(marks, text="In: --:--", bg=COLOR_BG, font=FONT_SMALL)
+        self.main_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_BG, font=FONT_SMALL)
         self.main_in.grid(row=0, column=0, sticky="w")
-        self.main_time = tk.Label(marks, text="Time: --:--", bg=COLOR_BG, font=FONT_SMALL)
+        self.main_time = tk.Label(marks, text=t("time_value", value="--:--"), bg=COLOR_BG, font=FONT_SMALL)
         self.main_time.grid(row=0, column=1)
-        self.main_out = tk.Label(marks, text="Out: --:--", bg=COLOR_BG, font=FONT_SMALL)
+        self.main_out = tk.Label(marks, text=t("out_value", value="--:--"), bg=COLOR_BG, font=FONT_SMALL)
         self.main_out.grid(row=0, column=2, sticky="e")
 
         times = tk.Frame(parent, bg=COLOR_BG)
         times.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         for col in range(4):
             times.columnconfigure(col, weight=1)
-        self.time_total = self._time_box(times, "Total", 0)
-        self.time_elapsed = self._time_box(times, "Elapsed", 1)
-        self.time_remaining = self._time_box(times, "Remaining", 2)
-        self.time_end = self._time_box(times, "End", 3)
+        self.time_total = self._time_box(times, t("total"), 0)
+        self.time_elapsed = self._time_box(times, t("elapsed"), 1)
+        self.time_remaining = self._time_box(times, t("remaining"), 2)
+        self.time_end = self._time_box(times, t("end"), 3)
 
     def _time_box(self, parent, title, column):
         box = tk.Frame(parent, bg=COLOR_BG)
@@ -540,21 +758,157 @@ class VideoPlayerGUI:
         value.pack()
         return value
 
+    def _build_volume_row(self, parent, variable, on_change, bg, save=False):
+        row = tk.Frame(parent, bg=bg)
+        tk.Label(row, text=t("volume"), bg=bg, fg=COLOR_TEXT, font=FONT_SMALL).pack(side="left")
+        bar = VolumeBar(row, on_change=on_change, bg=bg)
+        bar.pack(side="left", fill="x", expand=True, padx=8)
+        bar.set_volume(variable.get())
+        label = tk.Label(
+            row, text=str(clamp_volume(variable.get())), width=3, anchor="e",
+            bg=bg, fg=COLOR_VOLUME, font=FONT_UI_BOLD,
+        )
+        label.pack(side="left")
+        tk.Label(row, text="%", bg=bg, fg=COLOR_VOLUME, font=FONT_SMALL).pack(side="left", padx=(2, 0))
+        if save:
+            self.preview_volume_bar = bar
+            self.preview_volume_label = label
+            tk.Button(
+                row, text=t("save_volume"), font=FONT_SMALL, command=self.save_preview_volume,
+            ).pack(side="left", padx=(8, 0))
+        else:
+            self.program_volume_bar = bar
+            self.program_volume_label = label
+        return row
+
+    def _set_volume_label(self, label, volume):
+        if label is not None:
+            label.config(text=str(clamp_volume(volume)), fg=COLOR_VOLUME)
+
+    def _on_program_volume(self, value):
+        volume = clamp_volume(value)
+        self.program_volume.set(volume)
+        self._set_volume_label(self.program_volume_label, volume)
+        if self.program_state == "PLAYING" and not self.idle_showing:
+            self.main_mpv.set_volume(volume)
+
+    def _on_preview_volume(self, value):
+        volume = clamp_volume(value)
+        self.preview_volume.set(volume)
+        self._set_volume_label(self.preview_volume_label, volume)
+        self.preview_mpv.set_volume(volume)
+
+    def save_preview_volume(self):
+        entry = self.selected_entry()
+        if not entry:
+            return
+        entry.volume = clamp_volume(self.preview_volume.get())
+        if entry is self.current_entry():
+            self.program_volume.set(entry.volume)
+            self._set_volume_label(self.program_volume_label, entry.volume)
+            if getattr(self, "program_volume_bar", None):
+                self.program_volume_bar.set_volume(entry.volume)
+            if self.program_state == "PLAYING" and not self.idle_showing:
+                self.main_mpv.set_volume(entry.volume)
+        self.repaint_playlist()
+
+    def _load_preview_volume(self, entry):
+        key = id(entry) if entry else None
+        if key == self._volume_preview_key:
+            return
+        self._volume_preview_key = key
+        volume = clamp_volume(entry.volume if entry else 100)
+        self.preview_volume.set(volume)
+        self._set_volume_label(self.preview_volume_label, volume)
+        if getattr(self, "preview_volume_bar", None):
+            self.preview_volume_bar.set_volume(volume)
+        self.preview_mpv.set_volume(volume)
+
+    def _load_program_volume(self, entry, force=False):
+        key = id(entry) if entry else None
+        if not force and key == self._volume_program_key:
+            return
+        self._volume_program_key = key
+        volume = clamp_volume(entry.volume if entry else 100)
+        self.program_volume.set(volume)
+        self._set_volume_label(self.program_volume_label, volume)
+        if getattr(self, "program_volume_bar", None):
+            self.program_volume_bar.set_volume(volume)
+
     def _build_transport(self, parent):
         row = tk.Frame(parent, bg=COLOR_BG)
         row.grid(row=3, column=0, sticky="w", pady=(0, 10))
-        self.btn_stop = self._transport_button(row, "Stop", self.confirm_stop)
-        self.btn_pause = self._transport_button(row, "Pause", self.confirm_pause)
-        self.btn_still = self._transport_button(row, "Still", self.confirm_still)
-        self.btn_play = self._transport_button(row, "Start", self.start_or_resume, primary=True)
+        self.btn_stop = self._icon_button(row, "stop", self.confirm_stop, t("stop"))
+        self.btn_pause = self._icon_button(row, "pause", self.confirm_pause, t("pause"))
+        self.btn_still = self._icon_button(row, "still", self.confirm_still, t("still"))
+        self.btn_play = self._icon_button(row, "start_program", self.start_or_resume, t("start"))
 
-    def _transport_button(self, parent, text, command, primary=False):
+    def _icon_button(self, parent, icon_name, command, fallback_text, tip=None):
+        image = self._transport_icon(icon_name)
         button = tk.Button(
-            parent, text=text, command=command, font=FONT_UI_BOLD if primary else FONT_UI,
-            width=10, pady=4,
+            parent,
+            text=fallback_text,
+            command=command,
+            image=image,
+            compound="none" if image is not None else "center",
+            bd=0,
+            highlightthickness=0,
+            relief="flat",
+            bg=parent.cget("bg"),
+            activebackground=parent.cget("bg"),
+            cursor="hand2",
+            padx=2,
+            pady=2,
         )
-        button.pack(side="left", padx=(0, 8))
+        if image is None:
+            button.config(font=FONT_SMALL, width=7)
+        button.pack(side="left", padx=(0, 6))
+        button.tooltip = IconTooltip(button, tip if tip is not None else fallback_text)
         return button
+
+    def _set_transport_active(self, button, active, color):
+        """Draw a coloured ring around the icon that currently holds the output."""
+        idle = button.master.cget("bg")
+        fill = color if active else idle
+        button.config(
+            bg=fill,
+            activebackground=fill,
+            highlightbackground=fill,
+            highlightcolor=fill,
+            highlightthickness=3 if active else 0,
+        )
+
+    def refresh_transport(self):
+        playing = self.program_state == "PLAYING"
+        paused = playing and self.main_pause and self.blackout
+        frozen = playing and self.main_pause and not self.blackout
+        rolling = playing and not self.main_pause
+        armed = self.program_state == "PROGRAM"
+        self._set_transport_active(self.btn_stop, False, COLOR_OFF)
+        self._set_transport_active(self.btn_pause, paused, COLOR_PREVIEW)
+        self._set_transport_active(self.btn_still, frozen, COLOR_PROGRAM)
+        play_color = COLOR_PLAYING if rolling else COLOR_PROGRAM
+        self._set_transport_active(self.btn_play, rolling or armed, play_color)
+
+        preview_playing = bool(
+            self.preview_mpv.process
+            and self.preview_mpv.loaded_path
+            and not self.preview_paused
+            and not self.preview_stopped
+        )
+        preview_paused = bool(
+            self.preview_mpv.process
+            and self.preview_mpv.loaded_path
+            and self.preview_paused
+            and not self.preview_stopped
+        )
+        buttons = getattr(self, "preview_buttons", {})
+        if buttons.get("stop"):
+            self._set_transport_active(buttons["stop"], self.preview_stopped, COLOR_OFF)
+        if buttons.get("pause"):
+            self._set_transport_active(buttons["pause"], preview_paused, COLOR_PREVIEW)
+        if buttons.get("play"):
+            self._set_transport_active(buttons["play"], preview_playing, COLOR_PLAYING)
 
     def _build_playlist_header(self, parent):
         header = tk.Frame(parent, bg=COLOR_BG)
@@ -562,7 +916,7 @@ class VideoPlayerGUI:
         header.columnconfigure(1, weight=1)
 
         tk.Label(
-            header, text="Playlist", font=FONT_UI_BOLD, bg=COLOR_BG, fg=COLOR_TEXT,
+            header, text=t("playlist"), font=FONT_UI_BOLD, bg=COLOR_BG, fg=COLOR_TEXT,
         ).grid(row=0, column=0, sticky="w", padx=(0, 8))
 
         self.playlist_name = tk.Entry(header, font=FONT_UI)
@@ -571,12 +925,14 @@ class VideoPlayerGUI:
 
         buttons = tk.Frame(header, bg=COLOR_BG)
         buttons.grid(row=0, column=2, sticky="e", padx=(8, 0))
-        tk.Button(buttons, text="import", font=FONT_SMALL, command=self.import_media).pack(side="left", padx=2)
-        tk.Button(buttons, text="load", font=FONT_SMALL, command=self.load_playlist).pack(side="left", padx=2)
-        tk.Button(buttons, text="save", font=FONT_SMALL, command=self.save_playlist).pack(side="left", padx=2)
-        tk.Button(
-            buttons, text="reset played", font=FONT_SMALL, command=self.reset_played,
-        ).pack(side="left", padx=2)
+        self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
+        self._icon_button(buttons, "playlist_new", self.new_playlist, t("new"), t("new_playlist"))
+        self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
+        self._icon_button(buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"))
+        self._icon_button(
+            buttons, "playlist_refresh", self.check_playlist_files, t("refresh"), t("refresh_playlist"),
+        )
+        self._icon_button(buttons, "reset_played", self.reset_played, t("reset_played"))
 
         self.playlist_header = header
 
@@ -585,14 +941,14 @@ class VideoPlayerGUI:
         settings.grid(row=5, column=0, sticky="ew", pady=(6, 6))
 
         self._checkbutton(
-            settings, "Projection zoom", self.projection_zoom, self.refresh_playlist, COLOR_BG,
+            settings, t("projection_zoom"), self.projection_zoom, self.refresh_playlist, COLOR_BG,
         ).pack(side="left")
 
-        tk.Label(settings, text="Autoplay delay:", bg=COLOR_BG, font=FONT_UI).pack(side="left", padx=(16, 4))
+        tk.Label(settings, text=t("autoplay_delay"), bg=COLOR_BG, font=FONT_UI).pack(side="left", padx=(16, 4))
         tk.Entry(settings, textvariable=self.autoplay_delay, width=5, font=FONT_UI).pack(side="left")
-        tk.Label(settings, text="s", bg=COLOR_BG, font=FONT_UI).pack(side="left")
+        tk.Label(settings, text=t("seconds_short"), bg=COLOR_BG, font=FONT_UI).pack(side="left")
 
-        tk.Label(settings, text="Idle media:", bg=COLOR_BG, font=FONT_UI).pack(side="left", padx=(16, 4))
+        tk.Label(settings, text=t("idle_media"), bg=COLOR_BG, font=FONT_UI).pack(side="left", padx=(16, 4))
         self.idle_button = tk.Button(
             settings, textvariable=self.idle_media, font=FONT_SMALL,
             command=self.choose_idle_media,
@@ -643,12 +999,24 @@ class VideoPlayerGUI:
         header = tk.Frame(panel, bg=COLOR_PANEL)
         header.pack(fill="x", padx=8, pady=(6, 4))
         tk.Label(
-            header, text="Beamer status", font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT,
+            header, text=t("beamer_status"), font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT,
         ).pack(side="left")
         self.beamer_ok = tk.Label(
             header, text="--", font=FONT_STATUS, bg=COLOR_BADGE_IDLE, fg=COLOR_WHITE, width=10, pady=3,
         )
         self.beamer_ok.pack(side="right")
+
+        select = tk.Frame(panel, bg=COLOR_PANEL)
+        select.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(
+            select, text=t("beamer_output"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_TEXT,
+        ).pack(side="left")
+        self.beamer_output_combo = ttk.Combobox(
+            select, textvariable=self.beamer_output, state="readonly", width=18,
+        )
+        self.beamer_output_combo.pack(side="left", padx=(8, 0))
+        self.beamer_output_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_beamer_output())
+        self.refresh_beamer_outputs()
 
         info = tk.Frame(panel, bg=COLOR_PANEL)
         info.pack(fill="x", padx=8, pady=(0, 8))
@@ -668,24 +1036,24 @@ class VideoPlayerGUI:
         header = tk.Frame(panel, bg=COLOR_PANEL)
         header.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 4))
         header.columnconfigure(0, weight=1)
-        tk.Label(header, text="Preview", font=FONT_UI_BOLD, bg=COLOR_PANEL).grid(row=0, column=0, sticky="w")
+        tk.Label(header, text=t("preview"), font=FONT_UI_BOLD, bg=COLOR_PANEL).grid(row=0, column=0, sticky="w")
 
         title_row = tk.Frame(panel, bg=COLOR_PANEL)
         title_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
         title_row.columnconfigure(0, weight=1)
         self.preview_title = tk.Label(
-            title_row, text="No clip", font=FONT_UI_BOLD, bg=COLOR_READOUT,
+            title_row, text=t("no_clip"), font=FONT_UI_BOLD, bg=COLOR_READOUT,
             fg=COLOR_TEXT, anchor="w", padx=8, pady=4,
         )
         self.preview_title.grid(row=0, column=0, sticky="ew")
         self.preview_mode_btn = tk.Button(
-            title_row, text="Live", font=FONT_STATUS, width=10,
+            title_row, text=t("live"), font=FONT_STATUS, width=10,
             command=self.toggle_preview_mode, pady=3,
         )
         self.preview_mode_btn.grid(row=0, column=1, padx=(8, 0))
 
         self.preview_meta = tk.Label(
-            panel, text="Length: --:--", font=FONT_SMALL, bg=COLOR_PANEL, anchor="w",
+            panel, text=t("length_empty"), font=FONT_SMALL, bg=COLOR_PANEL, anchor="w",
         )
         self.preview_meta.grid(row=2, column=0, sticky="ew", padx=8)
 
@@ -693,8 +1061,8 @@ class VideoPlayerGUI:
         self.preview_video.grid(row=3, column=0, sticky="nsew", padx=8, pady=6)
         panel.rowconfigure(3, weight=1)
         self.preview_placeholder = tk.Label(
-            self.preview_video, text="video preview", bg=COLOR_VIDEO,
-            fg=COLOR_MUTED, font=("DejaVu Sans", 16),
+            self.preview_video, text=t("video_preview"), bg=COLOR_VIDEO,
+            fg=COLOR_MUTED, font=(FONT_FAMILY, 16),
         )
         self.preview_placeholder.place(relx=0.5, rely=0.5, anchor="center")
 
@@ -703,41 +1071,48 @@ class VideoPlayerGUI:
         )
         self.preview_progress.grid(row=4, column=0, sticky="ew", padx=8)
 
+        self.preview_volume_row = self._build_volume_row(
+            panel, self.preview_volume, self._on_preview_volume, COLOR_PANEL,
+            save=True,
+        )
+        self.preview_volume_row.grid(row=5, column=0, sticky="ew", padx=8, pady=(4, 0))
+
         marks = tk.Frame(panel, bg=COLOR_PANEL)
-        marks.grid(row=5, column=0, sticky="ew", padx=8, pady=(2, 4))
+        marks.grid(row=6, column=0, sticky="ew", padx=8, pady=(2, 4))
         self.preview_marks = marks
         for col in range(3):
             marks.columnconfigure(col, weight=1)
-        self.preview_in = tk.Label(marks, text="In: --:--", bg=COLOR_PANEL, font=FONT_SMALL)
+        self.preview_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
         self.preview_in.grid(row=0, column=0, sticky="w")
-        self.preview_time = tk.Label(marks, text="Time: --:--", bg=COLOR_PANEL, font=FONT_SMALL)
+        self.preview_time = tk.Label(marks, text=t("time_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
         self.preview_time.grid(row=0, column=1)
-        self.preview_out = tk.Label(marks, text="Out: --:--", bg=COLOR_PANEL, font=FONT_SMALL)
+        self.preview_out = tk.Label(marks, text=t("out_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
         self.preview_out.grid(row=0, column=2, sticky="e")
 
         io = tk.Frame(panel, bg=COLOR_PANEL)
-        io.grid(row=6, column=0, sticky="w", padx=8, pady=(0, 4))
+        io.grid(row=7, column=0, sticky="w", padx=8, pady=(0, 4))
         self.preview_io = io
-        tk.Button(io, text="Set In", font=FONT_SMALL, command=self.set_in_point).pack(side="left", padx=(0, 4))
-        tk.Button(io, text="Set Out", font=FONT_SMALL, command=self.set_out_point).pack(side="left", padx=4)
-        tk.Button(io, text="Clear In/Out", font=FONT_SMALL, command=self.clear_in_out).pack(side="left", padx=4)
+        self._icon_button(io, "set_in", self.set_in_point, t("set_in"))
+        self._icon_button(io, "set_out", self.set_out_point, t("set_out"))
+        self._icon_button(io, "clear_in_out", self.clear_in_out, t("clear_in_out"))
 
         transport = tk.Frame(panel, bg=COLOR_PANEL)
         self.preview_transport = transport
-        transport.grid(row=7, column=0, sticky="w", padx=8, pady=(0, 6))
-        for text, cmd in (
-            ("rev", lambda: self.preview_seek(-5)),
-            ("stop", self.preview_stop),
-            ("pause", self.preview_pause),
-            ("play", self.preview_play),
-            ("fwd", lambda: self.preview_seek(5)),
+        transport.grid(row=8, column=0, sticky="w", padx=8, pady=(0, 6))
+        self.preview_buttons = {}
+        for name, cmd, label in (
+            ("rev", lambda: self.preview_seek(-5), t("rev")),
+            ("stop", self.preview_stop, t("stop")),
+            ("pause", self.preview_pause, t("pause")),
+            ("play", self.preview_play, t("play")),
+            ("fwd", lambda: self.preview_seek(5), t("fwd")),
         ):
-            tk.Button(transport, text=text, font=FONT_SMALL, width=7, command=cmd).pack(side="left", padx=2)
+            self.preview_buttons[name] = self._icon_button(transport, name, cmd, label)
 
         footer = tk.Frame(panel, bg=COLOR_PANEL)
-        footer.grid(row=8, column=0, sticky="ew", padx=8, pady=(0, 8))
+        footer.grid(row=9, column=0, sticky="ew", padx=8, pady=(0, 8))
         self._checkbutton(
-            footer, "Autoplay", self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
+            footer, t("autoplay"), self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
         ).pack(side="left")
 
         # Everything that only makes sense for a moving clip.
@@ -745,13 +1120,13 @@ class VideoPlayerGUI:
         clip_settings.pack(side="left")
         self.preview_clip_settings = clip_settings
         self._checkbutton(
-            clip_settings, "Played", self.played_var, self.apply_entry_settings, COLOR_PANEL,
+            clip_settings, t("played"), self.played_var, self.apply_entry_settings, COLOR_PANEL,
         ).pack(side="left", padx=(8, 0))
-        tk.Label(clip_settings, text="Audio track:", bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
+        tk.Label(clip_settings, text=t("audio_track"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
         self.audio_combo = ttk.Combobox(clip_settings, textvariable=self.audio_var, width=16, state="readonly")
         self.audio_combo.pack(side="left")
         self.audio_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
-        tk.Label(clip_settings, text="Subtitle:", bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
+        tk.Label(clip_settings, text=t("subtitle"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
         self.subtitle_combo = ttk.Combobox(clip_settings, textvariable=self.subtitle_var, width=12, state="readonly")
         self.subtitle_combo.pack(side="left")
         self.subtitle_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
@@ -759,7 +1134,7 @@ class VideoPlayerGUI:
         # Only for stills: how long the image stays on the projector.
         image_settings = tk.Frame(footer, bg=COLOR_PANEL)
         self.preview_image_settings = image_settings
-        tk.Label(image_settings, text="Display time:", bg=COLOR_PANEL, font=FONT_SMALL).pack(
+        tk.Label(image_settings, text=t("display_time"), bg=COLOR_PANEL, font=FONT_SMALL).pack(
             side="left", padx=(12, 4)
         )
         entry_box = tk.Entry(image_settings, textvariable=self.display_time, width=5, font=FONT_UI)
@@ -767,7 +1142,7 @@ class VideoPlayerGUI:
         entry_box.bind("<Return>", lambda e: self.apply_entry_settings())
         entry_box.bind("<FocusOut>", lambda e: self.apply_entry_settings())
         tk.Label(
-            image_settings, text="s   (0 = until resume)", bg=COLOR_PANEL, font=FONT_SMALL,
+            image_settings, text=t("display_time_hint"), bg=COLOR_PANEL, font=FONT_SMALL,
             fg=COLOR_MUTED,
         ).pack(side="left", padx=(4, 0))
 
@@ -793,16 +1168,22 @@ class VideoPlayerGUI:
         self.refresh_beamer()
 
     def refresh_status(self):
-        self.state_label.config(text=self.program_state, bg=self.state_color())
+        state_key = {"OFF": "state_off", "PROGRAM": "state_program", "PLAYING": "state_playing"}[self.program_state]
+        self.state_label.config(text=t(state_key), bg=self.state_color())
         entry = self.current_entry() if self.program_state != "OFF" else self.selected_entry()
-        name = entry.filename if entry else "No program"
+        name = entry.filename if entry else t("no_program")
         self.now_playing.config(text=name, bg=self.state_color() if self.program_state != "OFF" else COLOR_READOUT,
                                 fg=COLOR_WHITE if self.program_state != "OFF" else COLOR_TEXT)
         index = f"{self.program_index + 1}" if self.playlist else "-"
         self.program_times.config(
             text=f"{index} / {format_clock(self.duration if self.duration else (entry.duration if entry else 0))}"
         )
-        self.btn_play.config(text="Resume" if self.program_state != "OFF" else "Start")
+        if self.program_state == "OFF":
+            self.btn_play.config(text=t("start"), image=self._transport_icon("start_program") or "")
+            self.btn_play.tooltip.text = t("start")
+        else:
+            self.btn_play.config(text=t("resume"), image=self._transport_icon("play") or "")
+            self.btn_play.tooltip.text = t("resume")
         # The idle media button turns green while its media is on the projector.
         if self.idle_showing:
             self.idle_button.config(
@@ -814,34 +1195,35 @@ class VideoPlayerGUI:
                 bg=COLOR_BUTTON, fg=COLOR_TEXT,
                 activebackground=COLOR_BUTTON_ACTIVE, activeforeground=COLOR_TEXT,
             )
+        self.refresh_transport()
         self.time_total.config(text=format_clock(self.duration or (entry.duration if entry else None)))
         self.time_elapsed.config(text=format_clock(self.position if self.program_state == "PLAYING" else 0))
         remaining = None
-        if self.duration:
+        if self.duration and math.isfinite(self.duration) and math.isfinite(self.position):
             remaining = max(0, self.duration - self.position)
         self.time_remaining.config(text=format_clock(remaining))
         end_text = "--:--"
         if remaining is not None:
             end_text = (datetime.now() + timedelta(seconds=remaining)).strftime("%H:%M:%S")
         self.time_end.config(text=end_text)
+        if self.program_state != "PLAYING":
+            self._load_program_volume(
+                self.current_entry() if self.program_state != "OFF" else None
+            )
 
     def refresh_playlist(self):
         for child in self.playlist_inner.winfo_children():
             child.destroy()
         self.row_widgets = []
-        previous_aspect = None
+        apply_playlist_warnings(self.playlist, self.projection_zoom.get())
         for index, entry in enumerate(self.playlist):
-            if self.projection_zoom.get() and previous_aspect and entry.aspect != previous_aspect:
-                entry.aspect_warning = True
-            else:
-                entry.aspect_warning = False
-            if entry.aspect != "--":
-                previous_aspect = entry.aspect
             self._make_row(index, entry)
 
     def _row_colors(self, index, entry):
         bg = COLOR_ROW
         fg = COLOR_PLAYED if entry.played and index != self.program_index else COLOR_TEXT
+        if entry.missing:
+            fg = COLOR_WARNING
         if self.program_state == "PLAYING" and index == self.program_index:
             bg, fg = COLOR_PLAYING, COLOR_WHITE
         elif self.preview_index == index and not self.preview_live:
@@ -856,7 +1238,7 @@ class VideoPlayerGUI:
             return format_clock(entry.duration)
         if entry.display_time > 0:
             return format_clock(entry.display_time)
-        return "resume"
+        return t("until_resume")
 
     def _make_row(self, index, entry):
         bg, fg = self._row_colors(index, entry)
@@ -884,23 +1266,40 @@ class VideoPlayerGUI:
         plain.append(tk.Label(row, text=entry.resolution_label, bg=bg, fg=fg, font=FONT_SMALL))
         plain[-1].grid(row=1, column=2, sticky="w", padx=8)
 
-        fps = tk.Label(row, text="", bg=bg, fg=fg, font=FONT_SMALL)
-        fps.grid(row=1, column=3, sticky="e")
+        meta = tk.Frame(row, bg=bg)
+        meta.grid(row=1, column=3, sticky="e")
+        fps = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
+        slash_a = tk.Label(meta, text=" / ", bg=bg, fg=fg, font=FONT_SMALL)
+        aspect = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
+        slash_p = tk.Label(meta, text=" / ", bg=bg, fg=fg, font=FONT_SMALL)
+        par = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
+        for widget in (fps, slash_a, aspect, slash_p, par):
+            widget.pack(side="left")
 
-        autoplay = tk.Label(row, text="", width=5, bg=bg, fg=fg, font=FONT_SMALL)
-        autoplay.grid(row=0, column=4, rowspan=2, sticky="e", padx=(8, 0))
+        autoplay = tk.Label(row, text="", width=8, bg=bg, fg=fg, font=FONT_SMALL)
+        autoplay.grid(row=0, column=5, rowspan=2, sticky="e", padx=(8, 0))
+
+        volume = tk.Label(row, text="", width=5, anchor="e", bg=bg, fg=COLOR_VOLUME, font=FONT_ROW)
+        volume.grid(row=0, column=4, sticky="e", padx=(8, 0))
 
         self.row_widgets.append({
             "row": row,
             "cursor": cursor,
             "plain": plain,
             "duration": duration,
+            "volume": volume,
+            "meta": meta,
             "fps": fps,
+            "slash_a": slash_a,
+            "aspect": aspect,
+            "slash_p": slash_p,
+            "par": par,
             "autoplay": autoplay,
         })
         self._paint_row(index, entry)
 
-        for widget in row.winfo_children() + [row]:
+        bind_targets = [row, *row.winfo_children(), *meta.winfo_children()]
+        for widget in bind_targets:
             widget.bind("<ButtonPress-1>", lambda e, i=index: self.on_row_press(i, e))
             widget.bind("<B1-Motion>", lambda e: self.on_row_drag(e))
             widget.bind("<ButtonRelease-1>", lambda e: self.on_row_release(e))
@@ -916,21 +1315,38 @@ class VideoPlayerGUI:
             text=">" if index == self.program_index else " ", bg=bg, fg=fg
         )
         widgets["duration"].config(text=self._row_duration_text(entry))
-        warn = (not entry.refresh_ok) or entry.aspect_warning
+        widgets["volume"].config(
+            text=f"{clamp_volume(entry.volume)}%",
+            bg=bg, fg=COLOR_VOLUME,
+        )
+        widgets["meta"].config(bg=bg)
         widgets["fps"].config(
-            text=f"{'> ' if warn else ''}{format_fps_label(entry.fps)} / {entry.aspect}",
-            bg=bg, fg=COLOR_WARNING if warn and fg != COLOR_WHITE else fg,
+            text=format_fps_label(entry.fps),
+            bg=bg, fg=COLOR_WARNING if not entry.refresh_ok else fg,
         )
-        widgets["autoplay"].config(
-            text="AUTO" if entry.autoplay else "",
-            bg=bg, fg=fg if fg == COLOR_WHITE else ACCENT,
+        widgets["slash_a"].config(bg=bg, fg=fg)
+        widgets["aspect"].config(
+            text=entry.aspect,
+            bg=bg, fg=COLOR_WARNING if entry.aspect_warning else fg,
         )
+        widgets["slash_p"].config(bg=bg, fg=fg)
+        widgets["par"].config(
+            text=entry.pixel_aspect,
+            bg=bg, fg=COLOR_WARNING if entry.par_warning else fg,
+        )
+        if entry.missing:
+            widgets["autoplay"].config(text=t("missing_badge"), bg=bg, fg=COLOR_WARNING)
+        else:
+            widgets["autoplay"].config(
+                text=t("auto_badge") if entry.autoplay else "",
+                bg=bg, fg=fg if fg == COLOR_WHITE else ACCENT,
+            )
 
     def apply_preview_layout(self, entry):
         """Stills only need Autoplay and their display time; hide the clip controls."""
         image = bool(entry and entry.is_image)
         for widget in (
-            self.preview_progress, self.preview_marks,
+            self.preview_progress, self.preview_volume_row, self.preview_marks,
             self.preview_io, self.preview_transport,
         ):
             if image:
@@ -955,35 +1371,54 @@ class VideoPlayerGUI:
     def refresh_preview_meta(self):
         entry = self.selected_entry()
         live = self.preview_live or self.preview_index is None
-        mode = "Live" if live else "Preview"
+        mode = t("live") if live else t("preview_mode")
         color = self.state_color() if live else COLOR_PREVIEW
         self.preview_mode_btn.config(text=mode, bg=color, fg=COLOR_WHITE, activebackground=color)
         if live:
-            self.preview_title.config(text=entry.filename if entry else "Live", bg=color, fg=COLOR_WHITE)
+            self.preview_title.config(text=entry.filename if entry else t("live"), bg=color, fg=COLOR_WHITE)
         else:
             self.preview_title.config(
-                text=entry.filename if entry else "Preview", bg=COLOR_PREVIEW, fg=COLOR_WHITE
+                text=entry.filename if entry else t("preview_mode"), bg=COLOR_PREVIEW, fg=COLOR_WHITE
             )
         self.apply_preview_layout(entry)
+        self._load_preview_volume(entry)
         if not entry:
-            self.preview_meta.config(text="Length: --:--")
+            self.preview_meta.config(text=t("length_empty"))
             self.audio_combo["values"] = ["--"]
             self.subtitle_combo["values"] = ["--"]
+            self._update_preview_bar()
+            return
+        if entry.missing:
+            self.preview_meta.config(text=t("missing_file", path=entry.path))
+            self.autoplay_var.set(entry.autoplay)
+            self.played_var.set(entry.played)
             self._update_preview_bar()
             return
         if entry.is_image:
             self.display_time.set(format_seconds(entry.display_time))
             self.preview_meta.config(
-                text=f"Still image   {entry.container} - {entry.width}x{entry.height} - {entry.aspect}"
+                text=t(
+                    "still_image",
+                    container=entry.container,
+                    width=entry.width,
+                    height=entry.height,
+                    aspect=entry.aspect,
+                    pixel_aspect=entry.pixel_aspect,
+                )
             )
             self.autoplay_var.set(entry.autoplay)
             self.played_var.set(entry.played)
             self._update_preview_bar()
             return
         self.preview_meta.config(
-            text=(
-                f"Length: {format_clock(entry.duration)}   "
-                f"{entry.container} - {entry.video_codec} / {entry.audio_codec} - {entry.aspect}"
+            text=t(
+                "length_clip",
+                duration=format_clock(entry.duration),
+                container=entry.container,
+                video=format_codec_rate(entry.video_codec, entry.video_bitrate),
+                audio=format_codec_rate(entry.audio_codec, entry.audio_bitrate),
+                aspect=entry.aspect,
+                pixel_aspect=entry.pixel_aspect,
             )
         )
         self.autoplay_var.set(entry.autoplay)
@@ -994,8 +1429,8 @@ class VideoPlayerGUI:
         subs = entry.subtitle_tracks or ["--"]
         self.subtitle_combo["values"] = subs
         self.subtitle_var.set(entry.subtitle_track if entry.subtitle_track in subs else "--")
-        self.preview_in.config(text=f"In: {format_clock(entry.in_point)}")
-        self.preview_out.config(text=f"Out: {format_clock(entry.out_point)}")
+        self.preview_in.config(text=t("in_value", value=format_clock(entry.in_point)))
+        self.preview_out.config(text=t("out_value", value=format_clock(entry.out_point)))
         self._update_preview_bar()
 
     def refresh_beamer(self):
@@ -1013,6 +1448,7 @@ class VideoPlayerGUI:
             self.beamer_res.config(text="---- x ----")
             self.beamer_fps.config(text="--p")
             self.beamer_aspect.config(text="--")
+            self.refresh_beamer_outputs()
             return
         entry = self.current_entry() if self.program_state == "PLAYING" else self.selected_entry()
         fps = entry.fps if entry else 0
@@ -1021,12 +1457,84 @@ class VideoPlayerGUI:
             if fps else True
         )
         self.beamer_ok.config(
-            text="OK" if matched else "Mismatch",
+            text=t("ok") if matched else t("mismatch"),
             bg=COLOR_PLAYING if matched else COLOR_OFF,
         )
         self.beamer_res.config(text=f"{mode.width} x {mode.height}")
         self.beamer_fps.config(text=format_fps_label(mode.refresh))
         self.beamer_aspect.config(text=aspect_from_mode(mode))
+        self.refresh_beamer_outputs()
+
+    def _combobox_values(self, combo):
+        """Return combobox entries as a tuple; Tk on Linux often yields a Tcl list string."""
+        raw = combo.cget("values")
+        if not raw:
+            return ()
+        if isinstance(raw, (list, tuple)):
+            return tuple(raw)
+        return tuple(self.root.tk.splitlist(raw))
+
+    def refresh_beamer_outputs(self):
+        """Fill the projector output list from the currently connected displays."""
+        combo = getattr(self, "beamer_output_combo", None)
+        if combo is None:
+            return
+        try:
+            outputs = list(self.output_manager.get_outputs())
+        except Exception:
+            outputs = []
+        current = self.output_manager.video_output or ""
+        if current and current not in outputs:
+            outputs = [current, *outputs]
+        picking = combo.focus_get() is combo
+        if not picking:
+            if self._combobox_values(combo) != tuple(outputs):
+                combo["values"] = outputs
+            shown = self.beamer_output.get().strip()
+            if current and (not shown or shown not in outputs):
+                self.beamer_output.set(current)
+        state = "disabled" if self.program_state == "PLAYING" else "readonly"
+        if str(combo.cget("state")) != state:
+            combo.config(state=state)
+
+    def apply_beamer_output(self):
+        output = self.beamer_output.get().strip()
+        if not output:
+            return
+        if self.program_state == "PLAYING":
+            messagebox.showinfo(t("beamer_status"), t("beamer_output_busy"))
+            self.beamer_output.set(self.output_manager.video_output or "")
+            return
+        if output == self.output_manager.video_output:
+            return
+        try:
+            self.output_manager.set_video_output(output)
+        except Exception as exc:
+            messagebox.showerror(t("beamer_status"), str(exc))
+            self.refresh_beamer_outputs()
+            return
+        self.settings["video_output"] = output
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self._restart_main_output()
+        self.refresh_beamer()
+
+    def _restart_main_output(self):
+        """Move the program window onto the newly chosen projector output."""
+        if self.main_mpv.process:
+            try:
+                self.main_mpv.quit()
+            except Exception:
+                pass
+            self.main_mpv = MPVController("main", self.mpv_path)
+            self.main_mpv.add_callback(self.main_mpv_event)
+        if not self.ensure_main_output(auto=False):
+            messagebox.showerror(t("beamer_status"), t("output_failed"))
+            return
+        if self.program_state != "PLAYING":
+            self.blank_output()
 
     def on_row_click(self, index):
         """Single click: show the clip in the preview window."""
@@ -1045,19 +1553,24 @@ class VideoPlayerGUI:
             return
         self.on_row_click(index)
         playing = self.program_state == "PLAYING"
+        missing = bool(self.playlist[index].missing)
         menu = tk.Menu(
             self.root, tearoff=0, bg=COLOR_PANEL, fg=COLOR_TEXT,
             activebackground=COLOR_PROGRAM, activeforeground=COLOR_WHITE,
             disabledforeground=COLOR_PLAYED,
         )
         menu.add_command(
-            label="Set program", command=lambda: self.set_program_point(index),
-            state="disabled" if playing else "normal",
+            label=t("set_program"), command=lambda: self.set_program_point(index),
+            state="disabled" if playing or missing else "normal",
         )
-        menu.add_command(label="Toggle autoplay", command=lambda: self.toggle_autoplay(index))
+        menu.add_command(label=t("toggle_autoplay"), command=lambda: self.toggle_autoplay(index))
+        menu.add_command(
+            label=t("relink_entry"), command=lambda: self.relink_entry(index),
+            state="disabled" if playing and index == self.program_index else "normal",
+        )
         menu.add_separator()
         menu.add_command(
-            label="Delete entry", command=lambda: self.delete_entry(index),
+            label=t("delete_entry"), command=lambda: self.delete_entry(index),
             state="disabled" if playing and index == self.program_index else "normal",
         )
         self.row_menu = menu
@@ -1066,12 +1579,64 @@ class VideoPlayerGUI:
         finally:
             menu.grab_release()
 
+    def _move_program_cursor(self, index):
+        if self.playlist:
+            index = min(max(index, 0), len(self.playlist) - 1)
+        else:
+            index = 0
+        if index != self.program_index:
+            self.zoom_confirmed_index = None
+        self.program_index = index
+
+    def _skip_to_playable(self, inclusive=True):
+        """Move the program cursor to the next clip whose file is still on disk."""
+        if not self.playlist:
+            return False
+        start = self.program_index if inclusive else self.program_index + 1
+        start = max(0, start)
+        for index in range(start, len(self.playlist)):
+            entry = self.playlist[index]
+            entry.missing = not media_file_available(entry)
+            if not entry.missing:
+                self._move_program_cursor(index)
+                return True
+        return False
+
+    def confirm_projection_zoom(self):
+        """Ask as soon as the program cursor lands on a clip that needs a zoom change."""
+        if not self.projection_zoom.get() or not self.playlist:
+            return True
+        entry = self.current_entry()
+        if not entry or entry.missing or not (entry.aspect_warning or entry.par_warning):
+            return True
+        if self.zoom_confirmed_index == self.program_index:
+            return True
+        self.root.update_idletasks()
+        ok = messagebox.askokcancel(
+            t("projection_zoom_title"),
+            t(
+                "projection_zoom_message",
+                filename=entry.filename,
+                aspect=entry.aspect,
+                pixel_aspect=entry.pixel_aspect,
+            ),
+        )
+        if ok:
+            self.zoom_confirmed_index = self.program_index
+        else:
+            self.zoom_confirmed_index = None
+        return ok
+
     def set_program_point(self, index):
         if self.program_state == "PLAYING" or not 0 <= index < len(self.playlist):
             return
-        self.program_index = index
+        if self.playlist[index].missing:
+            return
+        self._move_program_cursor(index)
         self.repaint_playlist()
         self.refresh_status()
+        if self.program_state == "PROGRAM":
+            self.confirm_projection_zoom()
 
     def toggle_autoplay(self, index):
         if not 0 <= index < len(self.playlist):
@@ -1081,6 +1646,73 @@ class VideoPlayerGUI:
         if index == self.preview_index:
             self.autoplay_var.set(entry.autoplay)
         self.repaint_playlist()
+
+    def relink_entry(self, index):
+        """Point this playlist row at a new file and keep cue/volume settings."""
+        if not 0 <= index < len(self.playlist):
+            return
+        if self.program_state == "PLAYING" and index == self.program_index:
+            return
+        entry = self.playlist[index]
+        dialog_options = {}
+        directory = os.path.dirname(entry.path)
+        if directory and os.path.isdir(directory):
+            dialog_options["initialdir"] = directory
+        elif self.last_import_dir:
+            dialog_options["initialdir"] = self.last_import_dir
+        if entry.filename:
+            dialog_options["initialfile"] = entry.filename
+        path = filedialog.askopenfilename(
+            title=t("relink_entry"),
+            filetypes=[
+                (t("media_files"), " ".join(f"*{ext}" for ext in sorted(VIDEO_EXTS | IMAGE_EXTS))),
+                (t("all_files"), "*.*"),
+            ],
+            **dialog_options,
+        )
+        if not path:
+            return
+        try:
+            probed = probe_media(path)
+        except Exception as exc:
+            messagebox.showerror(t("import_error"), f"{os.path.basename(path)}\n{exc}")
+            return
+        probed.autoplay = entry.autoplay
+        probed.played = entry.played
+        probed.volume = clamp_volume(entry.volume)
+        probed.display_time = entry.display_time
+        if probed.duration > 0:
+            if entry.in_point is not None and 0 <= entry.in_point < probed.duration:
+                probed.in_point = entry.in_point
+            if entry.out_point is not None and 0 < entry.out_point <= probed.duration:
+                probed.out_point = entry.out_point
+            if (
+                probed.in_point is not None
+                and probed.out_point is not None
+                and probed.in_point > probed.out_point
+            ):
+                probed.in_point, probed.out_point = probed.out_point, probed.in_point
+        if entry.audio_track in probed.audio_tracks:
+            probed.audio_track = entry.audio_track
+        if entry.subtitle_track in (probed.subtitle_tracks or ["--"]):
+            probed.subtitle_track = entry.subtitle_track
+        probed.missing = False
+        try:
+            if not self.output_manager.video_output:
+                self.output_manager.select_video_output()
+            video = self.output_manager.get_video_info(path) if not probed.is_image else None
+            if video:
+                mode, matched = self.output_manager.find_best_mode(video, create=False)
+                probed.refresh_ok = matched
+        except Exception:
+            probed.refresh_ok = False
+        self.playlist[index] = probed
+        self.remember_import_dir(path)
+        if self.zoom_confirmed_index == index:
+            self.zoom_confirmed_index = None
+        if self.preview_index == index:
+            self.show_preview_clip(probed)
+        self.refresh_all()
 
     def delete_entry(self, index):
         if not 0 <= index < len(self.playlist):
@@ -1195,21 +1827,46 @@ class VideoPlayerGUI:
         except OSError:
             pass
 
+    def remember_playlist_dir(self, path):
+        directory = path if os.path.isdir(path) else os.path.dirname(path)
+        if not directory or not os.path.isdir(directory):
+            return
+        self.last_playlist_dir = directory
+        self.settings["last_playlist_dir"] = directory
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+
+    def playlist_dialog_options(self):
+        """Open playlist dialogs in the last used playlist folder."""
+        options = {}
+        directory = ""
+        if self.playlist_path:
+            directory = os.path.dirname(self.playlist_path)
+        if not directory or not os.path.isdir(directory):
+            directory = self.last_playlist_dir
+        if not directory or not os.path.isdir(directory):
+            directory = self.last_import_dir
+        if directory and os.path.isdir(directory):
+            options["initialdir"] = directory
+        return options
+
     def import_media(self):
         dialog_options = {}
         if self.last_import_dir:
             dialog_options["initialdir"] = self.last_import_dir
         paths = filedialog.askopenfilenames(
-            title="Import media",
+            title=t("import_media"),
             filetypes=[
-                ("Media", " ".join(f"*{ext}" for ext in sorted(VIDEO_EXTS | IMAGE_EXTS))),
-                ("All files", "*.*"),
+                (t("media_files"), " ".join(f"*{ext}" for ext in sorted(VIDEO_EXTS | IMAGE_EXTS))),
+                (t("all_files"), "*.*"),
             ],
             **dialog_options,
         )
         if not paths:
             directory = filedialog.askdirectory(
-                title="Import directory",
+                title=t("import_directory"),
                 **dialog_options,
             )
             if directory:
@@ -1231,7 +1888,7 @@ class VideoPlayerGUI:
         try:
             entry = probe_media(path)
         except Exception as exc:
-            messagebox.showerror("Import", f"{os.path.basename(path)}\n{exc}")
+            messagebox.showerror(t("import_error"), f"{os.path.basename(path)}\n{exc}")
             return
         try:
             if not self.output_manager.video_output:
@@ -1244,44 +1901,91 @@ class VideoPlayerGUI:
             entry.refresh_ok = False
         self.playlist.append(entry)
 
+    def new_playlist(self):
+        if self.playlist or self.playlist_path:
+            if not messagebox.askyesno(t("new_playlist_title"), t("new_playlist_message")):
+                return
+        if self.autoplay_after_id:
+            self.root.after_cancel(self.autoplay_after_id)
+            self.autoplay_after_id = None
+        self.program_state = "OFF"
+        self.playlist = []
+        self.playlist_path = ""
+        self.program_index = 0
+        self.zoom_confirmed_index = None
+        self.preview_index = None
+        self.preview_live = True
+        self.preview_mpv.stop()
+        self.blank_output()
+        self.playlist_name.delete(0, "end")
+        self.playlist_name.insert(0, "untitled.pls")
+        self.refresh_all()
+
     def load_playlist(self):
         path = filedialog.askopenfilename(
-            title="Load playlist",
-            filetypes=[("Playlist", "*.pls *.json"), ("All files", "*.*")],
+            title=t("load_playlist"),
+            filetypes=[(t("playlist_files"), "*.pls *.json"), (t("all_files"), "*.*")],
+            **self.playlist_dialog_options(),
         )
         if not path:
             return
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
         self.playlist = [PlaylistEntry.from_dict(item) for item in data.get("entries", [])]
+        missing = self._scan_playlist_media()
         self.projection_zoom.set(data.get("projection_zoom", False))
         self.autoplay_delay.set(str(data.get("autoplay_delay", 0)))
         self.idle_media_path = data.get("idle_media_path", "")
         self.idle_media.set(
-            os.path.basename(self.idle_media_path) if self.idle_media_path else "none"
+            os.path.basename(self.idle_media_path) if self.idle_media_path else t("idle_none")
         )
         self.playlist_path = path
         self.playlist_name.delete(0, "end")
         self.playlist_name.insert(0, os.path.basename(path))
-        # Pick up the saved program cue, clamped to the entries we actually loaded.
+        self.remember_playlist_dir(path)
         try:
             index = int(data.get("program_index", 0))
         except (TypeError, ValueError):
             index = 0
         self.program_index = min(max(index, 0), max(len(self.playlist) - 1, 0))
+        self._skip_to_playable(inclusive=True)
+        self.zoom_confirmed_index = None
         self.preview_index = None
         self.preview_live = True
         if self.program_state != "PLAYING":
             self.blank_output()
         self.refresh_all()
+        if missing:
+            messagebox.showwarning(t("load_playlist"), t("missing_playlist", count=missing))
+
+    def _scan_playlist_media(self):
+        """Mark missing files and refresh metadata for clips that are still on disk."""
+        missing = mark_missing_media(self.playlist)
+        for entry in self.playlist:
+            if not entry.missing:
+                refresh_entry_aspect(entry)
+        return missing
+
+    def check_playlist_files(self):
+        """Re-check every playlist path, as when a playlist is loaded."""
+        missing = self._scan_playlist_media()
+        if self.program_state != "PLAYING":
+            self._skip_to_playable(inclusive=True)
+        if self.preview_index is not None and not self.preview_live:
+            self.show_preview_clip(self.selected_entry())
+        self.refresh_all()
+        if missing:
+            messagebox.showwarning(t("refresh_playlist"), t("missing_playlist", count=missing))
 
     def save_playlist(self):
         suggested = self.playlist_name.get().strip() or "playlist.pls"
+        options = self.playlist_dialog_options()
         path = filedialog.asksaveasfilename(
-            title="Save playlist",
+            title=t("save_playlist"),
             defaultextension=".pls",
             initialfile=suggested,
-            filetypes=[("Playlist", "*.pls"), ("JSON", "*.json")],
+            filetypes=[(t("playlist_files"), "*.pls"), ("JSON", "*.json")],
+            **options,
         )
         if not path:
             return
@@ -1298,13 +2002,14 @@ class VideoPlayerGUI:
         self.playlist_path = path
         self.playlist_name.delete(0, "end")
         self.playlist_name.insert(0, os.path.basename(path))
+        self.remember_playlist_dir(path)
 
     def choose_idle_media(self):
         dialog_options = {}
         if self.last_import_dir:
             dialog_options["initialdir"] = self.last_import_dir
-        path = filedialog.askopenfilename(title="Idle screen media", **dialog_options)
-        self.idle_media.set(os.path.basename(path) if path else "none")
+        path = filedialog.askopenfilename(title=t("idle_screen_media"), **dialog_options)
+        self.idle_media.set(os.path.basename(path) if path else t("idle_none"))
         self.idle_media_path = path or ""
         if path:
             self.remember_import_dir(path)
@@ -1359,7 +2064,7 @@ class VideoPlayerGUI:
             if auto and output == self.output_manager.get_primary_output():
                 # No dedicated projector display: don't cover the control screen.
                 return False
-            self.main_mpv.start(self.output_manager.get_mpv_arguments())
+            self.main_mpv.start(self.output_manager.get_mpv_arguments(self.mpv_path))
         except Exception as exc:
             print(f"Videoausgang nicht verfuegbar: {exc}")
             return False
@@ -1406,6 +2111,7 @@ class VideoPlayerGUI:
         if not path or not self.idle_allowed() or not self.main_mpv.process:
             return
         self.main_mpv.set_loop_file(True)
+        self.main_mpv.set_volume(100)
         self.main_mpv.load_file(path, play=True)
         self.blackout = False
         self.idle_showing = True
@@ -1428,15 +2134,22 @@ class VideoPlayerGUI:
             "--osd-level=0",
             "--image-display-duration=inf",
             "--pause",
+            "--audio-device=auto",
         ]
         try:
             self.preview_mpv.start(arguments)
-            self.preview_mpv.set_volume(0)
+            self.preview_mpv.set_volume(clamp_volume(self.preview_volume.get()))
             self.preview_placeholder.place_forget()
         except Exception as exc:
-            self.preview_placeholder.config(text=f"Preview unavailable\n{exc}")
+            self.preview_placeholder.config(text=t("preview_unavailable", error=exc))
 
     def show_preview_clip(self, entry, follow_live=False, start=None, play=None):
+        if not entry or entry.missing or not media_file_available(entry):
+            if entry:
+                entry.missing = True
+            if self.preview_mpv.process:
+                self.preview_mpv.stop()
+            return
         if not self.preview_mpv.process:
             self.start_preview_player()
         if not self.preview_mpv.process:
@@ -1463,10 +2176,12 @@ class VideoPlayerGUI:
         if self.program_state == "OFF":
             # Start only arms the program; Resume then rolls the clip.
             self.program_state = "PROGRAM"
+            self._skip_to_playable(inclusive=True)
             self.ensure_main_output()
             # Arming brings up the idle background, if one is set.
             self.blank_output()
             self.refresh_all()
+            self.confirm_projection_zoom()
             return
         if self.program_state == "PLAYING" and self.still_waiting:
             # A still without display time ends when the operator resumes.
@@ -1485,34 +2200,47 @@ class VideoPlayerGUI:
         if not self.playlist:
             return
         self.autoplay_after_id = None
+        if self.idle_after_id:
+            self.root.after_cancel(self.idle_after_id)
+            self.idle_after_id = None
         if self.idle_showing:
             # Fade the non-black background out to black before the clip comes up.
             self.blank_output(show_idle=False)
             delay = int(self.autoplay_seconds() * 1000)
             self.autoplay_after_id = self.root.after(delay, self.start_current_clip)
             return
-        self.program_index = min(self.program_index, len(self.playlist) - 1)
+        if not self._skip_to_playable(inclusive=True):
+            self.program_state = "PROGRAM"
+            self.blank_output()
+            self.refresh_all()
+            messagebox.showinfo(t("playback"), t("missing_playback"))
+            return
+        if not self.confirm_projection_zoom():
+            self.program_state = "PROGRAM"
+            self.refresh_all()
+            return
         entry = self.playlist[self.program_index]
-        if self.projection_zoom.get() and entry.aspect_warning:
-            if not messagebox.askokcancel(
-                "Projection zoom",
-                f"{entry.filename} needs a zoom / aspect change ({entry.aspect}).\n"
-                "Confirm after the projector zoom has been set.",
-            ):
-                self.program_state = "PROGRAM"
-                self.refresh_all()
-                return
         try:
             video, mode, matched = self.output_manager.prepare_for_video(entry.path)
             entry.refresh_ok = matched
         except Exception as exc:
-            messagebox.showerror("Playback", str(exc))
+            if not media_file_available(entry):
+                entry.missing = True
+                if self._skip_to_playable(inclusive=False):
+                    self.start_current_clip()
+                    return
+                self.program_state = "PROGRAM"
+                self.blank_output()
+                self.refresh_all()
+                messagebox.showinfo(t("playback"), t("missing_playback"))
+                return
+            messagebox.showerror(t("playback"), str(exc))
             self.program_state = "PROGRAM"
             self.refresh_all()
             return
 
         if not self.ensure_main_output():
-            messagebox.showerror("Playback", "Der Videoausgang konnte nicht geoeffnet werden.")
+            messagebox.showerror(t("playback"), t("output_failed"))
             self.program_state = "PROGRAM"
             self.refresh_all()
             return
@@ -1531,6 +2259,9 @@ class VideoPlayerGUI:
             play=True,
         )
         self.apply_tracks(entry, self.main_mpv)
+        volume = clamp_volume(entry.volume)
+        self._load_program_volume(entry, force=True)
+        self.main_mpv.set_volume(volume)
         self.main_pause = False
         self.blackout = False
         self.current_file = entry.path
@@ -1585,7 +2316,7 @@ class VideoPlayerGUI:
     def confirm_pause(self):
         if self.program_state != "PLAYING":
             return
-        if messagebox.askyesno("Pause", "Pause playback? The projector output will go black."):
+        if messagebox.askyesno(t("pause_title"), t("pause_message")):
             self.main_mpv.set_pause(True)
             self.main_mpv.set_vid(False)
             self.preview_mpv.set_pause(True)
@@ -1595,7 +2326,7 @@ class VideoPlayerGUI:
     def confirm_still(self):
         if self.program_state != "PLAYING":
             return
-        if messagebox.askyesno("Still", "Freeze the current frame on the projector?"):
+        if messagebox.askyesno(t("still_title"), t("still_message")):
             self.main_mpv.set_vid(True)
             self.main_mpv.set_pause(True)
             self.preview_mpv.set_pause(True)
@@ -1606,8 +2337,8 @@ class VideoPlayerGUI:
         if self.program_state == "OFF":
             return
         playing = self.program_state == "PLAYING"
-        question = "Stop the current clip?" if playing else "Stop the program?"
-        if not messagebox.askyesno("Stop", question):
+        question = t("stop_clip") if playing else t("stop_program")
+        if not messagebox.askyesno(t("stop_title"), question):
             return
         if self.autoplay_after_id:
             self.root.after_cancel(self.autoplay_after_id)
@@ -1618,13 +2349,14 @@ class VideoPlayerGUI:
             self.program_state = "PROGRAM"
             self.blank_output()
             self.preview_mpv.stop()
-            if self.program_index < len(self.playlist) - 1:
-                self.program_index += 1
+            self._skip_to_playable(inclusive=False)
         else:
             # A stopped program means a dark screen, so no idle background either.
             self.program_state = "OFF"
             self.blank_output()
         self.refresh_all()
+        if playing:
+            self.confirm_projection_zoom()
 
     def on_clip_finished(self):
         if self.program_state != "PLAYING":
@@ -1632,14 +2364,16 @@ class VideoPlayerGUI:
         entry = self.current_entry()
         if entry:
             entry.played = True
-        has_next = self.program_index < len(self.playlist) - 1
-        autoplay = bool(entry and entry.autoplay and has_next)
+        autoplay = bool(entry and entry.autoplay)
         self.program_state = "PROGRAM"
+        has_next = self._skip_to_playable(inclusive=False)
         # The delay stays black; the idle background only follows when nothing is queued.
-        self.blank_output(show_idle=not autoplay)
-        if has_next:
-            self.program_index += 1
+        self.blank_output(show_idle=not (autoplay and has_next))
         self.refresh_all()
+        if not has_next:
+            return
+        if not self.confirm_projection_zoom():
+            return
         if autoplay:
             ms = int(self.autoplay_seconds() * 1000)
             self.autoplay_after_id = self.root.after(ms, self.start_current_clip)
@@ -1647,7 +2381,7 @@ class VideoPlayerGUI:
     def preview_play(self):
         self.preview_live = False
         entry = self.selected_entry()
-        if not entry:
+        if not entry or entry.missing:
             return
         if not self.preview_mpv.process:
             self.start_preview_player()
@@ -1658,13 +2392,24 @@ class VideoPlayerGUI:
             if start <= 0.05 and entry.in_point is not None:
                 start = entry.in_point
             self.show_preview_clip(entry, start=start, play=True)
+        self.preview_paused = False
+        self.preview_stopped = False
         self.refresh_preview_meta()
+        self.refresh_transport()
 
     def preview_pause(self):
+        self.preview_live = False
         self.preview_mpv.set_pause(True)
+        self.preview_paused = True
+        self.preview_stopped = False
+        self.refresh_transport()
 
     def preview_stop(self):
+        self.preview_live = False
         self.preview_mpv.stop()
+        self.preview_paused = True
+        self.preview_stopped = True
+        self.refresh_transport()
 
     def preview_seek(self, seconds):
         self.preview_mpv.seek(seconds)
@@ -1726,9 +2471,9 @@ class VideoPlayerGUI:
             in_point=in_point,
             out_point=out_point,
         )
-        self.main_in.config(text=f"In: {format_clock(in_point)}")
-        self.main_out.config(text=f"Out: {format_clock(out_point)}")
-        self.main_time.config(text=f"Time: {format_clock(self.position)}")
+        self.main_in.config(text=t("in_value", value=format_clock(in_point)))
+        self.main_out.config(text=t("out_value", value=format_clock(out_point)))
+        self.main_time.config(text=t("time_value", value=format_clock(self.position)))
 
     def sync_live_preview(self):
         """Live mode mirrors the program, also before it rolls and while frozen."""
@@ -1757,14 +2502,14 @@ class VideoPlayerGUI:
 
     def _on_main_seek(self, position, dragging=False):
         self.position = position
-        self.main_time.config(text=f"Time: {format_clock(position)}")
+        self.main_time.config(text=t("time_value", value=format_clock(position)))
         self.main_mpv.set_position(position)
         if self.preview_live:
             self.preview_mpv.set_position(position)
 
     def _on_preview_seek(self, position, dragging=False):
         self.preview_position = position
-        self.preview_time.config(text=f"Time: {format_clock(position)}")
+        self.preview_time.config(text=t("time_value", value=format_clock(position)))
         self.preview_mpv.set_position(position)
 
     def main_mpv_event(self, mpv, message):
@@ -1774,6 +2519,8 @@ class VideoPlayerGUI:
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
+                if self.program_state == "PLAYING":
+                    mpv.set_volume(clamp_volume(entry.volume))
             self.main_pause = False
             return
         if event == "end-file" and message.get("reason") in (None, "eof", "stop"):
@@ -1788,7 +2535,13 @@ class VideoPlayerGUI:
             # A still has no useful clock of its own; the display timer drives it.
             return
         if name == "time-pos" and value is not None:
-            self.position = float(value)
+            try:
+                position = float(value)
+            except (TypeError, ValueError):
+                return
+            if not math.isfinite(position):
+                return
+            self.position = position
             entry = self.current_entry()
             if (
                 self.program_state == "PLAYING"
@@ -1798,7 +2551,12 @@ class VideoPlayerGUI:
             ):
                 self.root.after(0, self.on_clip_finished)
         elif name == "duration" and value is not None:
-            self.duration = float(value)
+            try:
+                duration = float(value)
+            except (TypeError, ValueError):
+                return
+            if math.isfinite(duration) and duration > 0:
+                self.duration = duration
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)
         elif name == "eof-reached" and value:
@@ -1814,21 +2572,36 @@ class VideoPlayerGUI:
         name = message.get("name")
         value = message.get("data")
         if name == "time-pos" and value is not None:
-            self.preview_position = float(value)
+            try:
+                position = float(value)
+            except (TypeError, ValueError):
+                return
+            if math.isfinite(position):
+                self.preview_position = position
         elif name == "duration" and value is not None:
-            self.preview_duration = float(value)
+            try:
+                duration = float(value)
+            except (TypeError, ValueError):
+                return
+            if math.isfinite(duration) and duration > 0:
+                self.preview_duration = duration
+        elif name == "pause" and value is not None:
+            self.preview_paused = bool(value)
 
     def update_gui(self):
-        if self.still_started is not None and self.program_state == "PLAYING":
-            self.position = min(self.duration, time.monotonic() - self.still_started)
-        if not self.main_progress.dragging:
-            self._update_main_bar()
-        if not self.preview_progress.dragging:
-            self._update_preview_bar()
-        self.preview_time.config(text=f"Time: {format_clock(self.preview_position)}")
-        self.sync_live_preview()
-        self.refresh_status()
-        self.refresh_beamer()
+        try:
+            if self.still_started is not None and self.program_state == "PLAYING":
+                self.position = min(self.duration, time.monotonic() - self.still_started)
+            if not self.main_progress.dragging:
+                self._update_main_bar()
+            if not self.preview_progress.dragging:
+                self._update_preview_bar()
+            self.preview_time.config(text=t("time_value", value=format_clock(self.preview_position)))
+            self.sync_live_preview()
+            self.refresh_status()
+            self.refresh_beamer()
+        except Exception as exc:
+            print(f"GUI-Aktualisierung: {exc}")
         self.root.after(250, self.update_gui)
 
     def close(self):

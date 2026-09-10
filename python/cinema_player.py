@@ -7,16 +7,19 @@ Two mpv instances:
     - Preview: separate mpv window on the control monitor
 """
 
+import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
+
 import tkinter as tk
 import subprocess
 import socket
 import json
 import os
 import re
-import math
 import shutil
+import math
 import time
 import threading
+import tomllib
 from dataclasses import dataclass, field, fields
 from fractions import Fraction
 
@@ -26,19 +29,33 @@ PREVIEW_WIDTH = 480
 PREVIEW_HEIGHT = 270
 PREVIEW_MARGIN = 20
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def read_app_version():
+    """Program version lives in pyproject.toml so packaging and the GUI stay in sync."""
+    path = os.path.join(ROOT_DIR, "pyproject.toml")
+    try:
+        with open(path, "rb") as handle:
+            return tomllib.load(handle)["project"]["version"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return "0.0.0"
+
+
+APP_VERSION = read_app_version()
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".dpx"}
 VIDEO_EXTS = {
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m2ts", ".ts",
     ".mxf", ".mpg", ".mpeg", ".m4v", ".ogv",
 }
 
-FONT_TITLE = ("DejaVu Sans", 18, "bold")
-FONT_STATUS = ("DejaVu Sans", 11, "bold")
-FONT_UI = ("DejaVu Sans", 10)
-FONT_UI_BOLD = ("DejaVu Sans", 10, "bold")
-FONT_SMALL = ("DejaVu Sans", 9)
-FONT_ROW = ("DejaVu Sans", 9)
-FONT_ROW_BOLD = ("DejaVu Sans", 10, "bold")
+FONT_FAMILY = "Inter"
+FONT_TITLE = (FONT_FAMILY, 18, "bold")
+FONT_STATUS = (FONT_FAMILY, 11, "bold")
+FONT_UI = (FONT_FAMILY, 10)
+FONT_UI_BOLD = (FONT_FAMILY, 10, "bold")
+FONT_SMALL = (FONT_FAMILY, 9)
+FONT_ROW = (FONT_FAMILY, 9)
+FONT_ROW_BOLD = (FONT_FAMILY, 10, "bold")
 
 
 def mpv_supports_x11(path):
@@ -128,6 +145,8 @@ class PlaylistEntry:
     container: str = ""
     video_codec: str = ""
     audio_codec: str = ""
+    video_bitrate: int = 0
+    audio_bitrate: int = 0
     width: int = 0
     height: int = 0
     fps: float = 0.0
@@ -146,17 +165,30 @@ class PlaylistEntry:
     is_image: bool = False
     refresh_ok: bool = True
     aspect_warning: bool = False
+    par_warning: bool = False
     played: bool = False
+    missing: bool = False
+    volume: int = 100
 
     def __post_init__(self):
         if not self.filename:
             self.filename = os.path.basename(self.path)
+        self.volume = clamp_volume(self.volume)
 
     @classmethod
     def from_dict(cls, data):
         """Load an entry, ignoring keys from older playlist versions."""
         names = {f.name for f in fields(cls)}
         return cls(**{key: value for key, value in data.items() if key in names})
+
+
+def clamp_volume(value, default=100):
+    """Keep playlist and fader values in the 0–100 range used by mpv."""
+    try:
+        volume = int(round(float(value)))
+    except (TypeError, ValueError):
+        volume = default
+    return max(0, min(100, volume))
 
 
 def format_fps_label(fps):
@@ -187,17 +219,70 @@ def resolution_label(width, height):
     return "--"
 
 
-def aspect_label(width, height, display_ar=None):
-    ratio = 0.0
-    if display_ar and ":" in str(display_ar) and display_ar not in ("0:1", "N/A"):
-        try:
-            left, right = display_ar.split(":")
-            if float(right):
-                ratio = float(left) / float(right)
-        except ValueError:
-            ratio = 0.0
-    if not ratio and width and height:
-        ratio = width / height
+def parse_aspect_ratio(value):
+    """Return (numerator, denominator) from ffprobe values like 16:9 or 64/45."""
+    if value in (None, "", "--", "N/A", "nan"):
+        return None
+    text = str(value).strip()
+    if text in ("0:1", "0/1", "0:0", "0/0"):
+        return None
+    separator = ":" if ":" in text else "/" if "/" in text else None
+    try:
+        if separator:
+            left, right = text.split(separator, 1)
+            num, den = float(left), float(right)
+        else:
+            num, den = float(text), 1.0
+    except ValueError:
+        return None
+    if num <= 0 or den <= 0:
+        return None
+    return num, den
+
+
+def format_aspect_ratio(num, den):
+    fraction = Fraction(num / den).limit_denominator(1000)
+    return f"{fraction.numerator}:{fraction.denominator}"
+
+
+def same_aspect_ratio(left, right, tolerance=0.012):
+    parsed_left = parse_aspect_ratio(left)
+    parsed_right = parse_aspect_ratio(right)
+    if not parsed_left or not parsed_right:
+        return False
+    return abs((parsed_left[0] / parsed_left[1]) - (parsed_right[0] / parsed_right[1])) < tolerance
+
+
+def pixel_aspect_label(width, height, sample_ar=None, display_ar=None):
+    parsed = parse_aspect_ratio(sample_ar)
+    if not parsed and width and height:
+        display = parse_aspect_ratio(display_ar)
+        if display:
+            storage = width / height
+            if storage:
+                parsed = (display[0] / display[1] / storage, 1.0)
+    if not parsed:
+        return "1:1" if width and height else "--"
+    if abs(parsed[0] / parsed[1] - 1.0) < 0.001:
+        return "1:1"
+    return format_aspect_ratio(parsed[0], parsed[1])
+
+
+def display_aspect_ratio(width, height, display_ar=None, sample_ar=None):
+    parsed = parse_aspect_ratio(display_ar)
+    if parsed:
+        return parsed[0] / parsed[1]
+    if width and height:
+        storage = width / height
+        sample = parse_aspect_ratio(sample_ar)
+        if sample:
+            return storage * (sample[0] / sample[1])
+        return storage
+    return 0.0
+
+
+def aspect_label(width, height, display_ar=None, sample_ar=None):
+    ratio = display_aspect_ratio(width, height, display_ar, sample_ar)
     if not ratio:
         return "--"
     presets = (
@@ -207,18 +292,144 @@ def aspect_label(width, height, display_ar=None):
     for value, label in presets:
         if abs(ratio - value) < 0.05:
             return label
-    gcd = math.gcd(width, height) if width and height else 1
-    if gcd:
-        return f"{width // gcd}:{height // gcd}"
-    return "--"
+    return format_aspect_ratio(ratio, 1.0)
+
+
+def media_file_available(entry):
+    """True when the playlist entry still points at a readable file."""
+    return bool(entry and entry.path and os.path.isfile(entry.path))
+
+
+def mark_missing_media(entries):
+    """Flag entries whose media file is gone. Returns how many are missing."""
+    missing = 0
+    for entry in entries:
+        entry.missing = not media_file_available(entry)
+        if entry.missing:
+            missing += 1
+    return missing
+
+
+def apply_playlist_warnings(entries, projection_zoom):
+    """Mark aspect and pixel-aspect changes against the previous readable clip."""
+    previous_aspect = None
+    previous_par = None
+    for entry in entries:
+        if entry.missing:
+            entry.aspect_warning = False
+            entry.par_warning = False
+            continue
+        aspect_changed = (
+            previous_aspect is not None
+            and entry.aspect not in ("", "--")
+            and entry.aspect != previous_aspect
+        )
+        par_ok = parse_aspect_ratio(entry.pixel_aspect) is not None
+        par_changed = (
+            previous_par is not None
+            and par_ok
+            and not same_aspect_ratio(previous_par, entry.pixel_aspect)
+        )
+        entry.aspect_warning = bool(projection_zoom and aspect_changed)
+        entry.par_warning = bool(projection_zoom and par_changed)
+        if entry.aspect not in ("", "--"):
+            previous_aspect = entry.aspect
+        if par_ok:
+            previous_par = entry.pixel_aspect
+
+
+def refresh_entry_aspect(entry):
+    """Read display and pixel aspect from the media file when it is still on disk."""
+    if os.path.isfile(entry.path):
+        try:
+            probed = probe_media(entry.path)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError, ValueError, KeyError):
+            probed = None
+        if probed:
+            entry.width = probed.width
+            entry.height = probed.height
+            entry.aspect = probed.aspect
+            entry.pixel_aspect = probed.pixel_aspect
+            entry.resolution_label = probed.resolution_label
+            entry.video_codec = probed.video_codec
+            entry.audio_codec = probed.audio_codec
+            entry.video_bitrate = probed.video_bitrate
+            entry.audio_bitrate = probed.audio_bitrate
+            return entry
+    entry.pixel_aspect = pixel_aspect_label(
+        entry.width, entry.height, entry.pixel_aspect, entry.aspect
+    )
+    entry.aspect = aspect_label(
+        entry.width, entry.height, entry.aspect, entry.pixel_aspect
+    )
+    return entry
+
+
+def parse_bitrate_bps(value):
+    """Parse ffprobe bit/s values; 0 means unknown."""
+    if value in (None, "", "N/A", "n/a"):
+        return 0
+    try:
+        bps = float(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+    if bps <= 0:
+        return 0
+    return int(round(bps))
+
+
+def stream_bitrate_bps(stream, duration=0.0):
+    """Read a stream bitrate, including MKV-style BPS tags when bit_rate is missing."""
+    if not stream:
+        return 0
+    bps = parse_bitrate_bps(stream.get("bit_rate"))
+    if bps:
+        return bps
+    tags = {str(key).upper(): value for key, value in (stream.get("tags") or {}).items()}
+    for key in ("BPS", "BPS-ENG", "BITRATE", "BIT_RATE"):
+        bps = parse_bitrate_bps(tags.get(key))
+        if bps:
+            return bps
+    size = parse_bitrate_bps(tags.get("NUMBER_OF_BYTES") or tags.get("NUMBER_OF_BYTES-ENG"))
+    if size and duration > 0:
+        return int(round(size * 8 / duration))
+    return 0
+
+
+def format_bitrate(bps):
+    """Human-readable media bitrate: Mbps for video-scale rates, kbps otherwise."""
+    bps = parse_bitrate_bps(bps)
+    if not bps:
+        return ""
+    if bps >= 1_000_000:
+        mbps = bps / 1_000_000
+        if mbps >= 10 or abs(mbps - round(mbps)) < 0.05:
+            return f"{int(round(mbps))} Mbps"
+        return f"{mbps:.1f} Mbps"
+    kbps = bps / 1000
+    if kbps >= 10 or abs(kbps - round(kbps)) < 0.5:
+        return f"{int(round(kbps))} kbps"
+    return f"{kbps:.1f} kbps"
+
+
+def format_codec_rate(codec, bps):
+    name = (codec or "").strip()
+    rate = format_bitrate(bps)
+    if name and rate:
+        return f"{name} {rate}"
+    return name or rate or "--"
 
 
 def format_clock(seconds):
-    if seconds is None or seconds < 0:
+    try:
+        seconds = float(seconds)
+    except (TypeError, ValueError):
+        return "--:--"
+    if not math.isfinite(seconds) or seconds < 0:
         return "--:--"
     seconds = int(seconds)
-    hours, rem = divmod(seconds, 3600)
-    minutes, secs = divmod(rem, 60)
+    hours, rel = divmod(seconds, 3600)
+    minutes, secs = divmod(rel, 60)
     if hours:
         return f"{hours:02}:{minutes:02}:{secs:02}"
     return f"{minutes:02}:{secs:02}"
@@ -255,11 +466,16 @@ def probe_media(path):
         except (ZeroDivisionError, ValueError):
             entry.fps = 0.0
         entry.video_codec = (video.get("codec_name") or "").upper()
-        entry.pixel_aspect = video.get("sample_aspect_ratio") or "--"
+        sample_ar = video.get("sample_aspect_ratio")
+        display_ar = video.get("display_aspect_ratio")
+        entry.pixel_aspect = pixel_aspect_label(
+            entry.width, entry.height, sample_ar, display_ar
+        )
         entry.aspect = aspect_label(
-            entry.width, entry.height, video.get("display_aspect_ratio")
+            entry.width, entry.height, display_ar, sample_ar
         )
         entry.resolution_label = resolution_label(entry.width, entry.height)
+        entry.video_bitrate = stream_bitrate_bps(video, entry.duration)
 
     if audios:
         names = []
@@ -273,6 +489,11 @@ def probe_media(path):
         entry.audio_tracks = names
         entry.audio_codec = (audios[0].get("codec_name") or "").upper()
         entry.audio_track = names[0]
+        entry.audio_bitrate = stream_bitrate_bps(audios[0], entry.duration)
+    if not entry.video_bitrate:
+        leftover = parse_bitrate_bps(fmt.get("bit_rate")) - entry.audio_bitrate
+        if leftover > 0:
+            entry.video_bitrate = leftover
     if subs:
         names = ["--"]
         for index, stream in enumerate(subs, start=1):
@@ -287,12 +508,112 @@ def probe_media(path):
     return entry
 
 
+def parse_mpv_audio_devices(help_text):
+    """Parse `mpv --audio-device=help` into (id, description) pairs."""
+    devices = []
+    for line in (help_text or "").splitlines():
+        match = re.match(r"\s+'([^']+)'\s+\((.*)\)\s*$", line)
+        if match:
+            devices.append((match.group(1), match.group(2)))
+    return devices
+
+
+def connector_hdmi_index(output_name):
+    """Guess the HDMI audio endpoint index for an xrandr connector.
+
+    NVIDIA typically exposes HDMI-0 as audio HDMI 0 and then DisplayPort
+    pairs DP-0/1, DP-2/3, DP-4/5 as HDMI 1, 2 and 3.
+    DRM names such as HDMI-A-1 are 1-based and map to HDMI 0.
+    """
+    if not output_name:
+        return 0
+    name = output_name.strip().upper().replace("DISPLAYPORT", "DP")
+    number = re.search(r"(\d+)$", name)
+    if not number:
+        return 0
+    index = int(number.group(1))
+    if name.startswith("HDMI-A-") or re.match(r"^HDMI-A\d", name):
+        return max(0, index - 1)
+    if name.startswith("HDMI"):
+        return index
+    if name.startswith("DP-") or name.startswith("DP"):
+        return 1 + (index // 2)
+    return index
+
+
+def score_program_audio_device(device_id, description, hdmi_index):
+    """Higher scores are a better match for the projector HDMI audio jack."""
+    ident = (device_id or "").lower()
+    desc = (description or "").lower()
+    if ident in {"auto", "pulse", "pipewire", "alsa", "jack", "sdl", "openal"}:
+        return -1
+    if ident == "alsa/pipewire":
+        return -1
+    if "hdmi" not in ident and "hdmi" not in desc:
+        return -1
+    if "plughw" in ident or "dmix" in ident or "surround" in ident:
+        return -1
+
+    score = 0
+    if ident.startswith("pipewire/"):
+        score += 80
+    elif ident.startswith("pulse/"):
+        score += 70
+    elif ident.startswith("alsa/hdmi:"):
+        score += 40
+    else:
+        return -1
+
+    extra = re.search(r"hdmi(?:-stereo)?-extra(\d+)", ident)
+    if extra:
+        if int(extra.group(1)) == hdmi_index:
+            score += 40
+    elif hdmi_index == 0 and "hdmi-stereo" in ident:
+        score += 40
+
+    dev = re.search(r"dev=(\d+)", ident)
+    if dev and int(dev.group(1)) == hdmi_index:
+        score += 40
+
+    alsa_hdmi = re.search(r"hdmi\s+(\d+)/", desc)
+    if alsa_hdmi and int(alsa_hdmi.group(1)) == hdmi_index:
+        score += 20
+    return score
+
+
+def choose_program_audio_device(devices, output_name):
+    """Pick the mpv audio device that belongs to the projector output."""
+    hdmi_index = connector_hdmi_index(output_name)
+    ranked = []
+    for device_id, description in devices:
+        score = score_program_audio_device(device_id, description, hdmi_index)
+        if score >= 0:
+            ranked.append((score, device_id))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
+def list_mpv_audio_devices(mpv_path):
+    try:
+        result = subprocess.run(
+            [mpv_path, "--no-config", "--audio-device=help"],
+            capture_output=True, text=True, timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return parse_mpv_audio_devices(f"{result.stdout}\n{result.stderr}")
+
+
 class VideoOutputManager:
     def __init__(self, video_output=None):
         self.video_output = video_output
         self.original_mode = None
         self.video_mode = None
         self.target_refresh = None
+        self._program_audio_device = None
+        self._program_audio_output = None
 
     @staticmethod
     def run(command):
@@ -337,6 +658,7 @@ class VideoOutputManager:
             if preferred not in outputs:
                 raise RuntimeError(f"Ausgang {preferred} ist nicht angeschlossen.")
             self.video_output = preferred
+            self._program_audio_device = None
             return preferred
 
         if self.video_output:
@@ -348,10 +670,41 @@ class VideoOutputManager:
         for output in outputs:
             if output != primary:
                 self.video_output = output
+                self._program_audio_device = None
                 return output
 
         self.video_output = outputs[0]
+        self._program_audio_device = None
         return self.video_output
+
+    def set_video_output(self, name):
+        """Switch the projector connector and restore the previous display mode."""
+        outputs = self.get_outputs()
+        if name not in outputs:
+            raise RuntimeError(f"Ausgang {name} ist nicht angeschlossen.")
+        if name == self.video_output:
+            return name
+        self.restore_original_mode()
+        self.video_output = name
+        self.video_mode = None
+        self._program_audio_device = None
+        self._program_audio_output = None
+        return name
+
+    def program_audio_device(self, mpv_path):
+        """Audio device for program playback: the projector HDMI, not the desktop default."""
+        output = self.video_output
+        if not output:
+            try:
+                output = self.select_video_output()
+            except RuntimeError:
+                return None
+        if self._program_audio_device and self._program_audio_output == output:
+            return self._program_audio_device
+        device = choose_program_audio_device(list_mpv_audio_devices(mpv_path), output)
+        self._program_audio_device = device
+        self._program_audio_output = output
+        return device
 
     def get_modes(self, output_name):
         modes = []
@@ -810,13 +1163,14 @@ class VideoOutputManager:
         mode = self.effective_mode()
         if not mode:
             raise RuntimeError("Kein Video-Modus gesetzt.")
-        return f"{mode.width}x{mode.height}+{mode.x}+{mode.y}"
+        # Offsets are relative to --screen-name, not the virtual desktop.
+        return f"{mode.width}x{mode.height}+0+0"
 
-    def get_mpv_arguments(self):
+    def get_mpv_arguments(self, mpv_path=None):
         mode = self.effective_mode()
         if not mode:
             raise RuntimeError("Kein Video-Modus gesetzt.")
-        return [
+        arguments = [
             "--no-border",
             "--fullscreen=no",
             "--keepaspect=yes",
@@ -833,6 +1187,13 @@ class VideoOutputManager:
             "--image-display-duration=inf",
             f"--geometry={self.get_mpv_geometry()}",
         ]
+        if self.video_output:
+            arguments.append(f"--screen-name={self.video_output}")
+            arguments.append(f"--fs-screen-name={self.video_output}")
+        audio = self.program_audio_device(mpv_path or find_mpv())
+        if audio:
+            arguments.append(f"--audio-device={audio}")
+        return arguments
 
     def restore_original_mode(self):
         if not self.original_mode:
