@@ -97,6 +97,56 @@ def find_mpv():
     )
 
 
+def find_ffmpeg():
+    which = shutil.which("ffmpeg")
+    if which:
+        return which
+    raise RuntimeError("ffmpeg wurde nicht gefunden.")
+
+
+_EBUR_INTEGRATED = re.compile(
+    r"Integrated loudness:.*?I:\s*([+-]?\d+(?:\.\d+)?)\s*LUFS",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def format_loudness(lufs):
+    if lufs is None:
+        return "--"
+    try:
+        value = float(lufs)
+    except (TypeError, ValueError):
+        return "--"
+    if not math.isfinite(value):
+        return "--"
+    return f"{value:.1f} LUFS"
+
+
+def probe_loudness(path, ffmpeg_path=None):
+    """Return integrated EBU R128 loudness in LUFS, or None if it cannot be measured."""
+    ffmpeg = ffmpeg_path or find_ffmpeg()
+    command = [
+        ffmpeg, "-hide_banner", "-nostats",
+        "-i", path,
+        "-vn", "-sn", "-dn",
+        "-map", "0:a:0",
+        "-af", "ebur128",
+        "-f", "null", "-",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    text = f"{result.stderr or ''}\n{result.stdout or ''}"
+    match = _EBUR_INTEGRATED.search(text)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
 @dataclass
 class DisplayMode:
     output: str
@@ -166,9 +216,12 @@ class PlaylistEntry:
     refresh_ok: bool = True
     aspect_warning: bool = False
     par_warning: bool = False
+    colorspace_warning: bool = False
     played: bool = False
     missing: bool = False
     volume: int = 100
+    colorspace: str = "--"
+    loudness_lufs: float | None = None
 
     def __post_init__(self):
         if not self.filename:
@@ -311,13 +364,15 @@ def mark_missing_media(entries):
 
 
 def apply_playlist_warnings(entries, projection_zoom):
-    """Mark aspect and pixel-aspect changes against the previous readable clip."""
+    """Mark aspect, PAR and colorspace changes against the previous readable clip."""
     previous_aspect = None
     previous_par = None
+    previous_colorspace = None
     for entry in entries:
         if entry.missing:
             entry.aspect_warning = False
             entry.par_warning = False
+            entry.colorspace_warning = False
             continue
         aspect_changed = (
             previous_aspect is not None
@@ -330,12 +385,21 @@ def apply_playlist_warnings(entries, projection_zoom):
             and par_ok
             and not same_aspect_ratio(previous_par, entry.pixel_aspect)
         )
+        colorspace_ok = entry.colorspace not in ("", "--", None)
+        colorspace_changed = (
+            previous_colorspace is not None
+            and colorspace_ok
+            and entry.colorspace != previous_colorspace
+        )
         entry.aspect_warning = bool(projection_zoom and aspect_changed)
         entry.par_warning = bool(projection_zoom and par_changed)
+        entry.colorspace_warning = bool(projection_zoom and colorspace_changed)
         if entry.aspect not in ("", "--"):
             previous_aspect = entry.aspect
         if par_ok:
             previous_par = entry.pixel_aspect
+        if colorspace_ok:
+            previous_colorspace = entry.colorspace
 
 
 def refresh_entry_aspect(entry):
@@ -355,6 +419,7 @@ def refresh_entry_aspect(entry):
             entry.audio_codec = probed.audio_codec
             entry.video_bitrate = probed.video_bitrate
             entry.audio_bitrate = probed.audio_bitrate
+            entry.colorspace = probed.colorspace
             return entry
     entry.pixel_aspect = pixel_aspect_label(
         entry.width, entry.height, entry.pixel_aspect, entry.aspect
@@ -420,6 +485,71 @@ def format_codec_rate(codec, bps):
     return name or rate or "--"
 
 
+_COLOR_UNSPECIFIED = {"", "unknown", "unspecified", "reserved", "n/a", "na", "none"}
+_COLOR_GAMUT = {
+    "bt709": "Rec.709",
+    "bt470m": "NTSC",
+    "bt470bg": "Rec.601",
+    "smpte170m": "Rec.601",
+    "smpte240m": "SMPTE 240M",
+    "film": "Film",
+    "bt2020": "Rec.2020",
+    "bt2020nc": "Rec.2020",
+    "bt2020-ncl": "Rec.2020",
+    "bt2020c": "Rec.2020",
+    "bt2020-cl": "Rec.2020",
+    "smpte428": "CIE XYZ",
+    "smpte431": "DCI-P3",
+    "smpte432": "Display P3",
+    "jedec-p22": "EBU 3213",
+    "ebu3213": "EBU 3213",
+    "fcc": "FCC",
+    "rgb": "RGB",
+    "ycgco": "YCgCo",
+    "ictcp": "ICtCp",
+}
+_COLOR_TRANSFER = {
+    "smpte2084": "PQ",
+    "arib-std-b67": "HLG",
+    "iec61966-2-1": "sRGB",
+    "linear": "Linear",
+    "log": "Log",
+    "log_sqrt": "Log",
+    "gamma22": "Gamma 2.2",
+    "gamma28": "Gamma 2.8",
+    "smpte428": "DCI",
+}
+_SDR_TRANSFER = {
+    "bt709", "smpte170m", "bt601", "iec61966-2-4", "bt1361e",
+    "bt2020-10", "bt2020-12", "smpte240m",
+}
+
+
+def _color_token(value):
+    text = str(value or "").strip().lower().replace("_", "-")
+    return "" if text in _COLOR_UNSPECIFIED else text
+
+
+def format_colorspace(stream):
+    """Compact operator label such as Rec.709 or Rec.2020 PQ."""
+    if not stream:
+        return "--"
+    primaries = _COLOR_GAMUT.get(_color_token(stream.get("color_primaries")))
+    matrix = _COLOR_GAMUT.get(_color_token(stream.get("color_space")))
+    gamut = primaries or matrix
+    transfer_key = _color_token(stream.get("color_transfer"))
+    transfer = _COLOR_TRANSFER.get(transfer_key)
+    if transfer == "sRGB":
+        return "sRGB"
+    if gamut and transfer and transfer_key not in _SDR_TRANSFER:
+        return f"{gamut} {transfer}"
+    if gamut:
+        return gamut
+    if transfer:
+        return transfer
+    return "--"
+
+
 def format_clock(seconds):
     try:
         seconds = float(seconds)
@@ -476,6 +606,7 @@ def probe_media(path):
         )
         entry.resolution_label = resolution_label(entry.width, entry.height)
         entry.video_bitrate = stream_bitrate_bps(video, entry.duration)
+        entry.colorspace = format_colorspace(video)
 
     if audios:
         names = []
@@ -648,6 +779,40 @@ class VideoOutputManager:
             if match:
                 return tuple(map(int, match.groups()))
         return None
+
+    def get_control_output_geometry(self, prefer_x=None, prefer_y=None):
+        """Control-monitor rectangle (width, height, x, y), never the projector.
+
+        Tk -fullscreen covers the whole Xinerama desktop, including the beamer.
+        Callers must size the GUI to this rectangle instead.
+        """
+        named = []
+        for name in self.get_outputs():
+            geometry = self.get_output_geometry(name)
+            if geometry:
+                named.append((name, geometry))
+        if not named:
+            return None
+
+        beamer = self.video_output
+        usable = [(name, geometry) for name, geometry in named if name != beamer]
+        if not usable:
+            return named[0][1]
+
+        def contains(geometry, px, py):
+            width, height, x, y = geometry
+            return x <= px < x + width and y <= py < y + height
+
+        if prefer_x is not None and prefer_y is not None:
+            for name, geometry in usable:
+                if contains(geometry, prefer_x, prefer_y):
+                    return geometry
+
+        primary = self.get_primary_output()
+        for name, geometry in usable:
+            if name == primary:
+                return geometry
+        return usable[0][1]
 
     def select_video_output(self, preferred=None):
         outputs = self.get_outputs()
