@@ -379,14 +379,14 @@
     <figure>
       <img data-lang="en" src="images/beamer-en.png" alt="Beamer status panel">
       <img data-lang="de" src="images/beamer-de.png" alt="Beamer-Status">
-      <figcaption data-lang="en">Current mode, refresh, raster, and the unique rates the projector reports. Green <strong>OK</strong> when the clip can be shown without frame dropping; red <strong>Mismatch</strong> otherwise.</figcaption>
-      <figcaption data-lang="de">Aktueller Modus, Frequenz, Raster und die gemeldeten Beamerfrequenzen. Grün <strong>OK</strong>, wenn der Clip ohne Frame-Dropping läuft; sonst rot <strong>Abweichung</strong>.</figcaption>
+      <figcaption data-lang="en">Current mode, refresh, raster, plus the resolutions and rates the projector reports. Green <strong>OK</strong> when the clip can be shown without frame dropping; red <strong>Mismatch</strong> otherwise.</figcaption>
+      <figcaption data-lang="de">Aktueller Modus, Frequenz, Raster sowie die gemeldeten Auflösungen und Beamerfrequenzen. Grün <strong>OK</strong>, wenn der Clip ohne Frame-Dropping läuft; sonst rot <strong>Abweichung</strong>.</figcaption>
     </figure>
     <p data-lang="en">
-      Before a clip rolls, Cinema Player picks a display mode at the native resolution whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time. Import and probe never create modes. Test files in <code>testdata</code> often show Mismatch on a 60 Hz office monitor — that is expected.
+      Before a clip rolls, Cinema Player picks a display mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes. Test files in <code>testdata</code> often show Mismatch on a 60 Hz office monitor — that is expected.
     </p>
     <p data-lang="de">
-      Bevor ein Clip läuft, wählt Cinema Player einen Anzeigemodus in nativer Auflösung, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt. Fehlt ein solcher Modus, kann zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Import und Analyse erzeugen keine Modi. Testdateien in <code>testdata</code> zeigen an einem 60-Hz-Büromonitor oft Abweichung — das ist erwartet.
+      Bevor ein Clip läuft, wählt Cinema Player einen Anzeigemodus in der <strong>Videoauflösung</strong>, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt. Fehlt ein solcher Modus, kann unter X11 zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Unter GNOME Wayland stehen nur die vom Gerät gemeldeten Modi zur Verfügung. Import und Analyse erzeugen keine Modi. Testdateien in <code>testdata</code> zeigen an einem 60-Hz-Büromonitor oft Abweichung — das ist erwartet.
     </p>
 
     <h2 id="audio">

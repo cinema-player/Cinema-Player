@@ -39,17 +39,21 @@ from cinema_player import (
     format_fps_label,
     format_colorspace_label,
     format_loudness,
+    gpu_context_for_mpv,
     mark_missing_media,
     media_file_available,
     probe_loudness,
     probe_media,
     refresh_entry_aspect,
+    same_aspect_ratio,
+    session_is_wayland,
 )
 
 LOGO_BG = "#000000"
 LOGO_ACCENT = "#4d9be6"
 FONT_LOGO = (FONT_FAMILY, 17, "bold")
 FONT_LOGO_LIGHT = (FONT_FAMILY, 17)
+FONT_BEAMER_PICK = (FONT_FAMILY, 13, "bold")
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
 LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.png")
 BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
@@ -553,6 +557,139 @@ class IconTooltip:
         self._window = tip
 
 
+class DropdownMenu(tk.Frame):
+    """In-window menu so GNOME/Wayland cannot place it on another output."""
+
+    def __init__(self, master, gui):
+        super().__init__(
+            master,
+            bg=COLOR_PANEL,
+            highlightbackground=COLOR_BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
+        self._gui = gui
+        self._cascades = []
+        self._cascade_side = "right"
+
+    def delete(self, *_args):
+        for cascade in self._cascades:
+            try:
+                cascade.destroy()
+            except tk.TclError:
+                pass
+        self._cascades = []
+        for child in list(self.winfo_children()):
+            child.destroy()
+
+    def add_command(
+        self, label="", command=None, state="normal", accelerator="",
+        foreground=None, **_kwargs,
+    ):
+        text = f"{label}    {accelerator}" if accelerator else label
+        self._add_row(text, command, state, foreground)
+
+    def add_checkbutton(
+        self, label="", variable=None, command=None, accelerator="", **_kwargs,
+    ):
+        checked = bool(variable.get()) if variable is not None else False
+        mark = "✔  " if checked else "    "
+        text = f"{mark}{label}"
+        if accelerator:
+            text = f"{text}    {accelerator}"
+
+        def run():
+            if variable is not None:
+                variable.set(not bool(variable.get()))
+            self._gui._close_menus()
+            if command:
+                command()
+
+        self._add_row(text, run, "normal", self._gui._menu_check_fg() if checked else None)
+
+    def add_separator(self):
+        tk.Frame(self, bg=COLOR_BORDER, height=1).pack(fill="x", padx=8, pady=4)
+
+    def add_cascade(self, label="", menu=None, **_kwargs):
+        self._cascades.append(menu)
+
+        def open_cascade(event, submenu=menu):
+            self._show_cascade(event.widget, submenu)
+
+        self._add_row(f"{label}  ▸", None, "normal", None, on_press=open_cascade)
+
+    def _add_row(self, text, command, state, foreground, on_press=None):
+        fg = foreground or COLOR_TEXT
+        if state == "disabled":
+            fg = COLOR_PLAYED
+
+        def activate(_event=None, action=command, press=on_press):
+            if state == "disabled":
+                return
+            if press is not None:
+                press(_event)
+                return
+            self._gui._close_menus()
+            if action:
+                action()
+
+        row = tk.Label(
+            self, text=text, font=FONT_UI, bg=COLOR_PANEL, fg=fg,
+            anchor="w", padx=14, pady=6,
+            cursor="arrow" if state == "disabled" else "hand2",
+        )
+        row.pack(fill="x")
+        if state != "disabled":
+            idle_fg = fg
+            row.bind(
+                "<Enter>",
+                lambda _e, item=row: item.config(bg=COLOR_BUTTON_ACTIVE, fg=COLOR_WHITE),
+            )
+            row.bind(
+                "<Leave>",
+                lambda _e, item=row, color=idle_fg: item.config(bg=COLOR_PANEL, fg=color),
+            )
+            row.bind("<Button-1>", activate)
+        return row
+
+    def _show_cascade(self, row, submenu):
+        if submenu is None:
+            return
+        for other in self._cascades:
+            if other is not None and other is not submenu:
+                other.unpost()
+        self.update_idletasks()
+        root = self.master
+        rx, ry = root.winfo_rootx(), root.winfo_rooty()
+        y = row.winfo_rooty() - ry
+        if self._cascade_side == "left":
+            submenu.place(x=self.winfo_rootx() - rx, y=y, anchor="ne")
+        else:
+            submenu.place(x=self.winfo_rootx() - rx + self.winfo_width(), y=y, anchor="nw")
+        submenu.lift()
+
+    def unpost(self):
+        self.place_forget()
+        for cascade in self._cascades:
+            if cascade is not None:
+                try:
+                    cascade.unpost()
+                except tk.TclError:
+                    pass
+
+    def post_below(self, widget, side="left"):
+        self._cascade_side = "left" if side == "right" else "right"
+        root = self.master
+        root.update_idletasks()
+        x = widget.winfo_rootx() - root.winfo_rootx()
+        y = widget.winfo_rooty() - root.winfo_rooty() + widget.winfo_height()
+        if side == "right":
+            self.place(x=x + widget.winfo_width(), y=y, anchor="ne")
+        else:
+            self.place(x=x, y=y, anchor="nw")
+        self.lift()
+
+
 def format_seconds(value):
     seconds = max(0.0, float(value or 0))
     return str(int(seconds)) if seconds == int(seconds) else f"{seconds:g}"
@@ -560,6 +697,106 @@ def format_seconds(value):
 
 def settings_path():
     return os.path.join(os.path.expanduser("~"), ".config", "cinema-player", "settings.json")
+
+
+class BeamerChoiceLine(tk.Frame):
+    """Wraps beamer rates/resolutions; the active value stays fully visible."""
+
+    def __init__(self, master, **kwargs):
+        kwargs.setdefault("bg", COLOR_PANEL)
+        super().__init__(master, **kwargs)
+        self.pack_propagate(False)
+        self.configure(height=FONT_BEAMER_PICK[1] + 10)
+        self._labels = []
+        self._signature = None
+        self._laid_width = 0
+        self._reflowing = False
+        self.bind("<Configure>", self._reflow)
+
+    def set_choices(self, prefix, tokens, selected=None, program=None, preview=None):
+        program_set = self._token_set(program)
+        preview_set = self._token_set(preview)
+        signature = (prefix, tuple(tokens or ()), selected, program_set, preview_set)
+        if signature == self._signature:
+            return
+        self._signature = signature
+        for widget in self._labels:
+            widget.destroy()
+        self._labels = []
+        if prefix:
+            self._labels.append(
+                self._chip(prefix.strip(), picked=False, program=False, preview=False)
+            )
+        values = list(tokens) if tokens else ["--"]
+        for token in values:
+            self._labels.append(self._chip(
+                token,
+                picked=token == selected,
+                program=token in program_set,
+                preview=token in preview_set,
+            ))
+        self._laid_width = 0
+        self._reflow()
+
+    @staticmethod
+    def _token_set(value):
+        if not value:
+            return frozenset()
+        if isinstance(value, (set, frozenset, list, tuple)):
+            return frozenset(item for item in value if item)
+        return frozenset((value,))
+
+    def _chip(self, text, picked, program=False, preview=False):
+        if program:
+            fg = ACCENT
+        elif preview:
+            fg = COLOR_PREVIEW
+        elif picked:
+            fg = COLOR_TEXT
+        else:
+            fg = COLOR_MUTED
+        font = FONT_BEAMER_PICK if (picked or program or preview) else FONT_SMALL
+        label = tk.Label(
+            self,
+            text=text,
+            font=font,
+            fg=fg,
+            bg=COLOR_PANEL,
+            padx=0,
+            pady=0,
+        )
+        label.configure(fg=fg, font=font)
+        return label
+
+    def _reflow(self, _event=None):
+        if self._reflowing or not self._labels:
+            return
+        width = max(self.winfo_width(), 1)
+        if width == self._laid_width:
+            return
+        self._reflowing = True
+        try:
+            x = 0
+            y = 0
+            row_h = 0
+            gap = 10
+            for index, label in enumerate(self._labels):
+                needed = label.winfo_reqwidth()
+                extra = 0 if index == 0 else gap
+                if x and x + extra + needed > width:
+                    x = 0
+                    y += row_h
+                    row_h = 0
+                    extra = 0
+                label.place(x=x + extra, y=y)
+                x += extra + needed
+                row_h = max(row_h, label.winfo_reqheight())
+            height = max(y + row_h, FONT_BEAMER_PICK[1] + 8)
+            self._laid_width = width
+            if abs(int(self.cget("height") or 0) - height) > 1:
+                self.configure(height=height)
+        finally:
+            self._reflowing = False
 
 
 def load_settings():
@@ -706,7 +943,9 @@ class VideoPlayerGUI:
         self.root.after(200, self.start_preview_player)
         # Honor a saved / forced output even if it is the primary display.
         explicit_output = bool(self.settings.get("video_output") or VIDEO_OUTPUT)
-        self.root.after(400, lambda: self.ensure_main_output(auto=not explicit_output))
+        # Cover the projector before any mode switch so GNOME desktop icons
+        # never appear on the beamer during startup.
+        self.ensure_main_output(auto=not explicit_output)
         self.root.after(500, self._warn_if_no_beamer_output)
         self.update_gui()
         self._tick_meters()
@@ -1005,6 +1244,8 @@ class VideoPlayerGUI:
 
     def _menu(self, parent, **kwargs):
         """Popup menu colours. Dark: light checkbox fill. Light: blue fill for contrast."""
+        if isinstance(parent, DropdownMenu):
+            return DropdownMenu(self.root, self)
         options = dict(
             tearoff=0,
             bg=COLOR_PANEL,
@@ -1356,15 +1597,17 @@ class VideoPlayerGUI:
         for index in range(3):
             y = y0 + index * gap
             canvas.create_line(9, y, size - 9, y, fill=COLOR_TEXT, width=2, capstyle="round")
-        menu = self._menu(self.root)
+        menu = DropdownMenu(self.root, self)
         fill_menu(menu)
 
         def popup(_event=None):
+            self._close_menus()
             menu.delete(0, "end")
             fill_menu(menu)
-            self._popup_menu(
-                menu, canvas.winfo_rootx(), canvas.winfo_rooty() + canvas.winfo_height(),
-            )
+            self._posted_menu = menu
+            self._menu_ignore_press = True
+            menu.post_below(canvas, side=side)
+            self.root.after_idle(self._allow_menu_dismiss)
 
         canvas.bind("<Button-1>", popup)
         padx = (8, 0) if side == "right" else (0, 6)
@@ -1428,9 +1671,12 @@ class VideoPlayerGUI:
             return False
         menus = [menu]
         try:
-            menus.extend(
-                child for child in menu.winfo_children() if isinstance(child, tk.Menu)
-            )
+            if isinstance(menu, DropdownMenu):
+                menus.extend(child for child in menu._cascades if child is not None)
+            else:
+                menus.extend(
+                    child for child in menu.winfo_children() if isinstance(child, tk.Menu)
+                )
         except tk.TclError:
             pass
         for item in menus:
@@ -1626,19 +1872,23 @@ class VideoPlayerGUI:
         self.beamer_ok.pack(side="right")
 
         info = tk.Frame(panel, bg=COLOR_PANEL)
-        info.pack(fill="x", padx=8, pady=(0, 8))
-        self.beamer_res = tk.Label(info, text="---- x ----", font=FONT_UI, bg=COLOR_PANEL)
-        self.beamer_res.pack(side="left")
-        self.beamer_fps = tk.Label(info, text="--p", font=FONT_UI_BOLD, bg=COLOR_PANEL)
-        self.beamer_fps.pack(side="left", padx=16)
-        self.beamer_aspect = tk.Label(info, text="--", font=FONT_UI, bg=COLOR_PANEL)
-        self.beamer_aspect.pack(side="left")
-        self.beamer_rates = tk.Label(
-            panel, text=t("beamer_rates", rates="--"), font=FONT_SMALL,
-            bg=COLOR_PANEL, fg=COLOR_MUTED, anchor="w", justify="left", wraplength=520,
+        info.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(
+            info, text=t("beamer_aspect"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left")
+        self.beamer_aspect = tk.Label(
+            info, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT,
         )
-        self.beamer_rates.pack(fill="x", padx=8, pady=(0, 8))
-        self._beamer_rates_cache = None
+        self.beamer_aspect.pack(side="left", padx=(8, 0))
+        self.beamer_clip_aspect = tk.Label(
+            info, text="", font=FONT_STATUS, bg=COLOR_PANEL, fg=ACCENT,
+        )
+        self.beamer_clip_aspect.pack(side="left", padx=(12, 0))
+        self.beamer_rates = BeamerChoiceLine(panel)
+        self.beamer_rates.pack(fill="x", padx=8, pady=(0, 4))
+        self.beamer_resolutions = BeamerChoiceLine(panel)
+        self.beamer_resolutions.pack(fill="x", padx=8, pady=(0, 8))
+        self._beamer_caps_cache = None
 
     def _build_preview(self, parent):
         header = self._group_frame(parent)
@@ -1801,6 +2051,17 @@ class VideoPlayerGUI:
         if self.playlist and 0 <= self.program_index < len(self.playlist):
             return self.playlist[self.program_index]
         return None
+
+    def _preview_clip(self):
+        """The clip shown in the preview pane, if the operator picked one."""
+        if self.preview_live or self.preview_index is None:
+            return None
+        if not 0 <= self.preview_index < len(self.playlist):
+            return None
+        entry = self.playlist[self.preview_index]
+        if entry.missing:
+            return None
+        return entry
 
     def refresh_all(self):
         self.refresh_status()
@@ -2122,47 +2383,186 @@ class VideoPlayerGUI:
             mode = mode or self.output_manager.get_current_mode(self.output_manager.video_output or "")
         if not mode:
             self.beamer_ok.config(text="--", bg=COLOR_BADGE_IDLE)
-            self.beamer_res.config(text="---- x ----")
-            self.beamer_fps.config(text="--p")
-            self.beamer_aspect.config(text="--")
-            self.beamer_rates.config(text=t("beamer_rates", rates="--"))
+            self.beamer_aspect.config(text="--", fg=COLOR_TEXT)
+            self.beamer_clip_aspect.config(text="")
+            self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
+            self.beamer_resolutions.set_choices(
+                t("beamer_resolutions", resolutions=""), [],
+            )
             self.refresh_beamer_outputs()
             return
-        entry = self.current_entry() if self.program_state == "PLAYING" else self.selected_entry()
-        fps = entry.fps if entry else 0
-        matched = (
-            self.output_manager.refresh_matches(fps, mode.refresh)
-            if fps else True
-        )
+        rates, resolutions = self._beamer_capability_lists()
+        clip = self.current_entry()
+        preview = self._preview_clip()
+        focus = clip if self.program_state == "PLAYING" else (preview or clip)
+        fps_ok = True
+        if focus and not focus.missing and not focus.is_image and focus.fps:
+            fps_ok = self._beamer_rate_supported(focus.fps, rates)
         self.beamer_ok.config(
-            text=t("ok") if matched else t("mismatch"),
-            bg=COLOR_PLAYING if matched else COLOR_OFF,
+            text=t("ok") if fps_ok else t("mismatch"),
+            bg=COLOR_PLAYING if fps_ok else COLOR_OFF,
         )
-        self.beamer_res.config(text=f"{mode.width} x {mode.height}")
-        self.beamer_fps.config(text=format_fps_label(mode.refresh))
-        self.beamer_aspect.config(text=aspect_from_mode(mode))
-        self.beamer_rates.config(text=self._beamer_rate_text())
+        aspect_text = aspect_from_mode(mode)
+        self.beamer_aspect.config(text=aspect_text, fg=COLOR_TEXT)
+        self.beamer_clip_aspect.config(text="")
+        if preview and preview.aspect not in ("", "--") and same_aspect_ratio(
+            preview.aspect, aspect_text
+        ):
+            self.beamer_aspect.config(fg=COLOR_PREVIEW)
+        if clip and clip.aspect not in ("", "--") and same_aspect_ratio(
+            clip.aspect, aspect_text
+        ):
+            self.beamer_aspect.config(fg=ACCENT)
+        if not self._beamer_aspect_supported(clip, resolutions):
+            self.beamer_clip_aspect.config(text=clip.aspect, fg=ACCENT)
+        elif not self._beamer_aspect_supported(preview, resolutions):
+            self.beamer_clip_aspect.config(text=preview.aspect, fg=COLOR_PREVIEW)
+        selected_rate = next(
+            (
+                format_fps_label(rate)
+                for rate in rates
+                if self.output_manager.refresh_close(rate, mode.refresh)
+            ),
+            None,
+        )
+        selected_res = next(
+            (
+                f"{width}x{height}"
+                for width, height in resolutions
+                if width == mode.width and height == mode.height
+            ),
+            None,
+        )
+        rate_tokens = [format_fps_label(rate) for rate in rates]
+        res_tokens = [f"{width}x{height}" for width, height in resolutions]
+        program_rates = []
+        program_res = None
+        preview_rates = []
+        preview_res = None
+        if clip and not clip.missing and not clip.is_image and clip.fps:
+            program_rates = self._matching_rate_labels(clip.fps, rates)
+            if not program_rates:
+                program_rates = [format_fps_label(clip.fps)]
+                if program_rates[0] not in rate_tokens:
+                    rate_tokens.append(program_rates[0])
+                    rate_tokens.sort(key=self._beamer_rate_sort_key)
+        if clip and not clip.missing and clip.width and clip.height:
+            wanted = f"{clip.width}x{clip.height}"
+            if (clip.width, clip.height) in resolutions:
+                program_res = wanted
+            else:
+                program_res = wanted
+                if wanted not in res_tokens:
+                    res_tokens.append(wanted)
+                    res_tokens = [
+                        f"{width}x{height}"
+                        for width, height in sorted(
+                            [self._parse_res_token(token) for token in res_tokens],
+                            key=lambda item: (-item[0] * item[1], -item[0]),
+                        )
+                    ]
+        if preview and not preview.is_image and preview.fps:
+            preview_rates = self._matching_rate_labels(preview.fps, rates)
+            if not preview_rates:
+                preview_rates = [format_fps_label(preview.fps)]
+                if preview_rates[0] not in rate_tokens:
+                    rate_tokens.append(preview_rates[0])
+                    rate_tokens.sort(key=self._beamer_rate_sort_key)
+        if preview and preview.width and preview.height:
+            wanted = f"{preview.width}x{preview.height}"
+            if (preview.width, preview.height) in resolutions:
+                preview_res = wanted
+            else:
+                preview_res = wanted
+                if wanted not in res_tokens:
+                    res_tokens.append(wanted)
+                    res_tokens = [
+                        f"{width}x{height}"
+                        for width, height in sorted(
+                            [self._parse_res_token(token) for token in res_tokens],
+                            key=lambda item: (-item[0] * item[1], -item[0]),
+                        )
+                    ]
+        self.beamer_rates.set_choices(
+            t("beamer_rates", rates=""),
+            rate_tokens,
+            selected_rate,
+            program_rates,
+            preview_rates,
+        )
+        self.beamer_resolutions.set_choices(
+            t("beamer_resolutions", resolutions=""),
+            res_tokens,
+            selected_res,
+            program_res,
+            preview_res,
+        )
         self.refresh_beamer_outputs()
 
-    def _beamer_rate_text(self):
+    def _beamer_capability_lists(self):
         output = self.output_manager.video_output or ""
-        cache = self._beamer_rates_cache
+        cache = self._beamer_caps_cache
         if cache and cache[0] == output:
-            return cache[1]
-        rates = []
+            return cache[1], cache[2]
         try:
             modes = self.output_manager.get_modes(output) if output else []
         except Exception:
             modes = []
+        rates = []
         for mode in modes:
             if any(self.output_manager.refresh_close(mode.refresh, seen) for seen in rates):
                 continue
             rates.append(mode.refresh)
         rates.sort()
-        labels = "  ".join(format_fps_label(rate) for rate in rates) or "--"
-        text = t("beamer_rates", rates=labels)
-        self._beamer_rates_cache = (output, text)
-        return text
+        seen_res = []
+        for mode in sorted(modes, key=lambda item: (-item.width * item.height, -item.width)):
+            key = (mode.width, mode.height)
+            if key in seen_res:
+                continue
+            seen_res.append(key)
+        self._beamer_caps_cache = (output, rates, seen_res)
+        return rates, seen_res
+
+    def _beamer_rate_supported(self, fps, rates):
+        return any(self.output_manager.refresh_matches(fps, rate) for rate in rates)
+
+    def _matching_rate_labels(self, fps, rates):
+        """Beamer rates that can play this fps (native or 2x)."""
+        labels = []
+        seen = set()
+        for rate in rates:
+            matches = self.output_manager.refresh_close(rate, fps)
+            if not matches and fps and fps < 48:
+                matches = self.output_manager.refresh_close(rate, fps * 2)
+            if not matches:
+                continue
+            label = format_fps_label(rate)
+            if label in seen:
+                continue
+            seen.add(label)
+            labels.append(label)
+        return labels
+
+    def _beamer_aspect_supported(self, entry, resolutions):
+        if not entry or entry.missing or entry.aspect in ("", "--"):
+            return True
+        return any(
+            same_aspect_ratio(entry.aspect, aspect_from_size(width, height))
+            for width, height in resolutions
+        )
+
+    @staticmethod
+    def _beamer_rate_sort_key(label):
+        text = str(label).rstrip("piPI").strip()
+        try:
+            return float(text)
+        except ValueError:
+            return 0.0
+
+    @staticmethod
+    def _parse_res_token(token):
+        width, height = str(token).lower().split("x", 1)
+        return int(width), int(height)
 
     def refresh_beamer_outputs(self):
         """Keep the selected output name in sync with the connected display."""
@@ -2190,6 +2590,7 @@ class VideoPlayerGUI:
             self.refresh_beamer_outputs()
             return
         self.settings["video_output"] = output
+        self._beamer_caps_cache = None
         try:
             save_settings(self.settings)
         except OSError:
@@ -2199,7 +2600,7 @@ class VideoPlayerGUI:
         if self.window_fullscreen.get():
             self._apply_window_fullscreen()
 
-    def _restart_main_output(self):
+    def _restart_main_output(self, blank=True):
         """Move the program window onto the newly chosen projector output."""
         if self.main_mpv.process:
             try:
@@ -2210,9 +2611,19 @@ class VideoPlayerGUI:
             self.main_mpv.add_callback(self.main_mpv_event)
         if not self.ensure_main_output(auto=False):
             messagebox.showerror(t("beamer_status"), t("output_failed"))
-            return
-        if self.program_state != "PLAYING":
+            return False
+        if blank and self.program_state != "PLAYING":
             self.blank_output()
+        return True
+
+    def _pin_main_output_to_beamer(self):
+        """Keep the Wayland mpv surface on the projector after a mode change."""
+        output = self.output_manager.video_output
+        if not output or not self.main_mpv.process:
+            return
+        self.main_mpv.command("set_property", "screen-name", output)
+        self.main_mpv.command("set_property", "fs-screen-name", output)
+        self.main_mpv.command("set_property", "fullscreen", True)
 
     def on_row_click(self, index):
         """Single click: show the clip in the preview window."""
@@ -2223,6 +2634,7 @@ class VideoPlayerGUI:
         self.repaint_playlist()
         self.refresh_status()
         self.refresh_preview_meta()
+        self.refresh_beamer()
         self.show_preview_clip(self.playlist[index])
 
     def on_row_menu(self, index, event):
@@ -2261,6 +2673,38 @@ class VideoPlayerGUI:
             self._autosave_playlist()
         else:
             self.program_index = index
+        self.apply_beamer_mode_for_pointer()
+
+    def apply_beamer_mode_for_pointer(self):
+        """Switch the projector refresh as soon as the program pointer sits on a film."""
+        if self.program_state == "PLAYING":
+            return
+        entry = self.current_entry()
+        if not entry or entry.missing or entry.is_image:
+            return
+        if not media_file_available(entry):
+            return
+        before = None
+        output = self.output_manager.video_output
+        if output:
+            before = self.output_manager.get_current_mode(output)
+        try:
+            _video, mode, matched = self.output_manager.prepare_for_video(entry.path)
+            entry.refresh_ok = matched
+        except Exception as exc:
+            print(f"Beamer-Modus nicht gesetzt: {exc}")
+            return
+        changed = (
+            before is None
+            or before.width != mode.width
+            or before.height != mode.height
+            or not self.output_manager.refresh_close(before.refresh, mode.refresh)
+        )
+        if changed and session_is_wayland() and self.main_mpv.process:
+            self._restart_main_output(blank=False)
+            if self.program_state == "PROGRAM":
+                self.blank_output()
+        self.refresh_beamer()
 
     def _skip_to_playable(self, inclusive=True):
         """Move the program cursor to the next clip whose file is still on disk."""
@@ -2407,6 +2851,7 @@ class VideoPlayerGUI:
         if self.program_index > index:
             self.program_index -= 1
         self.program_index = max(0, min(self.program_index, len(self.playlist) - 1))
+        self.apply_beamer_mode_for_pointer()
         self.refresh_all()
 
     def on_row_press(self, index, event):
@@ -2563,6 +3008,7 @@ class VideoPlayerGUI:
             self.add_media(path)
         if self.playlist and self.preview_index is None:
             self.program_index = 0
+            self.apply_beamer_mode_for_pointer()
         self.refresh_all()
 
     def add_media(self, path):
@@ -2637,6 +3083,7 @@ class VideoPlayerGUI:
             self.add_media(path)
         if self.playlist:
             self.program_index = 0
+            self.apply_beamer_mode_for_pointer()
         self.refresh_all()
 
     def load_playlist(self):
@@ -2877,6 +3324,7 @@ class VideoPlayerGUI:
             if auto and output == self.output_manager.get_primary_output():
                 # No dedicated projector display: don't cover the control screen.
                 return False
+            self.output_manager.ensure_operator_layout()
             arguments = self.output_manager.get_mpv_arguments(self.mpv_path)
             arguments.append(f"--af={METER_AF}")
             self.main_mpv.start(arguments)
@@ -2978,7 +3426,7 @@ class VideoPlayerGUI:
             "--keepaspect=yes",
             "--hwdec=auto-safe",
             "--vo=gpu",
-            "--gpu-context=x11egl",
+            f"--gpu-context={gpu_context_for_mpv(self.mpv_path, embed=True)}",
             "--force-window=yes",
             "--osc=no",
             "--osd-level=0",
@@ -3093,15 +3541,23 @@ class VideoPlayerGUI:
             self.refresh_all()
             return
 
-        if not self.ensure_main_output():
+        if session_is_wayland():
+            if not self._restart_main_output(blank=False):
+                self.program_state = "PROGRAM"
+                self.refresh_all()
+                return
+        elif not self.ensure_main_output():
             messagebox.showerror(t("playback"), t("output_failed"))
             self.program_state = "PROGRAM"
             self.refresh_all()
             return
         self.main_mpv.command("set_property", "override-display-fps", float(mode.refresh))
-        self.main_mpv.command(
-            "set_property", "geometry", self.output_manager.get_mpv_geometry()
-        )
+        if session_is_wayland():
+            self._pin_main_output_to_beamer()
+        else:
+            self.main_mpv.command(
+                "set_property", "geometry", self.output_manager.get_mpv_geometry()
+            )
 
         self.main_mpv.set_loop_file(False)
         self.main_mpv.set_vid(True)
@@ -3112,6 +3568,8 @@ class VideoPlayerGUI:
             end=entry.out_point,
             play=True,
         )
+        if session_is_wayland():
+            self._pin_main_output_to_beamer()
         self.apply_tracks(entry, self.main_mpv)
         volume = clamp_volume(entry.volume)
         self._load_program_volume(entry, force=True)
@@ -3123,8 +3581,8 @@ class VideoPlayerGUI:
         self.position = entry.in_point if entry.in_point is not None else 0
         self.start_still_timer(entry)
         self.program_state = "PLAYING"
-        self.preview_live = True
-        self.show_preview_clip(entry, follow_live=True)
+        if self.preview_live:
+            self.show_preview_clip(entry, follow_live=True)
         self.refresh_all()
 
     def start_still_timer(self, entry):
@@ -3631,13 +4089,19 @@ class VideoPlayerGUI:
 
 
 def aspect_from_mode(mode):
-    if not mode.height:
+    if not mode or not mode.height:
         return "--"
-    ratio = mode.width / mode.height
+    return aspect_from_size(mode.width, mode.height)
+
+
+def aspect_from_size(width, height):
+    if not height:
+        return "--"
+    ratio = width / height
     if abs(ratio - 16 / 9) < 0.05:
         return "16:9"
     if abs(ratio - 2.39) < 0.08:
         return "21:9"
     if abs(ratio - 4 / 3) < 0.05:
         return "4:3"
-    return f"{mode.width}:{mode.height}"
+    return f"{width}:{height}"

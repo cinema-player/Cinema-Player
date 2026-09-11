@@ -23,7 +23,7 @@ The header shows the Cinema Player logo and a settings menu. The rest of the win
 
 **Right**
 
-- Beamer status: current resolution, refresh rate, aspect, and the unique rates the projector currently reports.
+- Beamer status: current resolution, refresh rate, aspect, and the resolutions and rates the projector currently reports.
 - Preview header with the Live/Preview badge and clip metadata.
 - Clip settings (autoplay, audio, subtitles, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
@@ -189,8 +189,8 @@ To achieve smooth, flicker-free playback, the graphics card’s refresh rate is 
 
 1. The video’s metadata is read.
 2. The refresh rates supported by the projector are checked (shown as **Rates** in the beamer panel).
-3. The output is set to the video’s frame rate or an integer multiple of it, preferring the native resolution.
-4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline.
+3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**.
+4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME Wayland is limited to EDID modes).
 
 If the process is successful, the projector status shows **OK** (green).
 
@@ -209,10 +209,10 @@ The bilingual operator manual (English / Deutsch, with screenshots) is `manual/i
 From the repository root:
 
 ```bash
-pixi install
+./install.sh
 ./start
 ```
 
-`./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`. A `Cinema-Player.desktop` launcher in the same folder starts the same script.
+`./install.sh` installs system packages (mpv, ffmpeg, xrandr, gdctl), Pixi and the Python environment, registers the application icon, and adds a menu / Desktop launcher. `./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`.
 
-mpv must be the distro build with X11 (the conda-forge mpv cannot open a GPU window on X11). `xrandr` comes from the system package `x11-xserver-utils`.
+mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`.

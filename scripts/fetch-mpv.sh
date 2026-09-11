@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download the distro mpv binary (X11/NVIDIA) without installing packages.
+# Download the distro mpv binary without installing packages.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

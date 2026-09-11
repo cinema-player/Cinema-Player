@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
 """
-X11 / NVIDIA / mpv Video Player
+Linux / NVIDIA / mpv Video Player
 Two mpv instances:
     - Main: exclusive video output on a separate HDMI output
     - Preview: separate mpv window on the control monitor
+
+Display control uses XRandR on X11 and GNOME gdctl on Wayland.
 """
 
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
@@ -58,16 +60,49 @@ FONT_ROW = (FONT_FAMILY, 9)
 FONT_ROW_BOLD = (FONT_FAMILY, 10, "bold")
 
 
-def mpv_supports_x11(path):
+def session_is_wayland():
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+        return True
+    return bool(os.environ.get("WAYLAND_DISPLAY"))
+
+
+def mpv_gpu_context_help(path):
     try:
         result = subprocess.run(
             [path, "--gpu-context=help"],
             capture_output=True, text=True, timeout=5
         )
     except (OSError, subprocess.TimeoutExpired):
-        return False
-    text = f"{result.stdout}\n{result.stderr}".lower()
+        return ""
+    return f"{result.stdout}\n{result.stderr}".lower()
+
+
+def mpv_supports_x11(path):
+    return "x11" in mpv_gpu_context_help(path)
+
+
+def mpv_supports_session(path):
+    text = mpv_gpu_context_help(path)
+    if session_is_wayland():
+        return "wayland" in text
     return "x11" in text
+
+
+def gpu_context_for_mpv(path, embed=False):
+    """GPU context for a native window, or for embedding into a Tk widget."""
+    text = mpv_gpu_context_help(path)
+    if embed:
+        # Tk on Linux is almost always X11, including under XWayland.
+        if "x11egl" in text:
+            return "x11egl"
+        if "wayland" in text:
+            return "wayland"
+        return "auto"
+    if session_is_wayland() and "wayland" in text:
+        return "wayland"
+    if "x11egl" in text:
+        return "x11egl"
+    return "auto"
 
 
 def find_mpv():
@@ -88,11 +123,12 @@ def find_mpv():
         if not path or path in seen:
             continue
         seen.add(path)
-        if os.path.isfile(path) and os.access(path, os.X_OK) and mpv_supports_x11(path):
+        if os.path.isfile(path) and os.access(path, os.X_OK) and mpv_supports_session(path):
             return path
 
+    kind = "Wayland" if session_is_wayland() else "X11"
     raise RuntimeError(
-        "Kein X11-fähiges mpv gefunden. "
+        f"Kein {kind}-fähiges mpv gefunden. "
         "Bitte `sudo apt install mpv` ausführen oder scripts/fetch-mpv.sh."
     )
 
@@ -671,12 +707,11 @@ def parse_mpv_audio_devices(help_text):
     return devices
 
 
-def connector_hdmi_index(output_name):
-    """Guess the HDMI audio endpoint index for an xrandr connector.
+def connector_hdmi_index(output_name, sibling_outputs=None):
+    """Guess the HDMI audio endpoint index for a connector.
 
-    NVIDIA typically exposes HDMI-0 as audio HDMI 0 and then DisplayPort
-    pairs DP-0/1, DP-2/3, DP-4/5 as HDMI 1, 2 and 3.
-    DRM names such as HDMI-A-1 are 1-based and map to HDMI 0.
+    NVIDIA X11 uses HDMI-0, HDMI-1 (0-based). GNOME/DRM use HDMI-1 / HDMI-A-1
+    (1-based). Audio PCM indices are 0-based in both cases.
     """
     if not output_name:
         return 0
@@ -688,13 +723,40 @@ def connector_hdmi_index(output_name):
     if name.startswith("HDMI-A-") or re.match(r"^HDMI-A\d", name):
         return max(0, index - 1)
     if name.startswith("HDMI"):
+        siblings = sibling_outputs or [output_name]
+        hdmi_nums = []
+        for sibling in siblings:
+            match = re.search(r"HDMI(?:-A)?-?(\d+)$", sibling.strip().upper())
+            if match:
+                hdmi_nums.append(int(match.group(1)))
+        if hdmi_nums and min(hdmi_nums) >= 1:
+            return max(0, index - 1)
         return index
     if name.startswith("DP-") or name.startswith("DP"):
         return 1 + (index // 2)
     return index
 
 
-def score_program_audio_device(device_id, description, hdmi_index):
+def monitor_audio_tokens(output_name, identity=None):
+    tokens = set()
+    values = [output_name]
+    if identity:
+        values.extend([
+            identity.get("vendor"),
+            identity.get("product"),
+            identity.get("display_name"),
+        ])
+    for value in values:
+        if not value:
+            continue
+        for part in re.split(r"[^\w]+", str(value), flags=re.UNICODE):
+            if len(part) >= 3:
+                tokens.add(part.lower())
+    tokens -= {"hdmi", "dvi", "display", "monitor", "audio", "internal", "internes"}
+    return tokens
+
+
+def score_program_audio_device(device_id, description, hdmi_index, tokens=None):
     """Higher scores are a better match for the projector HDMI audio jack."""
     ident = (device_id or "").lower()
     desc = (description or "").lower()
@@ -709,11 +771,11 @@ def score_program_audio_device(device_id, description, hdmi_index):
 
     score = 0
     if ident.startswith("pipewire/"):
-        score += 80
+        score += 50
     elif ident.startswith("pulse/"):
-        score += 70
-    elif ident.startswith("alsa/hdmi:"):
         score += 40
+    elif ident.startswith("alsa/hdmi:"):
+        score += 70
     else:
         return -1
 
@@ -721,25 +783,38 @@ def score_program_audio_device(device_id, description, hdmi_index):
     if extra:
         if int(extra.group(1)) == hdmi_index:
             score += 40
-    elif hdmi_index == 0 and "hdmi-stereo" in ident:
-        score += 40
+        else:
+            score -= 30
+    elif "hdmi-stereo" in ident:
+        if hdmi_index == 0:
+            score += 20
+        else:
+            score -= 40
 
     dev = re.search(r"dev=(\d+)", ident)
-    if dev and int(dev.group(1)) == hdmi_index:
-        score += 40
+    if dev:
+        if int(dev.group(1)) == hdmi_index:
+            score += 50
+        else:
+            score -= 20
 
     alsa_hdmi = re.search(r"hdmi\s+(\d+)/", desc)
     if alsa_hdmi and int(alsa_hdmi.group(1)) == hdmi_index:
         score += 20
+
+    for token in tokens or ():
+        if token in desc:
+            score += 80
     return score
 
 
-def choose_program_audio_device(devices, output_name):
+def choose_program_audio_device(devices, output_name, sibling_outputs=None, identity=None):
     """Pick the mpv audio device that belongs to the projector output."""
-    hdmi_index = connector_hdmi_index(output_name)
+    hdmi_index = connector_hdmi_index(output_name, sibling_outputs)
+    tokens = monitor_audio_tokens(output_name, identity)
     ranked = []
     for device_id, description in devices:
-        score = score_program_audio_device(device_id, description, hdmi_index)
+        score = score_program_audio_device(device_id, description, hdmi_index, tokens)
         if score >= 0:
             ranked.append((score, device_id))
     if not ranked:
@@ -759,6 +834,157 @@ def list_mpv_audio_devices(mpv_path):
     return parse_mpv_audio_devices(f"{result.stdout}\n{result.stderr}")
 
 
+def _strip_gdctl_tree(line):
+    return re.sub(r"[│├└─┌┐┘┴┬┤┼]+", " ", line).strip()
+
+
+@dataclass
+class GdctlLogical:
+    connector: str
+    x: int = 0
+    y: int = 0
+    scale: str = "1.0"
+    transform: str = "normal"
+    primary: bool = False
+    mode_name: str = ""
+
+
+@dataclass
+class GdctlState:
+    order: list = field(default_factory=list)
+    modes: dict = field(default_factory=dict)
+    current: dict = field(default_factory=dict)
+    preferred: dict = field(default_factory=dict)
+    identity: dict = field(default_factory=dict)
+    logical: list = field(default_factory=list)
+
+
+def parse_gdctl_show(text):
+    """Parse `gdctl show -v -m` into monitor modes and logical layout."""
+    state = GdctlState()
+    section = None
+    monitor = None
+    pending = None
+    logical = None
+
+    def finish_mode():
+        nonlocal pending
+        if not pending or not monitor:
+            pending = None
+            return
+        if pending.get("interlaced"):
+            pending = None
+            return
+        mode = DisplayMode(
+            monitor,
+            pending["width"],
+            pending["height"],
+            pending["refresh"],
+            name=pending["name"],
+        )
+        state.modes.setdefault(monitor, []).append(mode)
+        if pending.get("current"):
+            state.current[monitor] = mode
+        if pending.get("preferred"):
+            state.preferred[monitor] = mode
+        pending = None
+
+    for raw in text.splitlines():
+        line = _strip_gdctl_tree(raw)
+        if not line:
+            continue
+        if line == "Monitors:":
+            finish_mode()
+            section = "monitors"
+            monitor = None
+            continue
+        if line == "Logical monitors:":
+            finish_mode()
+            section = "logical"
+            monitor = None
+            logical = None
+            continue
+        if line.startswith("Properties:") and section == "logical":
+            logical = None
+            continue
+
+        if section == "monitors":
+            found = re.match(r"^Monitor (\S+)\s+\(", line)
+            if found:
+                finish_mode()
+                monitor = found.group(1)
+                if monitor not in state.order:
+                    state.order.append(monitor)
+                    state.modes.setdefault(monitor, [])
+                    state.identity.setdefault(monitor, {})
+                continue
+            if monitor and line.startswith("Vendor:"):
+                state.identity.setdefault(monitor, {})["vendor"] = line.split(":", 1)[1].strip()
+                continue
+            if monitor and line.startswith("Product:"):
+                state.identity.setdefault(monitor, {})["product"] = line.split(":", 1)[1].strip()
+                continue
+            named = re.search(r"display-name\s*⇒\s*(.+)$", line)
+            if monitor and named:
+                state.identity.setdefault(monitor, {})["display_name"] = named.group(1).strip()
+                continue
+            mode_match = re.match(r"^(\d+)x(\d+)(i)?@([\d.]+)$", line)
+            if mode_match and monitor:
+                finish_mode()
+                pending = {
+                    "name": f"{mode_match.group(1)}x{mode_match.group(2)}"
+                    f"{mode_match.group(3) or ''}@{mode_match.group(4)}",
+                    "width": int(mode_match.group(1)),
+                    "height": int(mode_match.group(2)),
+                    "refresh": float(mode_match.group(4)),
+                    "interlaced": bool(mode_match.group(3)),
+                    "current": False,
+                    "preferred": False,
+                }
+                continue
+            if pending:
+                if "is-interlaced" in line and "yes" in line:
+                    pending["interlaced"] = True
+                elif "is-current" in line and "yes" in line:
+                    pending["current"] = True
+                elif "is-preferred" in line and "yes" in line:
+                    pending["preferred"] = True
+            continue
+
+        if section == "logical":
+            if line.startswith("Logical monitor"):
+                logical = GdctlLogical(connector="")
+                state.logical.append(logical)
+                continue
+            if logical is None:
+                continue
+            position = re.search(r"Position:\s*\((-?\d+),\s*(-?\d+)\)", line)
+            if position:
+                logical.x = int(position.group(1))
+                logical.y = int(position.group(2))
+                continue
+            if line.startswith("Scale:"):
+                logical.scale = line.split(":", 1)[1].strip()
+                continue
+            if line.startswith("Transform:"):
+                logical.transform = line.split(":", 1)[1].strip()
+                continue
+            if line.startswith("Primary:"):
+                logical.primary = "yes" in line.lower()
+                continue
+            connector = re.match(r"^(\S+)\s+\(", line)
+            if connector and not line.startswith("Monitors"):
+                logical.connector = connector.group(1)
+
+    finish_mode()
+    for item in state.logical:
+        current = state.current.get(item.connector)
+        if current:
+            item.mode_name = current.name
+            current.x, current.y = item.x, item.y
+    return state
+
+
 class VideoOutputManager:
     def __init__(self, video_output=None):
         self.video_output = video_output
@@ -767,16 +993,54 @@ class VideoOutputManager:
         self.target_refresh = None
         self._program_audio_device = None
         self._program_audio_output = None
+        self._gdctl_cache = None
+        self._gdctl_cache_at = 0.0
+
+    @staticmethod
+    def desktop_env():
+        """Run host desktop tools with the distro Python, not Pixi's."""
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+        env.pop("PYTHONHOME", None)
+        env["PATH"] = "/usr/bin:/usr/sbin:/bin:" + env.get("PATH", "")
+        return env
 
     @staticmethod
     def run(command):
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        env = None
+        if command and os.path.basename(command[0]) == "gdctl":
+            env = VideoOutputManager.desktop_env()
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=True, env=env,
+        )
         return result.stdout
+
+    def uses_gdctl(self):
+        return session_is_wayland() and bool(shutil.which("gdctl"))
 
     def xrandr(self, *extra):
         return self.run(["xrandr", "--query", *extra])
 
+    def _invalidate_display_cache(self):
+        self._gdctl_cache = None
+        self._gdctl_cache_at = 0.0
+
+    def gdctl_state(self):
+        now = time.monotonic()
+        if self._gdctl_cache is not None and now - self._gdctl_cache_at < 0.4:
+            return self._gdctl_cache
+        text = self.run(["gdctl", "show", "-v", "-m"])
+        self._gdctl_cache = parse_gdctl_show(text)
+        self._gdctl_cache_at = now
+        return self._gdctl_cache
+
     def get_outputs(self):
+        if session_is_wayland() and not self.uses_gdctl():
+            raise RuntimeError(
+                "Wayland ohne GNOME `gdctl`: Display-Steuerung wird nicht unterstützt."
+            )
+        if self.uses_gdctl():
+            return list(self.gdctl_state().order)
         outputs = []
         for line in self.xrandr().splitlines():
             match = re.match(r"^(\S+)\s+connected", line)
@@ -785,6 +1049,11 @@ class VideoOutputManager:
         return outputs
 
     def get_primary_output(self):
+        if self.uses_gdctl():
+            for item in self.gdctl_state().logical:
+                if item.primary:
+                    return item.connector
+            return None
         for line in self.xrandr().splitlines():
             match = re.match(r"^(\S+)\s+connected\s+primary", line)
             if match:
@@ -792,6 +1061,13 @@ class VideoOutputManager:
         return None
 
     def get_output_geometry(self, output_name):
+        if self.uses_gdctl():
+            state = self.gdctl_state()
+            current = state.current.get(output_name)
+            for item in state.logical:
+                if item.connector == output_name and current:
+                    return current.width, current.height, item.x, item.y
+            return None
         pattern = (
             rf"^{re.escape(output_name)}\s+connected(?:\s+primary)?\s+"
             r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)"
@@ -839,7 +1115,7 @@ class VideoOutputManager:
     def select_video_output(self, preferred=None):
         outputs = self.get_outputs()
         if not outputs:
-            raise RuntimeError("Keine angeschlossenen X11-Ausgänge gefunden.")
+            raise RuntimeError("Keine angeschlossenen Anzeigeausgänge gefunden.")
 
         if preferred:
             if preferred not in outputs:
@@ -895,12 +1171,30 @@ class VideoOutputManager:
                 return None
         if self._program_audio_device and self._program_audio_output == output:
             return self._program_audio_device
-        device = choose_program_audio_device(list_mpv_audio_devices(mpv_path), output)
+        siblings = []
+        identity = None
+        try:
+            siblings = self.get_outputs()
+        except Exception:
+            siblings = [output]
+        if self.uses_gdctl():
+            try:
+                identity = self.gdctl_state().identity.get(output)
+            except Exception:
+                identity = None
+        device = choose_program_audio_device(
+            list_mpv_audio_devices(mpv_path),
+            output,
+            sibling_outputs=siblings,
+            identity=identity,
+        )
         self._program_audio_device = device
         self._program_audio_output = output
         return device
 
     def get_modes(self, output_name):
+        if self.uses_gdctl():
+            return list(self.gdctl_state().modes.get(output_name, []))
         modes = []
         inside = False
         for line in self.xrandr().splitlines():
@@ -942,6 +1236,18 @@ class VideoOutputManager:
         return modes
 
     def get_current_mode(self, output_name):
+        if self.uses_gdctl():
+            state = self.gdctl_state()
+            current = state.current.get(output_name)
+            if not current:
+                return None
+            for item in state.logical:
+                if item.connector == output_name:
+                    return DisplayMode(
+                        output_name, current.width, current.height,
+                        current.refresh, item.x, item.y, name=current.name,
+                    )
+            return current
         lines = self.xrandr().splitlines()
         width = height = x = y = None
         inside = False
@@ -987,6 +1293,8 @@ class VideoOutputManager:
         return None
 
     def get_preferred_mode(self, output_name):
+        if self.uses_gdctl():
+            return self.gdctl_state().preferred.get(output_name)
         inside = False
         for line in self.xrandr().splitlines():
             if re.match(r"^\S+\s+connected", line):
@@ -1021,6 +1329,8 @@ class VideoOutputManager:
         return None
 
     def get_timings(self, output_name):
+        if self.uses_gdctl():
+            return []
         timings = []
         inside = False
         lines = self.run(["xrandr", "--verbose"]).splitlines()
@@ -1178,32 +1488,28 @@ class VideoOutputManager:
         if not modes:
             return None, False
 
-        native = self.native_resolution(self.video_output)
         targets = self.target_refresh_rates(video.fps)
         self.target_refresh = targets[0][0] if targets else video.fps
+        width, height = video.width, video.height
 
-        if native:
-            native_modes = [
-                m for m in modes
-                if m.width == native[0] and m.height == native[1]
-            ]
+        for rate, _multiplier in targets:
+            found = self.find_refresh_mode(modes, width, height, rate)
+            if found:
+                return found, True
+
+        if create:
             for rate, _multiplier in targets:
-                found = self.find_refresh_mode(modes, native[0], native[1], rate)
-                if found:
-                    return found, True
+                created = self.ensure_custom_mode(
+                    self.video_output, width, height, rate
+                )
+                if created:
+                    return created, True
 
-            if create:
-                for rate, _multiplier in targets:
-                    created = self.ensure_custom_mode(
-                        self.video_output, native[0], native[1], rate
-                    )
-                    if created:
-                        return created, True
-
-            if native_modes:
-                native_modes.sort(key=lambda m: self.refresh_score(video.fps, m.refresh))
-                fallback = native_modes[0]
-                return fallback, self.refresh_matches(video.fps, fallback.refresh)
+        same_res = [m for m in modes if m.width == width and m.height == height]
+        if same_res:
+            same_res.sort(key=lambda m: self.refresh_score(video.fps, m.refresh))
+            fallback = same_res[0]
+            return fallback, self.refresh_matches(video.fps, fallback.refresh)
 
         for rate, _multiplier in targets:
             rated = [
@@ -1212,17 +1518,21 @@ class VideoOutputManager:
             ]
             if not rated:
                 continue
-            if native:
-                rated.sort(
-                    key=lambda m: abs(m.width * m.height - native[0] * native[1])
-                )
+            rated.sort(key=lambda m: abs(m.width * m.height - width * height))
             return rated[0], True
 
-        modes.sort(key=lambda m: self.refresh_score(video.fps, m.refresh))
+        modes.sort(
+            key=lambda m: (
+                self.refresh_score(video.fps, m.refresh),
+                abs(m.width * m.height - width * height),
+            )
+        )
         fallback = modes[0]
         return fallback, self.refresh_matches(video.fps, fallback.refresh)
 
     def ensure_custom_mode(self, output_name, width, height, refresh):
+        if self.uses_gdctl():
+            return None
         modes = self.get_modes(output_name)
         existing = self.find_refresh_mode(modes, width, height, refresh)
         if existing:
@@ -1288,6 +1598,87 @@ class VideoOutputManager:
         ]
         return name, modeline
 
+    def _gdctl_apply_mode(self, mode):
+        state = self.gdctl_state()
+        current = state.current.get(mode.output)
+        old_w = current.width if current else mode.width
+        control = [
+            item for item in state.logical
+            if item.connector and item.connector != mode.output
+        ]
+        beamer = [
+            item for item in state.logical if item.connector == mode.output
+        ]
+        control.sort(key=lambda item: (not item.primary, item.x, item.y))
+        # Keep the operator / primary display at (0, 0). GNOME draws desktop
+        # icons on the leftmost logical monitor; the projector must not sit there.
+        x_cursor = 0
+        placed = {}
+        for item in control + beamer:
+            if item.connector == mode.output:
+                width = mode.width
+            else:
+                current_item = state.current.get(item.connector)
+                width = current_item.width if current_item else old_w
+            placed[item.connector] = (x_cursor, 0)
+            x_cursor += width
+
+        command = ["gdctl", "set"]
+        for item in state.logical:
+            if not item.connector:
+                continue
+            command.extend(["-L", "-M", item.connector])
+            if item.connector == mode.output:
+                command.extend(["--mode", mode.mode])
+            elif item.mode_name:
+                command.extend(["--mode", item.mode_name])
+            if item.primary:
+                command.append("--primary")
+            x, y = placed.get(item.connector, (item.x, item.y))
+            command.extend(["--x", str(x), "--y", str(y)])
+            if item.scale:
+                command.extend(["--scale", item.scale])
+            if item.transform and item.transform != "normal":
+                command.extend(["--transform", item.transform])
+        if "--primary" not in command:
+            raise RuntimeError("gdctl-Konfiguration ohne Primary-Monitor.")
+        result = subprocess.run(
+            command, capture_output=True, text=True,
+            env=self.desktop_env(),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(detail or "gdctl set fehlgeschlagen")
+        self._invalidate_display_cache()
+        time.sleep(0.2)
+
+    def ensure_operator_layout(self):
+        """Keep the booth display at (0, 0) so GNOME desktop icons stay off the projector."""
+        if not self.uses_gdctl() or not self.video_output:
+            return
+        try:
+            state = self.gdctl_state()
+        except Exception:
+            return
+        beamer = next(
+            (item for item in state.logical if item.connector == self.video_output),
+            None,
+        )
+        others = [
+            item for item in state.logical
+            if item.connector and item.connector != self.video_output
+        ]
+        if not beamer or not others:
+            return
+        if beamer.x != 0 or beamer.y != 0:
+            return
+        current = state.current.get(self.video_output)
+        if not current:
+            return
+        if self.original_mode is None:
+            self.original_mode = current
+        self._gdctl_apply_mode(current)
+
     def set_mode(self, mode):
         if self.original_mode is None:
             self.original_mode = self.get_current_mode(mode.output)
@@ -1303,16 +1694,19 @@ class VideoOutputManager:
             self.video_mode = mode
             return
 
-        command = [
-            "xrandr", "--output", mode.output,
-            "--mode", mode.mode,
-        ]
-        if re.fullmatch(r"\d+x\d+", mode.mode):
-            command.extend(["--rate", f"{mode.refresh:.3f}"])
+        if self.uses_gdctl():
+            self._gdctl_apply_mode(mode)
+        else:
+            command = [
+                "xrandr", "--output", mode.output,
+                "--mode", mode.mode,
+            ]
+            if re.fullmatch(r"\d+x\d+", mode.mode):
+                command.extend(["--rate", f"{mode.refresh:.3f}"])
+            subprocess.run(command, capture_output=True, text=True, check=True)
+            time.sleep(0.2)
 
-        subprocess.run(command, capture_output=True, text=True, check=True)
-        time.sleep(0.2)
-
+        self._invalidate_display_cache()
         geometry = self.get_output_geometry(mode.output)
         if geometry:
             mode.x = geometry[2]
@@ -1364,29 +1758,34 @@ class VideoOutputManager:
         mode = self.effective_mode()
         if not mode:
             raise RuntimeError("Kein Video-Modus gesetzt.")
+        mpv_path = mpv_path or find_mpv()
+        wayland = session_is_wayland()
         arguments = [
             "--no-border",
-            "--fullscreen=no",
+            "--fullscreen=yes" if wayland else "--fullscreen=no",
             "--keepaspect=yes",
             "--video-sync=display-resample",
             f"--override-display-fps={mode.refresh:.3f}",
             "--hwdec=auto-safe",
             "--vo=gpu",
-            "--gpu-context=x11egl",
+            f"--gpu-context={gpu_context_for_mpv(mpv_path)}",
             "--force-window=yes",
             "--osd-level=0",
             "--osc=no",
+            "--background=color",
+            "--background-color=#000000",
             "--cursor-autohide=always",
             "--sid=no",
             "--sub-auto=no",
             # Stills stay up until the player decides otherwise, not for mpv's default second.
             "--image-display-duration=inf",
-            f"--geometry={self.get_mpv_geometry()}",
         ]
+        if not wayland:
+            arguments.append(f"--geometry={self.get_mpv_geometry()}")
         if self.video_output:
             arguments.append(f"--screen-name={self.video_output}")
             arguments.append(f"--fs-screen-name={self.video_output}")
-        audio = self.program_audio_device(mpv_path or find_mpv())
+        audio = self.program_audio_device(mpv_path)
         if audio:
             arguments.append(f"--audio-device={audio}")
         return arguments
@@ -1397,17 +1796,21 @@ class VideoOutputManager:
 
         mode = self.original_mode
         try:
-            subprocess.run(
-                [
-                    "xrandr", "--output", mode.output,
-                    "--mode", mode.mode,
-                    "--rate", f"{mode.refresh:.6f}"
-                ],
-                check=True
-            )
+            if self.uses_gdctl():
+                self._gdctl_apply_mode(mode)
+            else:
+                subprocess.run(
+                    [
+                        "xrandr", "--output", mode.output,
+                        "--mode", mode.mode,
+                        "--rate", f"{mode.refresh:.6f}"
+                    ],
+                    check=True
+                )
         except Exception as e:
             print("Fehler beim Wiederherstellen:", e)
 
+        self._invalidate_display_cache()
         self.original_mode = None
         self.video_mode = None
 
@@ -1550,8 +1953,8 @@ class MPVController:
         if self.pending_end is not None:
             options["end"] = str(self.pending_end)
         if options:
-            option_str = ",".join(f"{key}={value}" for key, value in options.items())
-            self.command("loadfile", filename, "replace", option_str)
+            # mpv 0.38+: loadfile <url> <flags> <index> <options-map>
+            self.command("loadfile", filename, "replace", 0, options)
         else:
             self.command("loadfile", filename, "replace")
 

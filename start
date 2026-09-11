@@ -6,6 +6,9 @@ ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 cd "$ROOT"
 export PATH="${HOME}/.pixi/bin:${PATH}"
 
+# Register the app icon so Desktop shortcuts and the menu can find it.
+"$ROOT/scripts/install-icon.sh"
+
 if command -v pixi >/dev/null 2>&1; then
   exec pixi run start
 fi
