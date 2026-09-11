@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cinema Player — Operator manual</title>
+  <link rel="icon" href="images/logo-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <img class="logo" src="images/logo-header.png" alt="Cinema Player">
+    <div class="title">
+      <span data-lang="en">Operator manual</span>
+      <span data-lang="de">Bedienungsanleitung</span>
+    </div>
+    <div class="lang-switch">
+      <button type="button" data-set-lang="en">English</button>
+      <button type="button" data-set-lang="de">Deutsch</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <h1>
+      <span data-lang="en">Cinema Player operator manual</span>
+      <span data-lang="de">Cinema Player Bedienungsanleitung</span>
+    </h1>
+    <p class="lead" data-lang="en">
+      Cinema Player plays a cinema program on a dedicated projector output while the projectionist works on a separate control screen. The big screen shows only the picture — never menus, clocks, or subtitles unless you choose a subtitle track.
+    </p>
+    <p class="lead" data-lang="de">
+      Cinema Player spielt ein Kinoprogramm auf einem eigenen Beamerausgang, während die Vorführung an einem separaten Kontrollbildschirm bedient wird. Die große Leinwand zeigt nur das Bild — keine Menüs, Uhren oder Untertitel, außer Sie wählen eine Untertitelspur.
+    </p>
+
+    <nav class="toc">
+      <h2 data-lang="en">Contents</h2>
+      <h2 data-lang="de">Inhalt</h2>
+      <ol>
+        <li><a href="#start" data-lang="en">Start and screens</a><a href="#start" data-lang="de">Start und Bildschirme</a></li>
+        <li><a href="#layout" data-lang="en">Control window</a><a href="#layout" data-lang="de">Kontrollfenster</a></li>
+        <li><a href="#settings" data-lang="en">Settings</a><a href="#settings" data-lang="de">Einstellungen</a></li>
+        <li><a href="#program" data-lang="en">Program states and transport</a><a href="#program" data-lang="de">Programmzustände und Transport</a></li>
+        <li><a href="#playlist" data-lang="en">Playlist</a><a href="#playlist" data-lang="de">Playlist</a></li>
+        <li><a href="#preview" data-lang="en">Preview and In/Out</a><a href="#preview" data-lang="de">Vorschau und In/Out</a></li>
+        <li><a href="#beamer" data-lang="en">Beamer</a><a href="#beamer" data-lang="de">Beamer</a></li>
+        <li><a href="#audio" data-lang="en">Volume and loudness</a><a href="#audio" data-lang="de">Lautstärke und Lautheit</a></li>
+        <li><a href="#stills" data-lang="en">Still images</a><a href="#stills" data-lang="de">Standbilder</a></li>
+        <li><a href="#quit" data-lang="en">Quit</a><a href="#quit" data-lang="de">Beenden</a></li>
+      </ol>
+    </nav>
+
+    <h2 id="start">
+      <span data-lang="en">1. Start and screens</span>
+      <span data-lang="de">1. Start und Bildschirme</span>
+    </h2>
+    <p data-lang="en">
+      Connect two outputs from the graphics card: one for the control monitor, one for the projector (HDMI, DVI, or DisplayPort). From the project folder run <code>./start</code> or <code>pixi run start</code>. The desktop file <code>Cinema-Player.desktop</code> starts the same script.
+    </p>
+    <p data-lang="de">
+      Schließen Sie zwei Ausgänge der Grafikkarte an: einen für den Kontrollmonitor, einen für den Beamer (HDMI, DVI oder DisplayPort). Im Projektordner starten Sie mit <code>./start</code> oder <code>pixi run start</code>. Die Datei <code>Cinema-Player.desktop</code> startet dasselbe Skript.
+    </p>
+    <p data-lang="en">
+      If only one display is found, a warning asks you to attach a second output and select it under <strong>Beamer output</strong>. The projector instance of mpv uses that connector. Preview audio can stay on the control machine; program audio goes out with the projector HDMI.
+    </p>
+    <p data-lang="de">
+      Wird nur ein Bildschirm gefunden, warnt Cinema Player und bittet, einen zweiten Ausgang anzuschließen und unter <strong>Beamerausgang</strong> zu wählen. Die mpv-Instanz für den Beamer nutzt diesen Anschluss. Vorschau-Ton kann am Kontrollrechner bleiben; der Programmton geht mit dem HDMI des Beamers.
+    </p>
+
+    <h2 id="layout">
+      <span data-lang="en">2. Control window</span>
+      <span data-lang="de">2. Kontrollfenster</span>
+    </h2>
+    <p data-lang="en">
+      The header shows the logo, the version, and the settings menu (three lines, top right). Below that the window is split: program and playlist on the left, beamer and preview on the right.
+    </p>
+    <p data-lang="de">
+      Die Kopfzeile zeigt das Logo, die Version und das Einstellungsmenü (drei Striche oben rechts). Darunter ist das Fenster geteilt: Programm und Playlist links, Beamer und Vorschau rechts.
+    </p>
+    <figure>
+      <img data-lang="en" src="images/overview-en.png" alt="Cinema Player control window in English, program off">
+      <img data-lang="de" src="images/overview-de.png" alt="Cinema-Player-Kontrollfenster auf Deutsch, Programm aus">
+      <figcaption data-lang="en">Control window in <strong>OFF</strong>. A clip is selected for preview (yellow). The projector is dark.</figcaption>
+      <figcaption data-lang="de">Kontrollfenster in <strong>AUS</strong>. Ein Clip ist für die Vorschau gewählt (gelb). Der Beamer bleibt dunkel.</figcaption>
+    </figure>
+    <ul>
+      <li data-lang="en"><strong>Status bar</strong> — program state, clip name, playlist position.</li>
+      <li data-lang="de"><strong>Statuszeile</strong> — Programmzustand, Clipname, Position in der Playlist.</li>
+      <li data-lang="en"><strong>Program block</strong> — progress, volume, In/Out, transport, four clocks, VU meter.</li>
+      <li data-lang="de"><strong>Programmblock</strong> — Verlauf, Lautstärke, In/Out, Transport, vier Uhren, VU-Meter.</li>
+      <li data-lang="en"><strong>Playlist tools</strong> — name, import / new / load / save, beamer change, autoplay delay, idle media.</li>
+      <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Beamerwechsel, Autoplay-Pause, Pausenmedium.</li>
+      <li data-lang="en"><strong>Playlist</strong> — the running order.</li>
+      <li data-lang="de"><strong>Playlist</strong> — die Spielfolge.</li>
+      <li data-lang="en"><strong>Beamer status</strong> — resolution, refresh, available rates, OK or Mismatch.</li>
+      <li data-lang="de"><strong>Beamer-Status</strong> — Auflösung, Frequenz, verfügbare Raten, OK oder Abweichung.</li>
+      <li data-lang="en"><strong>Preview</strong> — Live/Preview badge, metadata, clip settings, picture, meters, transport, In/Out.</li>
+      <li data-lang="de"><strong>Vorschau</strong> — Live/Vorschau, Metadaten, Clip-Einstellungen, Bild, Meter, Transport, In/Out.</li>
+    </ul>
+    <p data-lang="en">
+      Fullscreen on the control monitor: <kbd>F11</kbd> or Settings → Fullscreen. It never covers the projector output.
+    </p>
+    <p data-lang="de">
+      Vollbild auf dem Kontrollmonitor: <kbd>F11</kbd> oder Einstellungen → Vollbildmodus. Der Beamerausgang wird davon nicht überdeckt.
+    </p>
+
+    <h2 id="settings">
+      <span data-lang="en">3. Settings</span>
+      <span data-lang="de">3. Einstellungen</span>
+    </h2>
+    <p data-lang="en">Open the burger menu at the top right of the header.</p>
+    <p data-lang="de">Öffnen Sie das Burger-Menü oben rechts in der Kopfzeile.</p>
+    <figure>
+      <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
+      <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
+      <figcaption data-lang="en">Settings: design, fullscreen, language, beamer output, test image, test videos, quit.</figcaption>
+      <figcaption data-lang="de">Einstellungen: Design, Vollbild, Sprache, Beamerausgang, Testbild, Testvideos, Beenden.</figcaption>
+    </figure>
+    <ul>
+      <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
+      <li data-lang="de"><strong>Helles / dunkles Design</strong> — Farben des Kontrollfensters.</li>
+      <li data-lang="en"><strong>Fullscreen</strong> — control monitor only (<kbd>F11</kbd>).</li>
+      <li data-lang="de"><strong>Vollbildmodus</strong> — nur Kontrollmonitor (<kbd>F11</kbd>).</li>
+      <li data-lang="en"><strong>Language</strong> — English or Deutsch. The brand name Cinema Player stays untranslated.</li>
+      <li data-lang="de"><strong>Sprache</strong> — English oder Deutsch. Der Name Cinema Player bleibt unübersetzt.</li>
+      <li data-lang="en"><strong>Beamer output</strong> — which connector is the projector. Locked while <strong>PLAYING</strong>.</li>
+      <li data-lang="de"><strong>Beamerausgang</strong> — welcher Anschluss der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt.</li>
+      <li data-lang="en"><strong>Beamer test image</strong> — Cinema Player logo on the projector until you close the dialog. Only in <strong>OFF</strong>.</li>
+      <li data-lang="de"><strong>Beamer-Testbild</strong> — Cinema-Player-Logo auf dem Beamer, bis der Dialog geschlossen wird. Nur bei <strong>AUS</strong>.</li>
+      <li data-lang="en"><strong>Load test videos</strong> — replaces the playlist with files from <code>testdata</code>.</li>
+      <li data-lang="de"><strong>Testvideos laden</strong> — ersetzt die Playlist durch die Dateien in <code>testdata</code>.</li>
+      <li data-lang="en"><strong>Quit</strong> — only enabled in <strong>OFF</strong>.</li>
+      <li data-lang="de"><strong>Beenden</strong> — nur bei <strong>AUS</strong> aktiv.</li>
+    </ul>
+
+    <h2 id="program">
+      <span data-lang="en">4. Program states and transport</span>
+      <span data-lang="de">4. Programmzustände und Transport</span>
+    </h2>
+    <p data-lang="en">
+      A show has three states. <strong>Start</strong> only arms the program. <strong>Resume</strong> rolls the clip. Idle media (if set) appears only in <strong>PROGRAM</strong>, never in <strong>OFF</strong>.
+    </p>
+    <p data-lang="de">
+      Eine Vorstellung hat drei Zustände. <strong>Start</strong> schaltet das Programm nur scharf. <strong>Weiter</strong> startet den Clip. Ein Pausenmedium erscheint nur im Zustand <strong>PROGRAMM</strong>, niemals bei <strong>AUS</strong>.
+    </p>
+    <div class="states">
+      <figure>
+        <img data-lang="en" src="images/status-off-en.png" alt="Status bar OFF">
+        <img data-lang="de" src="images/status-off-de.png" alt="Statuszeile AUS">
+        <figcaption>
+          <span class="badge off" data-lang="en">OFF</span>
+          <span class="badge off" data-lang="de">AUS</span>
+          <span data-lang="en">Program not started. Projector black. Clocks show --:--. Stop is disabled.</span>
+          <span data-lang="de">Programm nicht gestartet. Beamer schwarz. Uhren zeigen --:--. Stop ist inaktiv.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <img data-lang="en" src="images/status-program-en.png" alt="Status bar PROGRAM">
+        <img data-lang="de" src="images/status-program-de.png" alt="Statuszeile PROGRAMM">
+        <figcaption>
+          <span class="badge program" data-lang="en">PROGRAM</span>
+          <span class="badge program" data-lang="de">PROGRAMM</span>
+          <span data-lang="en">Armed. Idle media may run after the autoplay delay. Resume starts the current clip.</span>
+          <span data-lang="de">Scharf. Pausenmedium kann nach der Autoplay-Pause laufen. Weiter startet den aktuellen Clip.</span>
+        </figcaption>
+      </figure>
+      <figure>
+        <img data-lang="en" src="images/status-playing-en.png" alt="Status bar PLAYING">
+        <img data-lang="de" src="images/status-playing-de.png" alt="Statuszeile WIEDERGABE">
+        <figcaption>
+          <span class="badge playing" data-lang="en">PLAYING</span>
+          <span class="badge playing" data-lang="de">WIEDERGABE</span>
+          <span data-lang="en">Clip on air. Pause, Still, and Stop are available and must be confirmed.</span>
+          <span data-lang="de">Clip läuft. Pause, Standbild und Stop sind verfügbar und müssen bestätigt werden.</span>
+        </figcaption>
+      </figure>
+    </div>
+    <figure>
+      <img data-lang="en" src="images/overview-program-en.png" alt="Window in PROGRAM">
+      <img data-lang="de" src="images/overview-program-de.png" alt="Fenster im Zustand PROGRAMM">
+      <figcaption data-lang="en">After <strong>Start</strong>: blue PROGRAM bar, Stop enabled, Resume ready. The clip is not rolling yet.</figcaption>
+      <figcaption data-lang="de">Nach <strong>Start</strong>: blaue PROGRAMM-Leiste, Stop aktiv, Weiter bereit. Der Clip läuft noch nicht.</figcaption>
+    </figure>
+    <table class="icon-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th data-lang="en">Button</th>
+          <th data-lang="de">Taste</th>
+          <th data-lang="en">Action</th>
+          <th data-lang="de">Wirkung</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><img src="images/icons/start_program.png" alt=""></td>
+          <td data-lang="en">Start</td>
+          <td data-lang="de">Start</td>
+          <td data-lang="en">OFF → PROGRAM. Does not start the file.</td>
+          <td data-lang="de">AUS → PROGRAMM. Startet die Datei nicht.</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/play.png" alt=""></td>
+          <td data-lang="en">Resume</td>
+          <td data-lang="de">Weiter</td>
+          <td data-lang="en">Roll the current clip, unpause, or leave still.</td>
+          <td data-lang="de">Aktuellen Clip starten, Pause aufheben oder Standbild verlassen.</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/pause.png" alt=""></td>
+          <td data-lang="en">Pause</td>
+          <td data-lang="de">Pause</td>
+          <td data-lang="en">Hold position; projector goes black. Confirm first.</td>
+          <td data-lang="de">Position halten; Beamer wird schwarz. Zuerst bestätigen.</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/still.png" alt=""></td>
+          <td data-lang="en">Still</td>
+          <td data-lang="de">Standbild</td>
+          <td data-lang="en">Freeze the current frame on the projector. Confirm first.</td>
+          <td data-lang="de">Aktuelles Bild auf dem Beamer einfrieren. Zuerst bestätigen.</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/stop.png" alt=""></td>
+          <td data-lang="en">Stop</td>
+          <td data-lang="de">Stop</td>
+          <td data-lang="en">While PLAYING: end the clip → PROGRAM. Again: end the program → OFF.</td>
+          <td data-lang="de">Bei WIEDERGABE: Clip beenden → PROGRAMM. Nochmals: Programm beenden → AUS.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p data-lang="en">
+      Buttons that cannot be used are shown with a disabled icon (grey) and an arrow cursor. Pause and Still only work while <strong>PLAYING</strong>. Stop is dead in <strong>OFF</strong>.
+    </p>
+    <p data-lang="de">
+      Tasten, die nicht gelten, erscheinen als graues Disabled-Symbol mit Pfeilcursor. Pause und Standbild nur bei <strong>WIEDERGABE</strong>. Stop ist bei <strong>AUS</strong> tot.
+    </p>
+    <div class="two">
+      <figure>
+        <img data-lang="en" src="images/program-en.png" alt="Program transport in OFF">
+        <img data-lang="de" src="images/program-de.png" alt="Programmtransport bei AUS">
+        <figcaption data-lang="en">OFF: Start highlighted, Pause/Still/Stop disabled, clocks empty.</figcaption>
+        <figcaption data-lang="de">AUS: Start hervorgehoben, Pause/Standbild/Stop inaktiv, Uhren leer.</figcaption>
+      </figure>
+      <figure>
+        <img data-lang="en" src="images/program-playing-en.png" alt="Program transport while playing">
+        <img data-lang="de" src="images/program-playing-de.png" alt="Programmtransport bei Wiedergabe">
+        <figcaption data-lang="en">PLAYING: Resume highlighted green. Clocks follow the clip (In/Out), not idle media.</figcaption>
+        <figcaption data-lang="de">WIEDERGABE: Weiter grün. Uhren folgen dem Clip (In/Out), nicht dem Pausenmedium.</figcaption>
+      </figure>
+    </div>
+    <p data-lang="en">The four clocks are <strong>Total</strong>, <strong>Elapsed</strong>, <strong>Remaining</strong>, and <strong>End</strong> (wall-clock time when the clip will finish).</p>
+    <p data-lang="de">Die vier Uhren sind <strong>Gesamt</strong>, <strong>Gelaufen</strong>, <strong>Rest</strong> und <strong>Ende</strong> (Uhrzeit, zu der der Clip endet).</p>
+    <p class="note" data-lang="en">
+      Autoplay on a clip starts the next file after the autoplay delay (black). Idle media is not shown in that gap. After the last clip the program stays in PROGRAM until you Stop.
+    </p>
+    <p class="note" data-lang="de">
+      Autoplay an einem Clip startet die nächste Datei nach der Autoplay-Pause (schwarz). In dieser Lücke erscheint kein Pausenmedium. Nach dem letzten Clip bleibt das Programm auf PROGRAMM, bis Sie Stoppen.
+    </p>
+
+    <h2 id="playlist">
+      <span data-lang="en">5. Playlist</span>
+      <span data-lang="de">5. Playlist</span>
+    </h2>
+    <figure>
+      <img data-lang="en" src="images/playlist-tools-en.png" alt="Playlist toolbar">
+      <img data-lang="de" src="images/playlist-tools-de.png" alt="Playlist-Werkzeugleiste">
+      <figcaption data-lang="en">Name, import, new, load, save, playlist menu. Global options: beamer change, autoplay delay, idle media.</figcaption>
+      <figcaption data-lang="de">Name, Import, Neu, Laden, Speichern, Playlist-Menü. Globale Optionen: Beamerwechsel, Autoplay-Pause, Pausenmedium.</figcaption>
+    </figure>
+    <table class="icon-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th data-lang="en">Tool</th>
+          <th data-lang="de">Funktion</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><img src="images/icons/video_import.png" alt=""></td>
+          <td data-lang="en">Import files or a folder into the list.</td>
+          <td data-lang="de">Dateien oder einen Ordner in die Liste übernehmen.</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/playlist_new.png" alt=""></td>
+          <td data-lang="en">New playlist (asks before clearing).</td>
+          <td data-lang="de">Neue Playlist (fragt vor dem Leeren).</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/playlist_load.png" alt=""></td>
+          <td data-lang="en">Load a <code>.pls</code> playlist.</td>
+          <td data-lang="de">Eine <code>.pls</code>-Playlist laden.</td>
+        </tr>
+        <tr>
+          <td><img src="images/icons/playlist_save.png" alt=""></td>
+          <td data-lang="en">Save the current list and settings.</td>
+          <td data-lang="de">Aktuelle Liste und Einstellungen speichern.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p data-lang="en">
+      Drag a row to reorder. A left cursor marks the program pointer. Played clips go grey. Missing files stay in the list, show a missing badge, and are skipped during the show. Red metadata (frame rate, aspect, PAR, colorspace) means a beamer change or refresh mismatch — confirm the popup before Resume.
+    </p>
+    <p data-lang="de">
+      Ziehen Sie eine Zeile, um die Reihenfolge zu ändern. Ein Cursor links markiert den Programmzeiger. Gespielte Clips werden grau. Fehlende Dateien bleiben in der Liste, tragen ein FEHLT-Zeichen und werden in der Vorstellung übersprungen. Rote Metadaten (Bildrate, Bildformat, PAR, Farbraum) bedeuten Beamerwechsel oder Frequenzabweichung — den Dialog bestätigen, bevor Sie Weiter drücken.
+    </p>
+    <figure>
+      <img data-lang="en" src="images/playlist-en.png" alt="Playlist rows">
+      <img data-lang="de" src="images/playlist-de.png" alt="Playlist-Zeilen">
+      <figcaption data-lang="en">Yellow row = selected for preview. Red fps values show a refresh mismatch against the current beamer mode. Colorspace and range (for example Rec.2020 limited) appear when the file records them.</figcaption>
+      <figcaption data-lang="de">Gelbe Zeile = für die Vorschau gewählt. Rote Bildraten zeigen eine Abweichung zur aktuellen Beamerfrequenz. Farbraum und Range (z. B. Rec.2020 limited) erscheinen, wenn die Datei sie enthält.</figcaption>
+    </figure>
+    <p data-lang="en">Right-click a row:</p>
+    <p data-lang="de">Rechtsklick auf eine Zeile:</p>
+    <figure>
+      <img data-lang="en" src="images/menu-entry-en.png" alt="Clip context menu">
+      <img data-lang="de" src="images/menu-entry-de.png" alt="Kontextmenü eines Clips">
+      <figcaption data-lang="en">Set program pointer (not during PLAYING), toggle autoplay, relink a missing file, delete the entry.</figcaption>
+      <figcaption data-lang="de">Programmzeiger setzen (nicht während WIEDERGABE), Autoplay umschalten, fehlende Datei neu verknüpfen, Eintrag löschen.</figcaption>
+    </figure>
+    <p data-lang="en">Changing the program pointer while not playing must be confirmed, so the running order cannot jump by accident.</p>
+    <p data-lang="de">Ein Wechsel des Programmzeigers außerhalb der Wiedergabe muss bestätigt werden, damit die Reihenfolge nicht versehentlich springt.</p>
+    <p data-lang="en">The playlist burger menu:</p>
+    <p data-lang="de">Das Playlist-Burger-Menü:</p>
+    <figure>
+      <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist menu">
+      <img data-lang="de" src="images/menu-playlist-de.png" alt="Playlist-Menü">
+      <figcaption data-lang="en">Check files, reset played flags, autosave when the pointer moves, load last playlist at start, analyze loudness (OFF only).</figcaption>
+      <figcaption data-lang="de">Dateien prüfen, Gespielte zurücksetzen, Autosave bei Programmwechsel, letzte Playlist beim Start laden, Lautheit analysieren (nur bei AUS).</figcaption>
+    </figure>
+    <ul>
+      <li data-lang="en"><strong>Beamer change</strong> — popup when aspect, PAR, or colorspace needs a projector zoom/lens change. 16:9 in 21:9 zoom is letterboxed to height.</li>
+      <li data-lang="de"><strong>Beamerwechsel</strong> — Dialog, wenn Bildformat, PAR oder Farbraum eine Zoom-/Objektivänderung brauchen. 16:9 im 21:9-Zoom wird auf die Höhe eingepasst.</li>
+      <li data-lang="en"><strong>Autoplay delay</strong> — seconds of black before the next autoplay clip, and before idle media appears after a clip.</li>
+      <li data-lang="de"><strong>Autoplay-Pause</strong> — Sekunden Schwarz vor dem nächsten Autoplay-Clip und bevor das Pausenmedium erscheint.</li>
+      <li data-lang="en"><strong>Idle media</strong> — loop on the projector only while PROGRAM is armed. The button turns green while that media is on screen.</li>
+      <li data-lang="de"><strong>Pausenmedium</strong> — Schleife auf dem Beamer nur bei scharfem PROGRAMM. Die Taste wird grün, solange das Medium auf der Leinwand ist.</li>
+    </ul>
+
+    <h2 id="preview">
+      <span data-lang="en">6. Preview and In/Out</span>
+      <span data-lang="de">6. Vorschau und In/Out</span>
+    </h2>
+    <p data-lang="en">
+      Click a playlist row to load it in preview (yellow <span class="badge preview">Preview</span>). Click the badge to follow the program output (<span class="badge playing">Live</span>) when a clip is on air. In/Out cannot be edited while that clip is on air.
+    </p>
+    <p data-lang="de">
+      Ein Klick auf eine Playlist-Zeile lädt sie in die Vorschau (gelb <span class="badge preview">Vorschau</span>). Ein Klick auf das Abzeichen folgt der Programmausgabe (<span class="badge playing">Live</span>), wenn ein Clip läuft. In/Out lassen sich nicht ändern, solange dieser Clip auf Sendung ist.
+    </p>
+    <figure>
+      <img data-lang="en" src="images/preview-header-en.png" alt="Preview header">
+      <img data-lang="de" src="images/preview-header-de.png" alt="Vorschau-Kopfzeile">
+      <figcaption data-lang="en">Clip name, Live/Preview badge, length, container, codecs, aspect, PAR, colorspace.</figcaption>
+      <figcaption data-lang="de">Clipname, Live/Vorschau, Länge, Container, Codecs, Bildformat, PAR, Farbraum.</figcaption>
+    </figure>
+    <figure>
+      <img data-lang="en" src="images/preview-video-en.png" alt="Preview picture and meter">
+      <img data-lang="de" src="images/preview-video-de.png" alt="Vorschaubild und Meter">
+      <figcaption data-lang="en">Embedded preview player and VU meter. LUFS appears after Analyze loudness.</figcaption>
+      <figcaption data-lang="de">Eingebetteter Vorschauplayer und VU-Meter. LUFS erscheint nach Lautheit analysieren.</figcaption>
+    </figure>
+    <figure>
+      <img data-lang="en" src="images/preview-controls-en.png" alt="Preview transport and In/Out">
+      <img data-lang="de" src="images/preview-controls-de.png" alt="Vorschau-Transport und In/Out">
+      <figcaption data-lang="en">Scrub, volume (Save volume writes it onto the clip), In/Out times, transport, Set In / Set Out / Clear. Keys <kbd>I</kbd> and <kbd>O</kbd> set marks at the current preview time.</figcaption>
+      <figcaption data-lang="de">Scrub, Lautstärke (Lautstärke speichern schreibt sie in den Clip), In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
+    </figure>
+    <p data-lang="en">
+      Per clip you can set autoplay, played, audio track, and subtitle track (off unless you pick one). Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
+    </p>
+    <p data-lang="de">
+      Pro Clip lassen sich Autoplay, Gespielt, Tonspur und Untertitel (aus, bis eine Spur gewählt wird) setzen. Die Programmwiedergabe nutzt die In- und Out-Marken. Verlauf und Uhren im Programm folgen immer diesen Marken, auch wenn auf dem Beamer ein Pausenmedium läuft.
+    </p>
+
+    <h2 id="beamer">
+      <span data-lang="en">7. Beamer</span>
+      <span data-lang="de">7. Beamer</span>
+    </h2>
+    <figure>
+      <img data-lang="en" src="images/beamer-en.png" alt="Beamer status panel">
+      <img data-lang="de" src="images/beamer-de.png" alt="Beamer-Status">
+      <figcaption data-lang="en">Current mode, refresh, raster, and the unique rates the projector reports. Green <strong>OK</strong> when the clip can be shown without frame dropping; red <strong>Mismatch</strong> otherwise.</figcaption>
+      <figcaption data-lang="de">Aktueller Modus, Frequenz, Raster und die gemeldeten Beamerfrequenzen. Grün <strong>OK</strong>, wenn der Clip ohne Frame-Dropping läuft; sonst rot <strong>Abweichung</strong>.</figcaption>
+    </figure>
+    <p data-lang="en">
+      Before a clip rolls, Cinema Player picks a display mode at the native resolution whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time. Import and probe never create modes. Test files in <code>testdata</code> often show Mismatch on a 60 Hz office monitor — that is expected.
+    </p>
+    <p data-lang="de">
+      Bevor ein Clip läuft, wählt Cinema Player einen Anzeigemodus in nativer Auflösung, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt. Fehlt ein solcher Modus, kann zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Import und Analyse erzeugen keine Modi. Testdateien in <code>testdata</code> zeigen an einem 60-Hz-Büromonitor oft Abweichung — das ist erwartet.
+    </p>
+
+    <h2 id="audio">
+      <span data-lang="en">8. Volume and loudness</span>
+      <span data-lang="de">8. Lautstärke und Lautheit</span>
+    </h2>
+    <p data-lang="en">
+      Each clip has its own volume. Adjust it in preview and press <strong>Save volume</strong>. The program fader follows the clip that is on air. Program and preview each have a VU meter (separate audio filters).
+    </p>
+    <p data-lang="de">
+      Jeder Clip hat eine eigene Lautstärke. Stellen Sie sie in der Vorschau und drücken Sie <strong>Lautstärke speichern</strong>. Der Programmregler folgt dem Clip auf Sendung. Programm und Vorschau haben je ein VU-Meter (getrennte Audiofilter).
+    </p>
+    <p data-lang="en">
+      <strong>Analyze loudness</strong> (playlist menu, only in OFF) runs ffmpeg EBU R128 on every video. Integrated LUFS is stored on the entry and shown in the playlist row and above the preview meter. This can take a while.
+    </p>
+    <p data-lang="de">
+      <strong>Lautheit analysieren</strong> (Playlist-Menü, nur bei AUS) misst mit ffmpeg EBU R128 jedes Video. Die integrierte LUFS-Zahl steht in der Playlist-Zeile und über dem Vorschaumeter. Das kann dauern.
+    </p>
+
+    <h2 id="stills">
+      <span data-lang="en">9. Still images</span>
+      <span data-lang="de">9. Standbilder</span>
+    </h2>
+    <p data-lang="en">
+      Images can sit in the playlist. Set a display time in seconds. After that time the program stops or autoplays the next item. Display time 0 keeps the still until Resume. Preview transport is hidden for stills. If a still is followed by a video, the output refresh is set to the video frame rate first, so the projector does not renegotiate when the video starts.
+    </p>
+    <p data-lang="de">
+      Bilder können in der Playlist stehen. Die Anzeigezeit in Sekunden festlegen. Danach stoppt das Programm oder startet den nächsten Eintrag per Autoplay. Anzeigezeit 0 hält das Bild bis Weiter. Der Vorschau-Transport ist bei Standbildern ausgeblendet. Folgt auf ein Bild ein Video, wird die Ausgangsfrequenz zuerst auf die Videobildrate gesetzt, damit der Beamer beim Videostart nicht neu verhandelt.
+    </p>
+
+    <h2 id="quit">
+      <span data-lang="en">10. Quit</span>
+      <span data-lang="de">10. Beenden</span>
+    </h2>
+    <p data-lang="en">
+      Quit, the window close box, and <kbd>Ctrl</kbd>+<kbd>F4</kbd> only work in <strong>OFF</strong>. If the program is armed or playing, Cinema Player asks you to Stop first so the booth cannot drop a live show by closing the window.
+    </p>
+    <p data-lang="de">
+      Beenden, das Schließen des Fensters und <kbd>Strg</kbd>+<kbd>F4</kbd> gelten nur bei <strong>AUS</strong>. Ist das Programm scharf oder in Wiedergabe, verlangt Cinema Player zuerst Stop — damit die Vorstellung nicht durch Schließen des Fensters abbricht.
+    </p>
+  </main>
+
+  <script>
+    (function () {
+      var key = "cinema-player-manual-lang";
+      function apply(code) {
+        var lang = code === "de" ? "de" : "en";
+        document.documentElement.lang = lang;
+        try { localStorage.setItem(key, lang); } catch (e) {}
+        document.title = lang === "de"
+          ? "Cinema Player — Bedienungsanleitung"
+          : "Cinema Player — Operator manual";
+      }
+      document.querySelectorAll("[data-set-lang]").forEach(function (button) {
+        button.addEventListener("click", function () { apply(button.getAttribute("data-set-lang")); });
+      });
+      var saved = null;
+      try { saved = localStorage.getItem(key); } catch (e) {}
+      if (saved === "de" || saved === "en") apply(saved);
+      else apply((navigator.language || "").toLowerCase().indexOf("de") === 0 ? "de" : "en");
+    })();
+  </script>
+</body>
+</html>
