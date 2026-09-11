@@ -37,6 +37,7 @@ from cinema_player import (
     format_clock,
     format_codec_rate,
     format_fps_label,
+    format_colorspace_label,
     format_loudness,
     mark_missing_media,
     media_file_available,
@@ -49,9 +50,9 @@ LOGO_BG = "#000000"
 LOGO_ACCENT = "#4d9be6"
 FONT_LOGO = (FONT_FAMILY, 17, "bold")
 FONT_LOGO_LIGHT = (FONT_FAMILY, 17)
-LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "cinema-player-logo-header.png")
-LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "cinema-player-icon.png")
-BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "cinema-player-logo.png")
+LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
+LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.png")
+BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
 # mpv log2 zoom: -0.8 ≈ 57% size, so the wide logo does not fill the screen width.
 BEAMER_TEST_ZOOM = -0.8
 ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
@@ -695,6 +696,7 @@ class VideoPlayerGUI:
         self.main_mpv.add_callback(self.main_mpv_event)
         self.preview_mpv.add_callback(self.preview_mpv_event)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.bind_all("<Control-F4>", self.close)
         self.root.bind_all("<F11>", self.toggle_window_fullscreen)
         self.root.bind_all("<KeyPress-i>", self._on_key_set_in, add="+")
         self.root.bind_all("<KeyPress-I>", self._on_key_set_in, add="+")
@@ -705,10 +707,16 @@ class VideoPlayerGUI:
         # Honor a saved / forced output even if it is the primary display.
         explicit_output = bool(self.settings.get("video_output") or VIDEO_OUTPUT)
         self.root.after(400, lambda: self.ensure_main_output(auto=not explicit_output))
+        self.root.after(500, self._warn_if_no_beamer_output)
         self.update_gui()
         self._tick_meters()
         self.refresh_all()
         self._restore_last_playlist()
+
+    def _warn_if_no_beamer_output(self):
+        if self.output_manager.has_dedicated_beamer():
+            return
+        messagebox.showwarning(t("beamer_no_output_title"), t("beamer_no_output"))
 
     def create_gui(self):
         self.root.columnconfigure(0, weight=3)
@@ -720,18 +728,16 @@ class VideoPlayerGUI:
         left = tk.Frame(self.root, bg=COLOR_BG)
         left.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 12))
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(6, weight=1)
+        left.rowconfigure(3, weight=1)
 
         right = tk.Frame(self.root, bg=COLOR_BG)
         right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(0, 12))
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
+        right.rowconfigure(3, weight=1)
 
         self._build_program_status(left)
-        self._build_transport(left)
-        self._build_playlist_header(left)
-        self._build_playlist_settings(left)
-        self._build_playlist(left)
+        self._build_program_block(left)
+        self._build_playlist_block(left)
         self._build_beamer(right)
         self._build_preview(right)
 
@@ -1015,6 +1021,15 @@ class VideoPlayerGUI:
         return tk.Frame(parent, bg=COLOR_PANEL, highlightbackground=COLOR_BORDER,
                         highlightthickness=1, **kwargs)
 
+    def _group_frame(self, parent):
+        """Subtle block matching the playlist entry colour."""
+        return tk.Frame(
+            parent,
+            bg=COLOR_PANEL,
+            highlightbackground=COLOR_ROW,
+            highlightthickness=1,
+        )
+
     def _checkbutton(self, parent, text, variable, command, bg):
         return tk.Checkbutton(
             parent, text=text, variable=variable, command=command, font=FONT_UI,
@@ -1045,42 +1060,49 @@ class VideoPlayerGUI:
         )
         self.program_times.grid(row=0, column=2, sticky="nse")
 
-        progress_host = tk.Frame(parent, bg=COLOR_BG)
-        progress_host.grid(row=1, column=0, sticky="ew", pady=(0, 4))
-        progress_host.columnconfigure(0, weight=1)
-        progress_host.rowconfigure(0, weight=1)
+    def _build_program_block(self, parent):
+        group = self._group_frame(parent)
+        group.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        group.columnconfigure(0, weight=1)
+        self.program_group = group
 
-        progress = tk.Frame(progress_host, bg=COLOR_BG)
-        progress.grid(row=0, column=0, sticky="nsew")
+        body = tk.Frame(group, bg=COLOR_PANEL)
+        body.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=6)
+        body.columnconfigure(0, weight=1)
+
+        progress = tk.Frame(body, bg=COLOR_PANEL)
+        progress.grid(row=0, column=0, sticky="ew")
         progress.columnconfigure(0, weight=1)
 
         self.main_progress = RangeProgressBar(
             progress, on_seek=self._on_main_seek, can_seek=self.program_seek_allowed,
-            height=32, bg=COLOR_BG,
+            height=32, bg=COLOR_PANEL,
         )
         self.main_progress.grid(row=0, column=0, sticky="ew")
 
         volume = self._build_volume_row(
-            progress, self.program_volume, self._on_program_volume, COLOR_BG,
+            progress, self.program_volume, self._on_program_volume, COLOR_PANEL,
         )
         volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
 
-        marks = tk.Frame(progress, bg=COLOR_BG)
+        marks = tk.Frame(progress, bg=COLOR_PANEL)
         marks.grid(row=2, column=0, sticky="ew", padx=8)
         for col in range(3):
             marks.columnconfigure(col, weight=1)
-        self.main_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_BG, font=FONT_SMALL)
+        self.main_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
         self.main_in.grid(row=0, column=0, sticky="w")
-        self.main_time = tk.Label(marks, text=t("time_value", value="--:--"), bg=COLOR_BG, font=FONT_SMALL)
+        self.main_time = tk.Label(marks, text=t("time_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
         self.main_time.grid(row=0, column=1)
-        self.main_out = tk.Label(marks, text=t("out_value", value="--:--"), bg=COLOR_BG, font=FONT_SMALL)
+        self.main_out = tk.Label(marks, text=t("out_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
         self.main_out.grid(row=0, column=2, sticky="e")
 
-        self.program_meter = LevelMeter(progress_host, bg=COLOR_BG, height=110)
-        self.program_meter.grid(row=0, column=1, sticky="ns", padx=(8, 0))
+        bottom = tk.Frame(body, bg=COLOR_PANEL)
+        bottom.grid(row=1, column=0, sticky="ew", pady=(8, 2))
+        bottom.columnconfigure(1, weight=1)
+        self._build_transport(bottom)
 
-        times = tk.Frame(parent, bg=COLOR_BG)
-        times.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        times = tk.Frame(bottom, bg=COLOR_PANEL)
+        times.grid(row=0, column=1, sticky="ew")
         for col in range(4):
             times.columnconfigure(col, weight=1)
         self.time_total = self._time_box(times, t("total"), 0)
@@ -1088,11 +1110,14 @@ class VideoPlayerGUI:
         self.time_remaining = self._time_box(times, t("remaining"), 2)
         self.time_end = self._time_box(times, t("end"), 3)
 
+        self.program_meter = LevelMeter(group, bg=COLOR_PANEL, height=1)
+        self.program_meter.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=6)
+
     def _time_box(self, parent, title, column):
-        box = tk.Frame(parent, bg=COLOR_BG)
+        box = tk.Frame(parent, bg=COLOR_PANEL)
         box.grid(row=0, column=column, sticky="ew")
-        tk.Label(box, text=title, font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_MUTED).pack()
-        value = tk.Label(box, text="--:--", font=FONT_UI_BOLD, bg=COLOR_BG, fg=COLOR_TEXT)
+        tk.Label(box, text=title, font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED).pack()
+        value = tk.Label(box, text="--:--", font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT)
         value.pack()
         return value
 
@@ -1174,8 +1199,8 @@ class VideoPlayerGUI:
             self.program_volume_bar.set_volume(volume)
 
     def _build_transport(self, parent):
-        row = tk.Frame(parent, bg=COLOR_BG)
-        row.grid(row=3, column=0, sticky="w", pady=(0, 10))
+        row = tk.Frame(parent, bg=COLOR_PANEL)
+        row.grid(row=0, column=0, sticky="w")
         self.btn_stop = self._icon_button(row, "stop", self.confirm_stop, t("stop"))
         self.btn_pause = self._icon_button(row, "pause", self.confirm_pause, t("pause"))
         self.btn_still = self._icon_button(row, "still", self.confirm_still, t("still"))
@@ -1205,11 +1230,13 @@ class VideoPlayerGUI:
         button.tooltip = IconTooltip(button, tip if tip is not None else fallback_text)
         return button
 
-    def _set_transport_active(self, button, active, variant=None):
-        """Swap in the highlight-coloured icon instead of painting a Tk ring."""
+    def _set_transport_active(self, button, active, variant=None, enabled=True):
+        """Swap the highlight or disabled icon instead of painting a Tk ring."""
         name = getattr(button, "icon_name", None)
         image = None
-        if active and variant and name:
+        if name and not enabled:
+            image = self._transport_icon(f"{name}-disabled")
+        elif active and variant and name:
             image = self._transport_icon(f"{name}-{variant}")
         if image is None and name:
             image = self._transport_icon(name)
@@ -1221,6 +1248,7 @@ class VideoPlayerGUI:
             highlightbackground=idle,
             highlightcolor=idle,
             highlightthickness=0,
+            cursor="arrow" if not enabled else "hand2",
         )
 
     def refresh_transport(self):
@@ -1229,47 +1257,84 @@ class VideoPlayerGUI:
         frozen = playing and self.main_pause and not self.blackout
         rolling = playing and not self.main_pause
         armed = self.program_state == "PROGRAM"
-        self._set_transport_active(self.btn_stop, False)
-        self._set_transport_active(self.btn_pause, paused, "preview")
-        self._set_transport_active(self.btn_still, frozen, "program")
+        self._set_transport_active(self.btn_stop, False, enabled=self.program_state != "OFF")
+        self._set_transport_active(self.btn_pause, paused, "preview", enabled=playing)
+        self._set_transport_active(self.btn_still, frozen, "program", enabled=playing)
         self._set_transport_active(
             self.btn_play, rolling or armed, "playing" if rolling else "program",
         )
 
+        entry = self.selected_entry()
+        preview_ok = bool(entry and not entry.missing and not entry.is_image)
         preview_playing = bool(
-            self.preview_mpv.process
+            preview_ok
+            and self.preview_mpv.process
             and self.preview_mpv.loaded_path
             and not self.preview_paused
             and not self.preview_stopped
         )
         preview_paused = bool(
-            self.preview_mpv.process
+            preview_ok
+            and self.preview_mpv.process
             and self.preview_mpv.loaded_path
             and self.preview_paused
             and not self.preview_stopped
         )
         buttons = getattr(self, "preview_buttons", {})
+        for name in ("rev", "fwd"):
+            if buttons.get(name):
+                self._set_transport_active(buttons[name], False, enabled=preview_ok)
         if buttons.get("stop"):
-            self._set_transport_active(buttons["stop"], self.preview_stopped, "off")
+            self._set_transport_active(
+                buttons["stop"], self.preview_stopped, "off", enabled=preview_ok,
+            )
         if buttons.get("pause"):
-            self._set_transport_active(buttons["pause"], preview_paused, "preview")
+            self._set_transport_active(
+                buttons["pause"], preview_paused, "preview", enabled=preview_ok,
+            )
         if buttons.get("play"):
-            self._set_transport_active(buttons["play"], preview_playing, "playing")
+            self._set_transport_active(
+                buttons["play"], preview_playing, "playing", enabled=preview_ok,
+            )
+        can_mark = preview_ok
+        can_clear = bool(entry and (entry.in_point is not None or entry.out_point is not None))
+        io = getattr(self, "preview_io_buttons", {})
+        if io.get("set_in"):
+            self._set_transport_active(io["set_in"], False, enabled=can_mark)
+        if io.get("set_out"):
+            self._set_transport_active(io["set_out"], False, enabled=can_mark)
+        if io.get("clear_in_out"):
+            self._set_transport_active(io["clear_in_out"], False, enabled=can_clear)
+
+    def _build_playlist_block(self, parent):
+        """Toolbar/settings and the entry list sit in separate frames with a gap."""
+        controls = self._group_frame(parent)
+        controls.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        controls.columnconfigure(0, weight=1)
+        self.playlist_group = controls
+        self._build_playlist_header(controls)
+        self._build_playlist_settings(controls)
+
+        entries = self._group_frame(parent)
+        entries.grid(row=3, column=0, sticky="nsew")
+        entries.columnconfigure(0, weight=1)
+        entries.rowconfigure(0, weight=1)
+        self._build_playlist(entries)
 
     def _build_playlist_header(self, parent):
-        header = tk.Frame(parent, bg=COLOR_BG)
-        header.grid(row=4, column=0, sticky="new")
+        header = tk.Frame(parent, bg=COLOR_PANEL)
+        header.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
         header.columnconfigure(1, weight=1)
 
         tk.Label(
-            header, text=t("playlist"), font=FONT_UI_BOLD, bg=COLOR_BG, fg=COLOR_TEXT,
+            header, text=t("playlist"), font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT,
         ).grid(row=0, column=0, sticky="w", padx=(0, 8))
 
         self.playlist_name = tk.Entry(header, font=FONT_UI)
         self.playlist_name.insert(0, "untitled.pls")
         self.playlist_name.grid(row=0, column=1, sticky="ew")
 
-        buttons = tk.Frame(header, bg=COLOR_BG)
+        buttons = tk.Frame(header, bg=COLOR_PANEL)
         buttons.grid(row=0, column=2, sticky="e", padx=(8, 0))
         self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
         self._icon_button(buttons, "playlist_new", self.new_playlist, t("new"), t("new_playlist"))
@@ -1436,7 +1501,7 @@ class VideoPlayerGUI:
         menu.add_command(
             label=t("beamer_test"),
             command=self.show_beamer_test,
-            state="disabled" if self.program_state == "PLAYING" else "normal",
+            state="normal" if self.program_state == "OFF" else "disabled",
         )
         menu.add_separator()
         menu.add_command(
@@ -1474,6 +1539,7 @@ class VideoPlayerGUI:
     def _fill_playlist_menu(self, menu):
         menu.add_command(label=t("refresh_playlist"), command=self.check_playlist_files)
         menu.add_command(label=t("reset_played"), command=self.reset_played)
+        menu.add_separator()
         menu.add_checkbutton(
             label=t("autosave_program_change"),
             variable=self.autosave_on_program_change,
@@ -1492,31 +1558,29 @@ class VideoPlayerGUI:
         )
 
     def _build_playlist_settings(self, parent):
-        settings = tk.Frame(parent, bg=COLOR_BG)
-        settings.grid(row=5, column=0, sticky="ew", pady=(6, 6))
+        settings = tk.Frame(parent, bg=COLOR_PANEL)
+        settings.grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 6))
 
         self._checkbutton(
-            settings, t("projection_zoom"), self.projection_zoom, self.refresh_playlist, COLOR_BG,
+            settings, t("projection_zoom"), self.projection_zoom, self.refresh_playlist, COLOR_PANEL,
         ).pack(side="left")
 
-        tk.Label(settings, text=t("autoplay_delay"), bg=COLOR_BG, font=FONT_UI).pack(side="left", padx=(16, 4))
+        tk.Label(settings, text=t("autoplay_delay"), bg=COLOR_PANEL, font=FONT_UI).pack(side="left", padx=(16, 4))
         tk.Entry(settings, textvariable=self.autoplay_delay, width=5, font=FONT_UI).pack(side="left")
-        tk.Label(settings, text=t("seconds_short"), bg=COLOR_BG, font=FONT_UI).pack(side="left")
+        tk.Label(settings, text=t("seconds_short"), bg=COLOR_PANEL, font=FONT_UI).pack(side="left")
 
-        tk.Label(settings, text=t("idle_media"), bg=COLOR_BG, font=FONT_UI).pack(side="left", padx=(16, 4))
+        tk.Label(settings, text=t("idle_media"), bg=COLOR_PANEL, font=FONT_UI).pack(side="left", padx=(16, 4))
         self.idle_button = tk.Button(
             settings, textvariable=self.idle_media, font=FONT_SMALL,
             command=self.choose_idle_media,
         )
         self.idle_button.pack(side="left")
 
-        # Placeholder so playlist grid row 4 can grow; settings sit above list
         self.playlist_settings = settings
 
     def _build_playlist(self, parent):
-        holder = tk.Frame(parent, bg=COLOR_PANEL, highlightbackground=COLOR_BORDER, highlightthickness=1)
-        holder.grid(row=6, column=0, sticky="nsew")
-        parent.rowconfigure(6, weight=1)
+        holder = tk.Frame(parent, bg=COLOR_PANEL)
+        holder.grid(row=0, column=0, sticky="nsew")
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
 
@@ -1547,7 +1611,7 @@ class VideoPlayerGUI:
             self.playlist_canvas.yview_scroll(-1, "units")
 
     def _build_beamer(self, parent):
-        panel = self._panel(parent)
+        panel = self._group_frame(parent)
         panel.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         panel.columnconfigure(0, weight=1)
 
@@ -1569,20 +1633,20 @@ class VideoPlayerGUI:
         self.beamer_fps.pack(side="left", padx=16)
         self.beamer_aspect = tk.Label(info, text="--", font=FONT_UI, bg=COLOR_PANEL)
         self.beamer_aspect.pack(side="left")
+        self.beamer_rates = tk.Label(
+            panel, text=t("beamer_rates", rates="--"), font=FONT_SMALL,
+            bg=COLOR_PANEL, fg=COLOR_MUTED, anchor="w", justify="left", wraplength=520,
+        )
+        self.beamer_rates.pack(fill="x", padx=8, pady=(0, 8))
+        self._beamer_rates_cache = None
 
     def _build_preview(self, parent):
-        panel = self._panel(parent)
-        panel.grid(row=1, column=0, sticky="nsew")
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(2, weight=1)
-
-        header = tk.Frame(panel, bg=COLOR_PANEL)
-        header.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 4))
+        header = self._group_frame(parent)
+        header.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(0, weight=1)
-        tk.Label(header, text=t("preview"), font=FONT_UI_BOLD, bg=COLOR_PANEL).grid(row=0, column=0, sticky="w")
 
-        title_row = tk.Frame(panel, bg=COLOR_PANEL)
-        title_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
+        title_row = tk.Frame(header, bg=COLOR_PANEL)
+        title_row.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
         title_row.columnconfigure(0, weight=1)
         self.preview_title = tk.Label(
             title_row, text=t("no_clip"), font=FONT_UI_BOLD, bg=COLOR_READOUT,
@@ -1596,75 +1660,19 @@ class VideoPlayerGUI:
         self.preview_mode_btn.grid(row=0, column=1, padx=(8, 0))
 
         self.preview_meta = tk.Label(
-            panel, text=t("length_empty"), font=FONT_SMALL, bg=COLOR_PANEL, anchor="w",
+            header, text=t("length_empty"), font=FONT_SMALL, bg=COLOR_PANEL, anchor="w",
         )
-        self.preview_meta.grid(row=2, column=0, sticky="ew", padx=8)
+        self.preview_meta.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6))
 
-        video_row = tk.Frame(panel, bg=COLOR_PANEL)
-        video_row.grid(row=3, column=0, sticky="nsew", padx=8, pady=6)
-        video_row.columnconfigure(0, weight=1)
-        video_row.rowconfigure(0, weight=1)
-        panel.rowconfigure(3, weight=1)
-        self.preview_video = tk.Frame(video_row, bg=COLOR_VIDEO, width=480, height=270)
-        self.preview_video.grid(row=0, column=0, sticky="nsew")
-        self.preview_meter = LevelMeter(video_row)
-        self.preview_meter.grid(row=0, column=1, sticky="ns", padx=(6, 0))
-        self.preview_placeholder = tk.Label(
-            self.preview_video, text=t("video_preview"), bg=COLOR_VIDEO,
-            fg=COLOR_MUTED, font=(FONT_FAMILY, 16),
-        )
-        self.preview_placeholder.place(relx=0.5, rely=0.5, anchor="center")
-
-        self.preview_progress = RangeProgressBar(
-            panel, on_seek=self._on_preview_seek, height=32,
-        )
-        self.preview_progress.grid(row=4, column=0, sticky="ew", padx=8)
-
-        self.preview_volume_row = self._build_volume_row(
-            panel, self.preview_volume, self._on_preview_volume, COLOR_PANEL,
-            save=True,
-        )
-        self.preview_volume_row.grid(row=5, column=0, sticky="ew", padx=8, pady=(4, 0))
-
-        marks = tk.Frame(panel, bg=COLOR_PANEL)
-        marks.grid(row=6, column=0, sticky="ew", padx=8, pady=(2, 4))
-        self.preview_marks = marks
-        for col in range(3):
-            marks.columnconfigure(col, weight=1)
-        self.preview_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
-        self.preview_in.grid(row=0, column=0, sticky="w")
-        self.preview_time = tk.Label(marks, text=t("time_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
-        self.preview_time.grid(row=0, column=1)
-        self.preview_out = tk.Label(marks, text=t("out_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
-        self.preview_out.grid(row=0, column=2, sticky="e")
-
-        io = tk.Frame(panel, bg=COLOR_PANEL)
-        io.grid(row=7, column=0, sticky="w", padx=8, pady=(0, 4))
-        self.preview_io = io
-        self._icon_button(io, "set_in", self.set_in_point, t("set_in"))
-        self._icon_button(io, "set_out", self.set_out_point, t("set_out"))
-        self._icon_button(io, "clear_in_out", self.clear_in_out, t("clear_in_out"))
-
-        transport = tk.Frame(panel, bg=COLOR_PANEL)
-        self.preview_transport = transport
-        transport.grid(row=8, column=0, sticky="w", padx=8, pady=(0, 6))
-        self.preview_buttons = {}
-        for name, cmd, label in (
-            ("rev", lambda: self.preview_seek(-5), t("rev")),
-            ("stop", self.preview_stop, t("stop")),
-            ("pause", self.preview_pause, t("pause")),
-            ("play", self.preview_play, t("play")),
-            ("fwd", lambda: self.preview_seek(5), t("fwd")),
-        ):
-            self.preview_buttons[name] = self._icon_button(transport, name, cmd, label)
-
-        footer = tk.Frame(panel, bg=COLOR_PANEL)
-        footer.grid(row=9, column=0, sticky="ew", padx=8, pady=(0, 8))
+        settings = self._group_frame(parent)
+        settings.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        settings.columnconfigure(0, weight=1)
+        footer = tk.Frame(settings, bg=COLOR_PANEL)
+        footer.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 6))
         self._checkbutton(
             footer, t("autoplay"), self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
         ).pack(side="left")
 
-        # Everything that only makes sense for a moving clip.
         clip_settings = tk.Frame(footer, bg=COLOR_PANEL)
         clip_settings.pack(side="left")
         self.preview_clip_settings = clip_settings
@@ -1680,7 +1688,6 @@ class VideoPlayerGUI:
         self.subtitle_combo.pack(side="left")
         self.subtitle_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
 
-        # Only for stills: how long the image stays on the projector.
         image_settings = tk.Frame(footer, bg=COLOR_PANEL)
         self.preview_image_settings = image_settings
         tk.Label(image_settings, text=t("display_time"), bg=COLOR_PANEL, font=FONT_SMALL).pack(
@@ -1694,6 +1701,91 @@ class VideoPlayerGUI:
             image_settings, text=t("display_time_hint"), bg=COLOR_PANEL, font=FONT_SMALL,
             fg=COLOR_MUTED,
         ).pack(side="left", padx=(4, 0))
+
+        video_group = self._group_frame(parent)
+        video_group.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
+        video_group.columnconfigure(0, weight=1)
+        video_group.rowconfigure(0, weight=1)
+        parent.rowconfigure(3, weight=1)
+        video_row = tk.Frame(video_group, bg=COLOR_PANEL)
+        video_row.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        video_row.columnconfigure(0, weight=1)
+        video_row.rowconfigure(0, weight=1)
+        self.preview_video = tk.Frame(video_row, bg=COLOR_VIDEO, width=480, height=270)
+        self.preview_video.grid(row=0, column=0, sticky="nsew")
+        meter_col = tk.Frame(video_row, bg=COLOR_PANEL)
+        meter_col.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+        meter_col.rowconfigure(1, weight=1)
+        self.preview_lufs = tk.Label(
+            meter_col,
+            text=format_loudness(None),
+            font=FONT_SMALL,
+            bg=COLOR_PANEL,
+            fg=COLOR_VOLUME,
+            justify="center",
+            wraplength=58,
+        )
+        self.preview_lufs.grid(row=0, column=0, pady=(0, 2))
+        self.preview_meter = LevelMeter(meter_col)
+        self.preview_meter.grid(row=1, column=0, sticky="ns")
+        self.preview_placeholder = tk.Label(
+            self.preview_video, text=t("video_preview"), bg=COLOR_VIDEO,
+            fg=COLOR_MUTED, font=(FONT_FAMILY, 16),
+        )
+        self.preview_placeholder.place(relx=0.5, rely=0.5, anchor="center")
+
+        controls = self._group_frame(parent)
+        controls.grid(row=4, column=0, sticky="ew")
+        controls.columnconfigure(0, weight=1)
+        self.preview_controls = controls
+
+        self.preview_progress = RangeProgressBar(
+            controls, on_seek=self._on_preview_seek, height=32,
+        )
+        self.preview_progress.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 0))
+
+        self.preview_volume_row = self._build_volume_row(
+            controls, self.preview_volume, self._on_preview_volume, COLOR_PANEL,
+            save=True,
+        )
+        self.preview_volume_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
+
+        marks = tk.Frame(controls, bg=COLOR_PANEL)
+        marks.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 4))
+        self.preview_marks = marks
+        for col in range(3):
+            marks.columnconfigure(col, weight=1)
+        self.preview_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
+        self.preview_in.grid(row=0, column=0, sticky="w")
+        self.preview_time = tk.Label(marks, text=t("time_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
+        self.preview_time.grid(row=0, column=1)
+        self.preview_out = tk.Label(marks, text=t("out_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
+        self.preview_out.grid(row=0, column=2, sticky="e")
+
+        buttons = tk.Frame(controls, bg=COLOR_PANEL)
+        buttons.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 8))
+
+        transport = tk.Frame(buttons, bg=COLOR_PANEL)
+        self.preview_transport = transport
+        transport.pack(side="left")
+        self.preview_buttons = {}
+        for name, cmd, label in (
+            ("rev", lambda: self.preview_seek(-5), t("rev")),
+            ("stop", self.preview_stop, t("stop")),
+            ("pause", self.preview_pause, t("pause")),
+            ("play", self.preview_play, t("play")),
+            ("fwd", lambda: self.preview_seek(5), t("fwd")),
+        ):
+            self.preview_buttons[name] = self._icon_button(transport, name, cmd, label)
+
+        io = tk.Frame(buttons, bg=COLOR_PANEL)
+        self.preview_io = io
+        io.pack(side="left", padx=(32, 0))
+        self.preview_io_buttons = {
+            "set_in": self._icon_button(io, "set_in", self.set_in_point, t("set_in")),
+            "set_out": self._icon_button(io, "set_out", self.set_out_point, t("set_out")),
+            "clear_in_out": self._icon_button(io, "clear_in_out", self.clear_in_out, t("clear_in_out")),
+        }
 
     def state_color(self):
         return {"OFF": COLOR_OFF, "PROGRAM": COLOR_PROGRAM, "PLAYING": COLOR_PLAYING}[self.program_state]
@@ -1719,15 +1811,19 @@ class VideoPlayerGUI:
     def refresh_status(self):
         state_key = {"OFF": "state_off", "PROGRAM": "state_program", "PLAYING": "state_playing"}[self.program_state]
         self.state_label.config(text=t(state_key), bg=self.state_color())
-        entry = self.current_entry() if self.program_state != "OFF" else self.selected_entry()
-        name = entry.filename if entry else t("no_program")
-        self.now_playing.config(text=name, bg=self.state_color() if self.program_state != "OFF" else COLOR_READOUT,
-                                fg=COLOR_WHITE if self.program_state != "OFF" else COLOR_TEXT)
-        index = f"{self.program_index + 1}" if self.playlist else "-"
-        self.program_times.config(
-            text=f"{index} / {format_clock(self.duration if self.duration else (entry.duration if entry else 0))}"
-        )
-        if self.program_state == "OFF":
+        stopped = self.program_state == "OFF"
+        entry = None if stopped else self.current_entry()
+        if stopped:
+            self.now_playing.config(text=t("no_program"), bg=COLOR_READOUT, fg=COLOR_TEXT)
+            self.program_times.config(text="- / --:--")
+        else:
+            name = entry.filename if entry else t("no_program")
+            self.now_playing.config(text=name, bg=self.state_color(), fg=COLOR_WHITE)
+            index = f"{self.program_index + 1}" if self.playlist else "-"
+            self.program_times.config(
+                text=f"{index} / {format_clock(self.duration if self.duration else (entry.duration if entry else 0))}"
+            )
+        if stopped:
             self.btn_play.icon_name = "start_program"
             self.btn_play.config(text=t("start"))
             self.btn_play.tooltip.text = t("start")
@@ -1747,20 +1843,25 @@ class VideoPlayerGUI:
                 activebackground=COLOR_BUTTON_ACTIVE, activeforeground=COLOR_TEXT,
             )
         self.refresh_transport()
-        self.time_total.config(text=format_clock(self.duration or (entry.duration if entry else None)))
-        self.time_elapsed.config(text=format_clock(self.position if self.program_state == "PLAYING" else 0))
-        remaining = None
-        if self.duration and math.isfinite(self.duration) and math.isfinite(self.position):
-            remaining = max(0, self.duration - self.position)
-        self.time_remaining.config(text=format_clock(remaining))
-        end_text = "--:--"
-        if remaining is not None:
-            end_text = (datetime.now() + timedelta(seconds=remaining)).strftime("%H:%M:%S")
-        self.time_end.config(text=end_text)
+        if stopped:
+            blank = format_clock(None)
+            self.time_total.config(text=blank)
+            self.time_elapsed.config(text=blank)
+            self.time_remaining.config(text=blank)
+            self.time_end.config(text=blank)
+        else:
+            self.time_total.config(text=format_clock(self.duration or (entry.duration if entry else None)))
+            self.time_elapsed.config(text=format_clock(self.position if self.program_state == "PLAYING" else 0))
+            remaining = None
+            if self.duration and math.isfinite(self.duration) and math.isfinite(self.position):
+                remaining = max(0, self.duration - self.position)
+            self.time_remaining.config(text=format_clock(remaining))
+            end_text = "--:--"
+            if remaining is not None:
+                end_text = (datetime.now() + timedelta(seconds=remaining)).strftime("%H:%M:%S")
+            self.time_end.config(text=end_text)
         if self.program_state != "PLAYING":
-            self._load_program_volume(
-                self.current_entry() if self.program_state != "OFF" else None
-            )
+            self._load_program_volume(entry)
 
     def refresh_playlist(self):
         for child in self.playlist_inner.winfo_children():
@@ -1898,7 +1999,7 @@ class VideoPlayerGUI:
         )
         widgets["slash_c"].config(bg=bg, fg=fg)
         widgets["colorspace"].config(
-            text=entry.colorspace or "--",
+            text=format_colorspace_label(entry),
             bg=bg, fg=COLOR_WARNING if entry.colorspace_warning else fg,
         )
         if entry.missing:
@@ -1912,18 +2013,12 @@ class VideoPlayerGUI:
     def apply_preview_layout(self, entry):
         """Stills only need Autoplay and their display time; hide the clip controls."""
         image = bool(entry and entry.is_image)
-        for widget in (
-            self.preview_progress, self.preview_volume_row, self.preview_marks,
-            self.preview_io, self.preview_transport,
-        ):
-            if image:
-                widget.grid_remove()
-            else:
-                widget.grid()
         if image:
+            self.preview_controls.grid_remove()
             self.preview_clip_settings.pack_forget()
             self.preview_image_settings.pack(side="left")
         else:
+            self.preview_controls.grid()
             self.preview_image_settings.pack_forget()
             self.preview_clip_settings.pack(side="left")
 
@@ -1934,6 +2029,17 @@ class VideoPlayerGUI:
             return
         for index, entry in enumerate(self.playlist):
             self._paint_row(index, entry)
+
+    def _set_preview_lufs(self, entry):
+        if entry and not entry.missing and not entry.is_image:
+            value = format_loudness(entry.loudness_lufs)
+        else:
+            value = format_loudness(None)
+        if value.endswith(" LUFS"):
+            value = f"{value[:-5].strip()}\nLUFS"
+        else:
+            value = f"{value}\nLUFS"
+        self.preview_lufs.config(text=value)
 
     def refresh_preview_meta(self):
         entry = self.selected_entry()
@@ -1949,6 +2055,8 @@ class VideoPlayerGUI:
             )
         self.apply_preview_layout(entry)
         self._load_preview_volume(entry)
+        self._set_preview_lufs(entry)
+        self.refresh_transport()
         if not entry:
             self.preview_meta.config(text=t("length_empty"))
             self.audio_combo["values"] = ["--"]
@@ -1971,7 +2079,7 @@ class VideoPlayerGUI:
                     height=entry.height,
                     aspect=entry.aspect,
                     pixel_aspect=entry.pixel_aspect,
-                    colorspace=entry.colorspace or "--",
+                    colorspace=format_colorspace_label(entry),
                 )
             )
             self.autoplay_var.set(entry.autoplay)
@@ -1987,8 +2095,7 @@ class VideoPlayerGUI:
                 audio=format_codec_rate(entry.audio_codec, entry.audio_bitrate),
                 aspect=entry.aspect,
                 pixel_aspect=entry.pixel_aspect,
-                colorspace=entry.colorspace or "--",
-                loudness=format_loudness(entry.loudness_lufs),
+                colorspace=format_colorspace_label(entry),
             )
         )
         self.autoplay_var.set(entry.autoplay)
@@ -2018,6 +2125,7 @@ class VideoPlayerGUI:
             self.beamer_res.config(text="---- x ----")
             self.beamer_fps.config(text="--p")
             self.beamer_aspect.config(text="--")
+            self.beamer_rates.config(text=t("beamer_rates", rates="--"))
             self.refresh_beamer_outputs()
             return
         entry = self.current_entry() if self.program_state == "PLAYING" else self.selected_entry()
@@ -2033,7 +2141,28 @@ class VideoPlayerGUI:
         self.beamer_res.config(text=f"{mode.width} x {mode.height}")
         self.beamer_fps.config(text=format_fps_label(mode.refresh))
         self.beamer_aspect.config(text=aspect_from_mode(mode))
+        self.beamer_rates.config(text=self._beamer_rate_text())
         self.refresh_beamer_outputs()
+
+    def _beamer_rate_text(self):
+        output = self.output_manager.video_output or ""
+        cache = self._beamer_rates_cache
+        if cache and cache[0] == output:
+            return cache[1]
+        rates = []
+        try:
+            modes = self.output_manager.get_modes(output) if output else []
+        except Exception:
+            modes = []
+        for mode in modes:
+            if any(self.output_manager.refresh_close(mode.refresh, seen) for seen in rates):
+                continue
+            rates.append(mode.refresh)
+        rates.sort()
+        labels = "  ".join(format_fps_label(rate) for rate in rates) or "--"
+        text = t("beamer_rates", rates=labels)
+        self._beamer_rates_cache = (output, text)
+        return text
 
     def refresh_beamer_outputs(self):
         """Keep the selected output name in sync with the connected display."""
@@ -2166,7 +2295,7 @@ class VideoPlayerGUI:
                 filename=entry.filename,
                 aspect=entry.aspect,
                 pixel_aspect=entry.pixel_aspect,
-                colorspace=entry.colorspace or "--",
+                colorspace=format_colorspace_label(entry),
             ),
         )
         if ok:
@@ -2668,6 +2797,14 @@ class VideoPlayerGUI:
         else:
             entry.audio_track = self.audio_var.get()
             entry.subtitle_track = self.subtitle_var.get()
+            if self.preview_mpv.has_file(entry.path):
+                self.apply_tracks(entry, self.preview_mpv)
+            if (
+                self.program_state == "PLAYING"
+                and entry is self.current_entry()
+                and self.main_mpv.has_file(entry.path)
+            ):
+                self.apply_tracks(entry, self.main_mpv)
         self.repaint_playlist()
 
     def reset_played(self):
@@ -2776,6 +2913,8 @@ class VideoPlayerGUI:
         self.main_pause = False
         self.blackout = True
         self.idle_showing = False
+        self.duration = 0.0
+        self.position = 0.0
         self._reset_program_meter()
         if show_idle and self.idle_allowed() and self.idle_media_file():
             delay = int(self.autoplay_seconds() * 1000)
@@ -2803,8 +2942,7 @@ class VideoPlayerGUI:
 
     def show_beamer_test(self):
         """Show the Cinema Player logo on the projector until the operator dismisses it."""
-        if self.program_state == "PLAYING":
-            messagebox.showinfo(t("beamer_status"), t("beamer_output_busy"))
+        if self.program_state != "OFF":
             return
         if not os.path.isfile(BEAMER_TEST_FILE):
             messagebox.showerror(t("beamer_test"), t("beamer_test_missing"))
@@ -2847,6 +2985,8 @@ class VideoPlayerGUI:
             "--image-display-duration=inf",
             "--pause",
             "--audio-device=auto",
+            "--sid=no",
+            "--sub-auto=no",
             f"--af={METER_AF}",
         ]
         try:
@@ -2919,7 +3059,6 @@ class VideoPlayerGUI:
             self.root.after_cancel(self.idle_after_id)
             self.idle_after_id = None
         if self.idle_showing:
-            # Fade the non-black background out to black before the clip comes up.
             self.blank_output(show_idle=False)
             delay = int(self.autoplay_seconds() * 1000)
             self.autoplay_after_id = self.root.after(delay, self.start_current_clip)
@@ -3188,10 +3327,12 @@ class VideoPlayerGUI:
         self.refresh_preview_meta()
 
     def _clip_duration(self):
+        entry = self.selected_entry()
+        if entry and entry.duration:
+            return entry.duration
         if self.preview_duration > 0:
             return self.preview_duration
-        entry = self.selected_entry()
-        return entry.duration if entry else 0.0
+        return 0.0
 
     def _update_preview_bar(self):
         entry = self.selected_entry()
@@ -3203,13 +3344,22 @@ class VideoPlayerGUI:
         )
 
     def _update_main_bar(self):
+        if self.program_state == "OFF":
+            self.main_progress.set_state(duration=0, position=0, in_point=None, out_point=None)
+            blank = format_clock(None)
+            self.main_in.config(text=t("in_value", value=blank))
+            self.main_out.config(text=t("out_value", value=blank))
+            self.main_time.config(text=t("time_value", value=blank))
+            return
         entry = self.current_entry()
         if self.idle_showing:
             # The background is not a program clip: no In/Out marks, no highlight.
             duration = self.duration
             in_point = out_point = None
         else:
-            duration = self.duration or (entry.duration if entry else 0)
+            # Use the playlist duration so In/Out stay on the full clip, not an
+            # idle-video clock or an mpv start/end segment length.
+            duration = (entry.duration if entry and entry.duration else 0) or self.duration
             in_point = entry.in_point if entry else None
             out_point = entry.out_point if entry else None
         self.main_progress.set_state(
@@ -3273,7 +3423,12 @@ class VideoPlayerGUI:
         if event == "end-file" and message.get("reason") in (None, "eof", "stop"):
             if self.beamer_test_active:
                 return
-            if message.get("reason") == "eof" and not self.still_active():
+            if (
+                message.get("reason") == "eof"
+                and not self.still_active()
+                and self.program_state == "PLAYING"
+                and not self.idle_showing
+            ):
                 self.root.after(0, self.on_clip_finished)
             return
         if event != "property-change":
@@ -3290,6 +3445,8 @@ class VideoPlayerGUI:
                 return
             if not math.isfinite(position):
                 return
+            if self.program_state != "PLAYING" and not self.idle_showing:
+                return
             self.position = position
             entry = self.current_entry()
             if (
@@ -3304,12 +3461,16 @@ class VideoPlayerGUI:
                 duration = float(value)
             except (TypeError, ValueError):
                 return
-            if math.isfinite(duration) and duration > 0:
+            if math.isfinite(duration) and duration > 0 and self.idle_showing:
                 self.duration = duration
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)
         elif name == "eof-reached" and value:
-            if not self.beamer_test_active:
+            if (
+                not self.beamer_test_active
+                and self.program_state == "PLAYING"
+                and not self.idle_showing
+            ):
                 self.root.after(0, self.on_clip_finished)
         elif name == "af-metadata/meter":
             self.program_levels = parse_preview_levels(value)[:2]
@@ -3319,6 +3480,9 @@ class VideoPlayerGUI:
         event = message.get("event")
         if event == "file-loaded":
             mpv.apply_pending_range()
+            entry = self.selected_entry()
+            if entry and mpv.has_file(entry.path):
+                self.apply_tracks(entry, mpv)
             return
         if event != "property-change":
             return
@@ -3448,7 +3612,10 @@ class VideoPlayerGUI:
             print(f"GUI-Aktualisierung: {exc}")
         self.root.after(250, self.update_gui)
 
-    def close(self):
+    def close(self, _event=None):
+        if self.program_state != "OFF":
+            messagebox.showinfo(t("quit"), t("quit_busy"))
+            return "break"
         self._close_menus()
         for after_id in (
             self.autoplay_after_id, self.idle_after_id, self.still_after_id, self._meter_after_id,

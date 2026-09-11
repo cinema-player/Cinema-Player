@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Launch Cinema Player from the repository root.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+cd "$ROOT"
+export PATH="${HOME}/.pixi/bin:${PATH}"
+
+if command -v pixi >/dev/null 2>&1; then
+  exec pixi run start
+fi
+
+if [[ -x "$ROOT/.pixi/envs/default/bin/python" ]]; then
+  exec "$ROOT/.pixi/envs/default/bin/python" python/cinema_player.py
+fi
+
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  exec "$ROOT/.venv/bin/python" python/cinema_player.py
+fi
+
+echo "Cinema Player: Pixi environment not found. From the project root run: pixi install" >&2
+exit 1

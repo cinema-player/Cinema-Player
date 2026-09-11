@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cinema Player
+Comment=Video player for a cinematic experience
+Exec=bash -c 'file=${1#file://}; ROOT="$(dirname "$(readlink -f "$file")")"; exec "$ROOT/start"' bash %k
+Icon=/home/tom/Dokumente/Entwicklung/Cinema-Player/assets/logo/cinema-player-icon.png
+Path=
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Player;Video;

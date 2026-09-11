@@ -221,6 +221,7 @@ class PlaylistEntry:
     missing: bool = False
     volume: int = 100
     colorspace: str = "--"
+    color_range: str = ""
     loudness_lufs: float | None = None
 
     def __post_init__(self):
@@ -420,6 +421,7 @@ def refresh_entry_aspect(entry):
             entry.video_bitrate = probed.video_bitrate
             entry.audio_bitrate = probed.audio_bitrate
             entry.colorspace = probed.colorspace
+            entry.color_range = probed.color_range
             return entry
     entry.pixel_aspect = pixel_aspect_label(
         entry.width, entry.height, entry.pixel_aspect, entry.aspect
@@ -550,6 +552,25 @@ def format_colorspace(stream):
     return "--"
 
 
+def format_color_range(stream):
+    """Limited or full range when the file states it; otherwise empty."""
+    token = _color_token((stream or {}).get("color_range"))
+    if token in ("tv", "mpeg", "limited"):
+        return "limited"
+    if token in ("pc", "jpeg", "full"):
+        return "full"
+    return ""
+
+
+def format_colorspace_label(entry):
+    """Colorspace plus range, but only when the file recorded a range."""
+    space = getattr(entry, "colorspace", None) or "--"
+    extra = getattr(entry, "color_range", None) or ""
+    if extra:
+        return extra if space in ("", "--") else f"{space} {extra}"
+    return space
+
+
 def format_clock(seconds):
     try:
         seconds = float(seconds)
@@ -607,6 +628,7 @@ def probe_media(path):
         entry.resolution_label = resolution_label(entry.width, entry.height)
         entry.video_bitrate = stream_bitrate_bps(video, entry.duration)
         entry.colorspace = format_colorspace(video)
+        entry.color_range = format_color_range(video)
 
     if audios:
         names = []
@@ -841,6 +863,13 @@ class VideoOutputManager:
         self.video_output = outputs[0]
         self._program_audio_device = None
         return self.video_output
+
+    def has_dedicated_beamer(self):
+        """True when a second connected output can be used as the projector."""
+        try:
+            return len(self.get_outputs()) >= 2
+        except Exception:
+            return False
 
     def set_video_output(self, name):
         """Switch the projector connector and restore the previous display mode."""
@@ -1348,6 +1377,8 @@ class VideoOutputManager:
             "--osd-level=0",
             "--osc=no",
             "--cursor-autohide=always",
+            "--sid=no",
+            "--sub-auto=no",
             # Stills stay up until the player decides otherwise, not for mpv's default second.
             "--image-display-duration=inf",
             f"--geometry={self.get_mpv_geometry()}",
