@@ -9,6 +9,8 @@ import math
 import os
 import re
 import time
+import webbrowser
+from pathlib import Path
 import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, ttk
@@ -987,6 +989,7 @@ class VideoPlayerGUI:
         self.app_menu = self._burger_button(
             header, t("app_menu"), self._fill_app_menu, side="right",
         )
+        self._help_button(header)
 
         self.logo_image = self._load_image(LOGO_HEADER_FILE)
         if self.logo_image is not None:
@@ -1615,6 +1618,30 @@ class VideoPlayerGUI:
         canvas.tooltip = IconTooltip(canvas, tooltip)
         canvas.menu = menu
         return canvas
+
+    def _help_button(self, parent):
+        """Open the operator manual; sits left of the settings menu."""
+        size = 36
+        canvas = tk.Canvas(
+            parent, width=size, height=size, bg=parent.cget("bg"),
+            highlightthickness=0, bd=0, cursor="hand2",
+        )
+        canvas.create_text(
+            size / 2, size / 2, text="?", fill=COLOR_TEXT, font=FONT_STATUS,
+        )
+        canvas.bind("<Button-1>", lambda _event: self.open_manual())
+        canvas.pack(side="right", padx=(0, 4))
+        canvas.tooltip = IconTooltip(canvas, t("manual"))
+        return canvas
+
+    def open_manual(self):
+        path = os.path.join(ROOT_DIR, "manual", "index.html")
+        if not os.path.isfile(path):
+            messagebox.showerror(t("manual"), t("manual_missing"))
+            return
+        url = Path(path).resolve().as_uri()
+        lang = self.language if self.language in ("de", "en") else "en"
+        webbrowser.open(f"{url}?lang={lang}")
 
     def _arm_menu_dismiss_binds(self):
         if self._menu_binds_armed:

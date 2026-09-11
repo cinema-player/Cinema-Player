@@ -91,8 +91,8 @@
       <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Beamerwechsel, Autoplay-Pause, Pausenmedium.</li>
       <li data-lang="en"><strong>Playlist</strong> — the running order.</li>
       <li data-lang="de"><strong>Playlist</strong> — die Spielfolge.</li>
-      <li data-lang="en"><strong>Beamer status</strong> — resolution, refresh, available rates, OK or Mismatch.</li>
-      <li data-lang="de"><strong>Beamer-Status</strong> — Auflösung, Frequenz, verfügbare Raten, OK oder Abweichung.</li>
+      <li data-lang="en"><strong>Beamer status</strong> — aspect ratio, available rates and resolutions, OK or Mismatch.</li>
+      <li data-lang="de"><strong>Beamer-Status</strong> — Seitenverhältnis, verfügbare Frequenzen und Auflösungen, OK oder Abweichung.</li>
       <li data-lang="en"><strong>Preview</strong> — Live/Preview badge, metadata, clip settings, picture, meters, transport, In/Out.</li>
       <li data-lang="de"><strong>Vorschau</strong> — Live/Vorschau, Metadaten, Clip-Einstellungen, Bild, Meter, Transport, In/Out.</li>
     </ul>
@@ -379,14 +379,20 @@
     <figure>
       <img data-lang="en" src="images/beamer-en.png" alt="Beamer status panel">
       <img data-lang="de" src="images/beamer-de.png" alt="Beamer-Status">
-      <figcaption data-lang="en">Current mode, refresh, raster, plus the resolutions and rates the projector reports. Green <strong>OK</strong> when the clip can be shown without frame dropping; red <strong>Mismatch</strong> otherwise.</figcaption>
-      <figcaption data-lang="de">Aktueller Modus, Frequenz, Raster sowie die gemeldeten Auflösungen und Beamerfrequenzen. Grün <strong>OK</strong>, wenn der Clip ohne Frame-Dropping läuft; sonst rot <strong>Abweichung</strong>.</figcaption>
+      <figcaption data-lang="en">Aspect ratio, then the rates and resolutions the projector reports. The active mode is larger. Program values are blue, preview values yellow. Green <strong>OK</strong> when a listed rate can show the clip; red <strong>Mismatch</strong> only if none can.</figcaption>
+      <figcaption data-lang="de">Seitenverhältnis, danach die gemeldeten Frequenzen und Auflösungen. Der aktive Modus steht größer. Programmwerte sind blau, Vorschauwerte gelb. Grün <strong>OK</strong>, wenn eine gelistete Frequenz den Clip zeigen kann; rot <strong>Abweichung</strong> nur, wenn keine passt.</figcaption>
     </figure>
     <p data-lang="en">
-      Before a clip rolls, Cinema Player picks a display mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes. Test files in <code>testdata</code> often show Mismatch on a 60 Hz office monitor — that is expected.
+      The panel lists every refresh rate and every resolution the projector currently advertises. The mode that is <strong>on the projector now</strong> is drawn larger and bolder in that list. Values that belong to the <strong>program pointer</strong> are blue; values that belong to a clip selected for <strong>preview</strong> are yellow (the preview yellow of the playlist). A 30&nbsp;fps clip marks <strong>60p</strong> when 60&nbsp;Hz is in the list (twice the frame rate). Extra entries appear in blue or yellow only when the clip’s frame rate or resolution is not among the advertised modes.
     </p>
     <p data-lang="de">
-      Bevor ein Clip läuft, wählt Cinema Player einen Anzeigemodus in der <strong>Videoauflösung</strong>, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt. Fehlt ein solcher Modus, kann unter X11 zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Unter GNOME Wayland stehen nur die vom Gerät gemeldeten Modi zur Verfügung. Import und Analyse erzeugen keine Modi. Testdateien in <code>testdata</code> zeigen an einem 60-Hz-Büromonitor oft Abweichung — das ist erwartet.
+      Das Feld listet jede Frequenz und jede Auflösung, die der Beamer derzeit meldet. Der Modus, der <strong>gerade auf dem Beamer liegt</strong>, steht in dieser Liste größer und fett. Werte des <strong>Programmzeigers</strong> sind blau; Werte eines für die <strong>Vorschau</strong> gewählten Clips sind gelb (das Gelb der Playlist). Ein 30-fps-Clip markiert <strong>60p</strong>, wenn 60&nbsp;Hz in der Liste steht (zweifache Bildrate). Zusätzliche Einträge erscheinen nur blau oder gelb, wenn Bildrate oder Auflösung des Clips nicht unter den gemeldeten Modi sind.
+    </p>
+    <p data-lang="en">
+      <strong>OK</strong> / <strong>Mismatch</strong> compares the clip with the <em>capability list</em>, not with the rate that happens to be active. If 60&nbsp;Hz is listed, 30&nbsp;fps is OK even while the projector is still at 50&nbsp;Hz. Before a clip rolls, Cinema Player switches to a mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes.
+    </p>
+    <p data-lang="de">
+      <strong>OK</strong> / <strong>Abweichung</strong> vergleicht den Clip mit der <em>Fähigkeitsliste</em>, nicht mit der gerade aktiven Frequenz. Steht 60&nbsp;Hz in der Liste, ist 30&nbsp;fps OK, auch wenn der Beamer noch auf 50&nbsp;Hz liegt. Bevor ein Clip läuft, schaltet Cinema Player auf einen Modus in der <strong>Videoauflösung</strong>, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt. Fehlt ein solcher Modus, kann unter X11 zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Unter GNOME Wayland stehen nur die vom Gerät gemeldeten Modi zur Verfügung. Import und Analyse erzeugen keine Modi.
     </p>
 
     <h2 id="audio">
@@ -445,7 +451,10 @@
       });
       var saved = null;
       try { saved = localStorage.getItem(key); } catch (e) {}
-      if (saved === "de" || saved === "en") apply(saved);
+      var query = null;
+      try { query = new URLSearchParams(location.search).get("lang"); } catch (e) {}
+      if (query === "de" || query === "en") apply(query);
+      else if (saved === "de" || saved === "en") apply(saved);
       else apply((navigator.language || "").toLowerCase().indexOf("de") === 0 ? "de" : "en");
     })();
   </script>

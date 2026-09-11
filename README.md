@@ -23,7 +23,7 @@ The header shows the Cinema Player logo and a settings menu. The rest of the win
 
 **Right**
 
-- Beamer status: current resolution, refresh rate, aspect, and the resolutions and rates the projector currently reports.
+- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode is larger; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed).
 - Preview header with the Live/Preview badge and clip metadata.
 - Clip settings (autoplay, audio, subtitles, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
@@ -188,13 +188,13 @@ mpv is started with OSD and subtitles off. The projector instance uses `--screen
 To achieve smooth, flicker-free playback, the graphics card’s refresh rate is adapted before video playback starts.
 
 1. The video’s metadata is read.
-2. The refresh rates supported by the projector are checked (shown as **Rates** in the beamer panel).
+2. The refresh rates supported by the projector are checked (shown as **Rates** / **Frequenzen** in the beamer panel).
 3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**.
 4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME Wayland is limited to EDID modes).
 
-If the process is successful, the projector status shows **OK** (green).
+If a listed rate can show the clip without dropping frames (native or 2× refresh), the projector status shows **OK** (green). 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz.
 
-If no matching refresh rate is found, the status changes to **Mismatch** (red), and the incorrect settings are highlighted in red. In this case, the video can still be displayed, but frame-dropping artifacts may occur.
+If no matching refresh rate is found, the status changes to **Mismatch** (red). The clip’s unsupported rate or resolution is then added to the list in blue (program) or yellow (preview). The video can still be displayed, but frame-dropping artifacts may occur.
 
 This check is performed when videos are added to the playlist and when a playlist is loaded. Each entry indicates whether the video can be played correctly. Import and probe do not create custom modes; that happens when a clip is prepared for the projector.
 

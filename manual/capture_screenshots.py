@@ -7,6 +7,8 @@ Run from the repository root with the Pixi interpreter and a working DISPLAY.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import os
 import subprocess
 import sys
@@ -19,6 +21,134 @@ os.chdir(ROOT)
 IMAGES = os.path.join(ROOT, "manual", "images")
 TESTDATA = os.path.join(ROOT, "testdata")
 DISPLAY = os.environ.get("DISPLAY", ":0")
+
+_X11 = None
+_XDISPLAY = None
+
+
+class _XWinAttr(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_int),
+        ("y", ctypes.c_int),
+        ("width", ctypes.c_int),
+        ("height", ctypes.c_int),
+        ("border_width", ctypes.c_int),
+        ("depth", ctypes.c_int),
+        ("visual", ctypes.c_void_p),
+        ("root", ctypes.c_ulong),
+        ("class", ctypes.c_int),
+        ("bit_gravity", ctypes.c_int),
+        ("win_gravity", ctypes.c_int),
+        ("backing_store", ctypes.c_int),
+        ("backing_planes", ctypes.c_ulong),
+        ("backing_pixel", ctypes.c_ulong),
+        ("save_under", ctypes.c_int),
+        ("colormap", ctypes.c_ulong),
+        ("map_installed", ctypes.c_int),
+        ("map_state", ctypes.c_int),
+        ("all_event_masks", ctypes.c_long),
+        ("your_event_mask", ctypes.c_long),
+        ("do_not_propagate_mask", ctypes.c_long),
+        ("override_redirect", ctypes.c_int),
+        ("screen", ctypes.c_void_p),
+    ]
+
+
+class _XImage(ctypes.Structure):
+    _fields_ = [
+        ("width", ctypes.c_int),
+        ("height", ctypes.c_int),
+        ("xoffset", ctypes.c_int),
+        ("format", ctypes.c_int),
+        ("data", ctypes.c_void_p),
+        ("byte_order", ctypes.c_int),
+        ("bitmap_unit", ctypes.c_int),
+        ("bitmap_bit_order", ctypes.c_int),
+        ("bitmap_pad", ctypes.c_int),
+        ("depth", ctypes.c_int),
+        ("bytes_per_line", ctypes.c_int),
+        ("bits_per_pixel", ctypes.c_int),
+        ("red_mask", ctypes.c_ulong),
+        ("green_mask", ctypes.c_ulong),
+        ("blue_mask", ctypes.c_ulong),
+        ("obdata", ctypes.c_void_p),
+        ("f", ctypes.c_void_p * 8),
+    ]
+
+
+def _x11():
+    global _X11, _XDISPLAY
+    if _X11 is None:
+        lib = ctypes.CDLL(ctypes.util.find_library("X11"))
+        lib.XOpenDisplay.restype = ctypes.c_void_p
+        lib.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        lib.XGetWindowAttributes.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p,
+        ]
+        lib.XCreatePixmap.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_uint, ctypes.c_uint, ctypes.c_uint,
+        ]
+        lib.XCreatePixmap.restype = ctypes.c_ulong
+        lib.XCreateGC.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+        ]
+        lib.XCreateGC.restype = ctypes.c_void_p
+        lib.XSetSubwindowMode.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+        lib.XCopyArea.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+            ctypes.c_int, ctypes.c_int, ctypes.c_uint, ctypes.c_uint,
+            ctypes.c_int, ctypes.c_int,
+        ]
+        lib.XGetImage.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int,
+            ctypes.c_uint, ctypes.c_uint, ctypes.c_ulong, ctypes.c_int,
+        ]
+        lib.XGetImage.restype = ctypes.c_void_p
+        lib.XDestroyImage.argtypes = [ctypes.c_void_p]
+        lib.XFreePixmap.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        lib.XFreeGC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        lib.XSync.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        _X11 = lib
+        _XDISPLAY = lib.XOpenDisplay(None)
+        if not _XDISPLAY:
+            raise RuntimeError("XOpenDisplay failed")
+    return _X11, _XDISPLAY
+
+
+def capture_x11_window(xid, path):
+    """Grab a Tk/X11 window including children (needed on GNOME Wayland)."""
+    x11, dpy = _x11()
+    attr = _XWinAttr()
+    if not x11.XGetWindowAttributes(dpy, xid, ctypes.byref(attr)):
+        raise RuntimeError(f"XGetWindowAttributes failed for {xid}")
+    width, height, depth = attr.width, attr.height, attr.depth
+    pixmap = x11.XCreatePixmap(dpy, xid, width, height, depth)
+    gc = x11.XCreateGC(dpy, xid, 0, None)
+    x11.XSetSubwindowMode(dpy, gc, 1)  # IncludeInferiors
+    x11.XCopyArea(dpy, xid, pixmap, gc, 0, 0, width, height, 0, 0)
+    x11.XSync(dpy, 0)
+    image_ptr = x11.XGetImage(dpy, pixmap, 0, 0, width, height, ctypes.c_ulong(~0), 2)
+    if not image_ptr:
+        x11.XFreePixmap(dpy, pixmap)
+        x11.XFreeGC(dpy, gc)
+        raise RuntimeError(f"XGetImage failed for {xid}")
+    image = ctypes.cast(image_ptr, ctypes.POINTER(_XImage)).contents
+    raw = ctypes.string_at(image.data, image.bytes_per_line * image.height)
+    pixfmt = "bgra" if image.bits_per_pixel == 32 else "rgb24"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-f", "rawvideo", "-pixel_format", pixfmt,
+            "-video_size", f"{image.width}x{image.height}",
+            "-i", "pipe:0", path,
+        ],
+        input=raw,
+        check=True,
+    )
+    x11.XDestroyImage(image_ptr)
+    x11.XFreePixmap(dpy, pixmap)
+    x11.XFreeGC(dpy, gc)
 
 
 def stub_dialogs():
@@ -43,13 +173,15 @@ def stub_dialogs():
     messagebox.askyesno = lambda *args, **kwargs: True
 
 
-def import_crop(path, x, y, width, height):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    geometry = f"{max(1, int(width))}x{max(1, int(height))}+{max(0, int(x))}+{max(0, int(y))}"
+def crop_png(src, path, x, y, width, height):
     subprocess.run(
-        ["import", "-silent", "-window", "root", "-crop", geometry, "+repage", path],
+        [
+            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+            "-i", src, "-vf",
+            f"crop={max(2, int(width))}:{max(2, int(height))}:{max(0, int(x))}:{max(0, int(y))}",
+            path,
+        ],
         check=True,
-        env={**os.environ, "DISPLAY": DISPLAY},
     )
 
 
@@ -61,27 +193,37 @@ def sync(gui, seconds=0.45):
 
 def grab_widget(widget, path, pad=10):
     widget.update_idletasks()
-    import_crop(
-        path,
-        widget.winfo_rootx() - pad,
-        widget.winfo_rooty() - pad,
-        widget.winfo_width() + pad * 2,
-        widget.winfo_height() + pad * 2,
-    )
+    top = widget.winfo_toplevel()
+    top.update_idletasks()
+    tmp = path + ".full.png"
+    capture_x11_window(top.winfo_id(), tmp)
+    x = widget.winfo_rootx() - top.winfo_rootx() - pad
+    y = widget.winfo_rooty() - top.winfo_rooty() - pad
+    width = widget.winfo_width() + pad * 2
+    height = widget.winfo_height() + pad * 2
+    max_w = top.winfo_width()
+    max_h = top.winfo_height()
+    x = max(0, x)
+    y = max(0, y)
+    width = min(width, max_w - x)
+    height = min(height, max_h - y)
+    try:
+        crop_png(tmp, path, x, y, width, height)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def grab_root(gui, path):
     sync(gui, 0.35)
-    grab_widget(gui.root, path, pad=0)
+    capture_x11_window(gui.root.winfo_id(), path)
 
 
 def grab_window(widget, path):
     widget.update_idletasks()
-    subprocess.run(
-        ["import", "-silent", "-window", str(widget.winfo_id()), path],
-        check=True,
-        env={**os.environ, "DISPLAY": DISPLAY},
-    )
+    capture_x11_window(widget.winfo_id(), path)
 
 
 def find_canvas(widget):
@@ -114,7 +256,7 @@ def load_testdata(gui):
         gui.add_media(path)
     if gui.playlist:
         gui.program_index = 0
-        gui.on_row_click(0)
+        gui.on_row_click(1 if len(gui.playlist) > 1 else 0)
     gui.refresh_all()
     gui.root.update()
 
@@ -142,21 +284,31 @@ def post_menu(gui, canvas, fill):
 
 def grab_menu(canvas, menu, path):
     canvas.update_idletasks()
+    menu.update_idletasks()
+    top = canvas.winfo_toplevel()
+    tmp = path + ".full.png"
+    capture_x11_window(top.winfo_id(), tmp)
+    x0 = min(canvas.winfo_rootx(), menu.winfo_rootx()) - 8
+    y0 = min(canvas.winfo_rooty(), menu.winfo_rooty()) - 8
+    x1 = max(
+        canvas.winfo_rootx() + canvas.winfo_width(),
+        menu.winfo_rootx() + menu.winfo_width(),
+    ) + 8
+    y1 = max(
+        canvas.winfo_rooty() + canvas.winfo_height(),
+        menu.winfo_rooty() + menu.winfo_height(),
+    ) + 8
+    x = max(0, x0 - top.winfo_rootx())
+    y = max(0, y0 - top.winfo_rooty())
+    width = min(x1 - x0, top.winfo_width() - x)
+    height = min(y1 - y0, top.winfo_height() - y)
     try:
-        menu.update_idletasks()
-        x = min(canvas.winfo_rootx(), menu.winfo_rootx()) - 8
-        y = canvas.winfo_rooty() - 8
-        right = max(
-            canvas.winfo_rootx() + canvas.winfo_width(),
-            menu.winfo_rootx() + menu.winfo_width(),
-        )
-        bottom = max(
-            canvas.winfo_rooty() + canvas.winfo_height(),
-            menu.winfo_rooty() + menu.winfo_height(),
-        )
-        import_crop(path, x, y, right - x + 16, bottom - y + 16)
-    except Exception:
-        grab_widget(canvas.master, path, pad=4)
+        crop_png(tmp, path, x, y, width, height)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def set_state(gui, state):
@@ -259,7 +411,7 @@ def main():
     wait_preview(2.0)
     gui.start_preview_player()
     if gui.playlist:
-        gui.on_row_click(0)
+        gui.on_row_click(1 if len(gui.playlist) > 1 else 0)
     gui.refresh_all()
     root.update()
     wait_preview(1.8)
