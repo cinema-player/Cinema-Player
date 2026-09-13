@@ -56,6 +56,7 @@ LOGO_ACCENT = "#4d9be6"
 FONT_LOGO = (FONT_FAMILY, 17, "bold")
 FONT_LOGO_LIGHT = (FONT_FAMILY, 17)
 FONT_BEAMER_PICK = (FONT_FAMILY, 13, "bold")
+FONT_TOOLTIP = (FONT_FAMILY, 11)
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
 LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.png")
 BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
@@ -96,6 +97,8 @@ PALETTES = {
         "marker": "#16324f",
         "accent": "#1565c0",
         "volume": "#0c8f88",
+        "tip_bg": "#f2e6a6",
+        "tip_fg": "#1a1a1a",
     },
     "dark": {
         "bg": "#262626",
@@ -118,6 +121,8 @@ PALETTES = {
         "marker": "#9dc4ec",
         "accent": "#6cb0ee",
         "volume": "#2ee8dc",
+        "tip_bg": "#f2e6a6",
+        "tip_fg": "#1a1a1a",
     },
 }
 
@@ -130,6 +135,7 @@ def apply_theme(name):
     global THEME, COLOR_BG, COLOR_PANEL, COLOR_ROW, COLOR_TEXT, COLOR_MUTED, COLOR_PLAYED
     global COLOR_BORDER, COLOR_READOUT, COLOR_BADGE_IDLE, COLOR_BUTTON, COLOR_BUTTON_ACTIVE
     global COLOR_FIELD, COLOR_VIDEO, TRACK_BG, TRACK_EDGE, RANGE_FILL, PLAYHEAD, MARKER, ACCENT, COLOR_VOLUME
+    global COLOR_TIP_BG, COLOR_TIP_FG
 
     THEME = name if name in PALETTES else DEFAULT_THEME
     palette = PALETTES[THEME]
@@ -153,6 +159,8 @@ def apply_theme(name):
     MARKER = palette["marker"]
     ACCENT = palette["accent"]
     COLOR_VOLUME = palette["volume"]
+    COLOR_TIP_BG = palette["tip_bg"]
+    COLOR_TIP_FG = palette["tip_fg"]
     return THEME
 
 
@@ -551,10 +559,11 @@ class IconTooltip:
             return
         tip = tk.Toplevel(self.widget)
         tip.wm_overrideredirect(True)
+        tip.configure(bg=COLOR_TIP_BG)
         tip.wm_geometry(f"+{x}+{y}")
         tk.Label(
-            tip, text=self.text, font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_TEXT,
-            relief="solid", bd=1, padx=8, pady=4,
+            tip, text=self.text, font=FONT_TOOLTIP, bg=COLOR_TIP_BG, fg=COLOR_TIP_FG,
+            relief="flat", bd=0, padx=10, pady=6,
         ).pack()
         self._window = tip
 
@@ -595,8 +604,7 @@ class DropdownMenu(tk.Frame):
         self, label="", variable=None, command=None, accelerator="", **_kwargs,
     ):
         checked = bool(variable.get()) if variable is not None else False
-        mark = "✔  " if checked else "    "
-        text = f"{mark}{label}"
+        text = f"✔  {label}" if checked else label
         if accelerator:
             text = f"{text}    {accelerator}"
 
@@ -1455,7 +1463,6 @@ class VideoPlayerGUI:
         button = tk.Button(
             parent,
             text=fallback_text,
-            command=command,
             image=image,
             compound="none" if image is not None else "center",
             bd=0,
@@ -1467,6 +1474,14 @@ class VideoPlayerGUI:
             padx=2,
             pady=2,
         )
+        button._transport_enabled = True
+
+        def wrapped():
+            if not getattr(button, "_transport_enabled", True):
+                return
+            command()
+
+        button.config(command=wrapped)
         if image is None:
             button.config(font=FONT_SMALL, width=7)
         button.icon_name = icon_name
@@ -1476,6 +1491,7 @@ class VideoPlayerGUI:
 
     def _set_transport_active(self, button, active, variant=None, enabled=True):
         """Swap the highlight or disabled icon instead of painting a Tk ring."""
+        button._transport_enabled = enabled
         name = getattr(button, "icon_name", None)
         image = None
         if name and not enabled:
@@ -1500,12 +1516,16 @@ class VideoPlayerGUI:
         paused = playing and self.main_pause and self.blackout
         frozen = playing and self.main_pause and not self.blackout
         rolling = playing and not self.main_pause
+        clip_rolling = rolling and not self.still_waiting
         armed = self.program_state == "PROGRAM"
         self._set_transport_active(self.btn_stop, False, enabled=self.program_state != "OFF")
         self._set_transport_active(self.btn_pause, paused, "preview", enabled=playing)
         self._set_transport_active(self.btn_still, frozen, "program", enabled=playing)
         self._set_transport_active(
-            self.btn_play, rolling or armed, "playing" if rolling else "program",
+            self.btn_play,
+            (rolling or armed) and not clip_rolling,
+            "playing" if rolling else "program",
+            enabled=not clip_rolling,
         )
 
         entry = self.selected_entry()
@@ -1747,17 +1767,16 @@ class VideoPlayerGUI:
                 pass
 
     def _fill_app_menu(self, menu):
-        menu.add_command(
-            label=t("theme_to_light") if self.theme == "dark" else t("theme_to_dark"),
-            command=self.toggle_theme,
-        )
         menu.add_checkbutton(
             label=t("window_fullscreen"),
             variable=self.window_fullscreen,
             command=self._on_window_fullscreen,
             accelerator="F11",
         )
-        menu.add_separator()
+        menu.add_command(
+            label=t("theme_to_light") if self.theme == "dark" else t("theme_to_dark"),
+            command=self.toggle_theme,
+        )
         languages = self._menu(menu)
         for code, name in LANGUAGES.items():
             mark = "✔  " if code == self.language else "    "
@@ -1771,12 +1790,12 @@ class VideoPlayerGUI:
         outputs = self._menu(menu)
         self._fill_beamer_output_menu(outputs)
         menu.add_cascade(label=t("beamer_output"), menu=outputs)
+        menu.add_separator()
         menu.add_command(
             label=t("beamer_test"),
             command=self.show_beamer_test,
             state="normal" if self.program_state == "OFF" else "disabled",
         )
-        menu.add_separator()
         menu.add_command(
             label=t("load_testdata"),
             command=self.load_testdata_playlist,
@@ -3282,10 +3301,14 @@ class VideoPlayerGUI:
         self.repaint_playlist()
 
     def reset_played(self):
+        if not messagebox.askyesno(t("reset_played_title"), t("reset_played_message")):
+            return
         for entry in self.playlist:
             entry.played = False
         self.played_var.set(False)
-        self.repaint_playlist()
+        if self.playlist:
+            self._move_program_cursor(0)
+        self.refresh_all()
 
     def analyze_playlist_loudness(self):
         """Measure integrated LUFS for every playable video while the program is stopped."""
@@ -3523,6 +3546,9 @@ class VideoPlayerGUI:
             self.main_mpv.set_pause(False)
             self.preview_mpv.set_pause(False)
             self.main_pause = False
+            return
+        if self.program_state == "PLAYING":
+            # Resume while rolling would load the clip again from the start.
             return
         self.start_current_clip()
 

@@ -112,14 +112,14 @@
     <figure>
       <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
       <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
-      <figcaption data-lang="en">Settings: design, fullscreen, language, beamer output, test image, test videos, quit.</figcaption>
-      <figcaption data-lang="de">Einstellungen: Design, Vollbild, Sprache, Beamerausgang, Testbild, Testvideos, Beenden.</figcaption>
+      <figcaption data-lang="en">Settings: fullscreen, design, language, beamer output, test image, test videos, quit.</figcaption>
+      <figcaption data-lang="de">Einstellungen: Vollbild, Design, Sprache, Beamerausgang, Testbild, Testvideos, Beenden.</figcaption>
     </figure>
     <ul>
-      <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
-      <li data-lang="de"><strong>Helles / dunkles Design</strong> — Farben des Kontrollfensters.</li>
       <li data-lang="en"><strong>Fullscreen</strong> — control monitor only (<kbd>F11</kbd>).</li>
       <li data-lang="de"><strong>Vollbildmodus</strong> — nur Kontrollmonitor (<kbd>F11</kbd>).</li>
+      <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
+      <li data-lang="de"><strong>Helles / dunkles Design</strong> — Farben des Kontrollfensters.</li>
       <li data-lang="en"><strong>Language</strong> — English or Deutsch. The brand name Cinema Player stays untranslated.</li>
       <li data-lang="de"><strong>Sprache</strong> — English oder Deutsch. Der Name Cinema Player bleibt unübersetzt.</li>
       <li data-lang="en"><strong>Beamer output</strong> — which connector is the projector. Locked while <strong>PLAYING</strong>.</li>
@@ -202,8 +202,8 @@
           <td><img src="images/icons/play.png" alt=""></td>
           <td data-lang="en">Resume</td>
           <td data-lang="de">Weiter</td>
-          <td data-lang="en">Roll the current clip, unpause, or leave still.</td>
-          <td data-lang="de">Aktuellen Clip starten, Pause aufheben oder Standbild verlassen.</td>
+          <td data-lang="en">Roll the current clip, unpause, or leave still. Disabled while the clip is rolling.</td>
+          <td data-lang="de">Aktuellen Clip starten, Pause aufheben oder Standbild verlassen. Während der Clip läuft inaktiv.</td>
         </tr>
         <tr>
           <td><img src="images/icons/pause.png" alt=""></td>
@@ -229,10 +229,10 @@
       </tbody>
     </table>
     <p data-lang="en">
-      Buttons that cannot be used are shown with a disabled icon (grey) and an arrow cursor. Pause and Still only work while <strong>PLAYING</strong>. Stop is dead in <strong>OFF</strong>.
+      Buttons that cannot be used are shown with a disabled icon (grey) and an arrow cursor. Pause and Still only work while <strong>PLAYING</strong>. Resume is dead while the clip is rolling. Stop is dead in <strong>OFF</strong>.
     </p>
     <p data-lang="de">
-      Tasten, die nicht gelten, erscheinen als graues Disabled-Symbol mit Pfeilcursor. Pause und Standbild nur bei <strong>WIEDERGABE</strong>. Stop ist bei <strong>AUS</strong> tot.
+      Tasten, die nicht gelten, erscheinen als graues Disabled-Symbol mit Pfeilcursor. Pause und Standbild nur bei <strong>WIEDERGABE</strong>. Weiter ist tot, solange der Clip läuft. Stop ist bei <strong>AUS</strong> tot.
     </p>
     <div class="two">
       <figure>
@@ -244,8 +244,8 @@
       <figure>
         <img data-lang="en" src="images/program-playing-en.png" alt="Program transport while playing">
         <img data-lang="de" src="images/program-playing-de.png" alt="Programmtransport bei Wiedergabe">
-        <figcaption data-lang="en">PLAYING: Resume highlighted green. Clocks follow the clip (In/Out), not idle media.</figcaption>
-        <figcaption data-lang="de">WIEDERGABE: Weiter grün. Uhren folgen dem Clip (In/Out), nicht dem Pausenmedium.</figcaption>
+        <figcaption data-lang="en">PLAYING: Resume disabled (grey). Clocks follow the clip (In/Out), not idle media.</figcaption>
+        <figcaption data-lang="de">WIEDERGABE: Weiter inaktiv (grau). Uhren folgen dem Clip (In/Out), nicht dem Pausenmedium.</figcaption>
       </figure>
     </div>
     <p data-lang="en">The four clocks are <strong>Total</strong>, <strong>Elapsed</strong>, <strong>Remaining</strong>, and <strong>End</strong> (wall-clock time when the clip will finish).</p>
@@ -325,8 +325,8 @@
     <figure>
       <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist menu">
       <img data-lang="de" src="images/menu-playlist-de.png" alt="Playlist-Menü">
-      <figcaption data-lang="en">Check files, reset played flags, autosave when the pointer moves, load last playlist at start, analyze loudness (OFF only).</figcaption>
-      <figcaption data-lang="de">Dateien prüfen, Gespielte zurücksetzen, Autosave bei Programmwechsel, letzte Playlist beim Start laden, Lautheit analysieren (nur bei AUS).</figcaption>
+      <figcaption data-lang="en">Check files, reset playlist (confirm: played flags and pointer to first entry), autosave when the pointer moves, load last playlist at start, analyze loudness (OFF only).</figcaption>
+      <figcaption data-lang="de">Dateien prüfen, Playlist zurücksetzen (Nachfrage: gespielt und Zeiger auf den ersten Eintrag), Autosave bei Programmwechsel, letzte Playlist beim Start laden, Lautheit analysieren (nur bei AUS).</figcaption>
     </figure>
     <ul>
       <li data-lang="en"><strong>Beamer change</strong> — popup when aspect, PAR, or colorspace needs a projector zoom/lens change. 16:9 in 21:9 zoom is letterboxed to height.</li>

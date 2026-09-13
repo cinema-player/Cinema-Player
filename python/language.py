@@ -9,8 +9,8 @@ DEFAULT_LANGUAGE = "en"
 
 STRINGS = {
     "en": {
-        "theme_to_light": "light design",
-        "theme_to_dark": "dark design",
+        "theme_to_light": "Light design",
+        "theme_to_dark": "Dark design",
         "window_fullscreen": "Fullscreen",
         "language": "Language",
         "app_menu": "Settings",
@@ -68,7 +68,11 @@ STRINGS = {
         "refresh": "refresh",
         "refresh_playlist": "Check video files",
         "playlist_menu": "Playlist menu",
-        "reset_played": "Reset played",
+        "reset_played": "Reset playlist",
+        "reset_played_title": "Reset playlist",
+        "reset_played_message": (
+            "Clear played flags and move the program pointer to the first entry?"
+        ),
         "autosave_program_change": "Autosave at program change",
         "load_last_playlist_at_start": "Load last playlist at start",
         "analyze_loudness": "Analyze loudness",
@@ -204,7 +208,11 @@ STRINGS = {
         "refresh": "aktualisieren",
         "refresh_playlist": "Videofiles prüfen",
         "playlist_menu": "Playlist-Menü",
-        "reset_played": "Gespielte zurücksetzen",
+        "reset_played": "Playlist zurücksetzen",
+        "reset_played_title": "Playlist zurücksetzen",
+        "reset_played_message": (
+            "Gespielte Markierungen löschen und den Programmzeiger auf den ersten Eintrag setzen?"
+        ),
         "autosave_program_change": "Autosave bei Programmwechsel",
         "load_last_playlist_at_start": "Letzte Playlist beim Start laden",
         "analyze_loudness": "Lautheit analysieren",

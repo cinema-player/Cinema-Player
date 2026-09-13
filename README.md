@@ -37,8 +37,8 @@ The window can be switched to fullscreen on the control monitor (**F11** or Sett
 
 The burger menu in the header covers booth setup:
 
+- Fullscreen on the control monitor (`F11`)
 - Light or dark design
-- Fullscreen on the control monitor
 - Language (English / Deutsch)
 - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
 - Beamer test image (Cinema Player logo on the projector; only while **OFF**)
@@ -56,7 +56,7 @@ Missing files stay in the list and are marked. They are skipped during the progr
 The playlist menu offers:
 
 - Check video files
-- Reset played
+- Reset playlist (clears played flags and moves the program pointer to the first entry)
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
 - Analyze loudness (ffmpeg EBU R128; only while **OFF**)
