@@ -12,7 +12,7 @@ Two mpv instances run in parallel: one on the projector output, and one embedded
 
 ## Controller
 
-The header shows the Cinema Player logo and a settings menu. The rest of the window is split into two columns.
+The header shows the Cinema Player logo, the version, and whether the session is X11 or Wayland, plus a settings menu. The rest of the window is split into two columns.
 
 **Left**
 
@@ -25,7 +25,7 @@ The header shows the Cinema Player logo and a settings menu. The rest of the win
 
 - Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode is larger; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed).
 - Preview header with the Live/Preview badge and clip metadata.
-- Clip settings (autoplay, audio, subtitles, or still display time).
+- Clip settings (autoplay, loop, audio, subtitles, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
 - Preview transport, volume, and In/Out marks.
 
@@ -37,10 +37,12 @@ The window can be switched to fullscreen on the control monitor (**F11** or Sett
 
 The burger menu in the header covers booth setup:
 
+- Media directories (saved folders offered when importing into the playlist)
 - Fullscreen on the control monitor (`F11`)
 - Light or dark design
 - Language (English / Deutsch)
 - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
+- Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
 - Beamer test image (Cinema Player logo on the projector; only while **OFF**)
 - Load the videos from `testdata`
 - Quit
@@ -49,7 +51,7 @@ If only one display is connected at startup, a warning asks the projectionist to
 
 ## Playlist
 
-The playlist is the central user interface of the player. It displays a scrollable list of the files in the order in which they will be played. Videos, images, or entire directories can be added to the list. The position of an entry in the list can be changed by dragging it.
+The playlist is the central user interface of the player. It displays a scrollable list of the files in the order in which they will be played. Videos, images, or entire directories can be added to the list. Folders saved under **Media directories** are offered when importing. The position of an entry in the list can be changed by dragging it.
 
 Missing files stay in the list and are marked. They are skipped during the program. An entry can be relinked from its context menu.
 
@@ -68,7 +70,7 @@ These settings control the behavior of the playlist.
 - **Beamer change** – When the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, this checkbox is selected. When the zoom needs to be changed, a popup window informs the projectionist when to do so. Playback starts once the successful zoom change has been confirmed.  
   When 16:9 images are displayed in 21:9 zoom mode, they are scaled to fit the vertical resolution. The same popup is used when resolution, pixel aspect, or colorspace needs attention.
 - **Autoplay delay** – The number of seconds of black to wait before the next video is started automatically, and before idle media appears after a clip.
-- **Idle media** – An image or video loop shown instead of a black screen **while the program is armed** (**PROGRAM**). It is never shown in **OFF**. The idle button turns green while that media is on the projector.
+- **Idle media** – An image or video loop shown instead of a black screen **while the program is armed** (**PROGRAM**). It is never shown in **OFF**. The idle button turns green while that media is on the projector. Enable **Use default Idle Media** in Settings to load the file from `idle` automatically at startup.
 
 ### Playback Controls
 
@@ -96,6 +98,8 @@ In **OFF**, these clocks stay at `--:--`.
 The playlist is armed by pressing **Start**. The program status changes from **OFF** (red) to **PROGRAM** (blue), and the button becomes **Resume**. Idle media, if configured, may appear after the autoplay delay.
 
 Pressing **Resume** starts the currently selected video in the list, and the status changes to **PLAYING** (green). When a video ends, the status changes back to **PROGRAM** (blue). The next entry can be started with **Resume**, unless autoplay is set for the clip that just finished.
+
+If **Loop** is set on a video, it repeats (including In/Out) until **Resume** is pressed. That ends the loop, marks the clip played, and returns to **PROGRAM** — then autoplay can start the next clip.
 
 If the autoplay option is selected for an entry, playback automatically resumes with the next video after the autoplay delay (black). Idle media is not shown in that gap.
 
@@ -137,6 +141,7 @@ The displayed metadata are:
 
 **Settings (video only)**
 
+- Loop checkbox (repeats until **Resume** on the program)
 - Audio track
 - Subtitle track (off unless a track is chosen)
 - Start position (In)
@@ -153,6 +158,7 @@ Different options can be selected for each entry in the playlist.
 - If multiple audio tracks are available, the track to be used can be selected.
 - If subtitles are embedded, the desired subtitle track can be selected.
 - A checkbox overrides the automatic stop behavior and automatically starts playback of the next entry.
+- **Loop** repeats a video (In/Out if set) until **Resume** ends it.
 - Volume is adjusted in preview and stored on the entry with **Save volume**.
 
 ### Images

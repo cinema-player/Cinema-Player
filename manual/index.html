@@ -71,10 +71,10 @@
       <span data-lang="de">2. Kontrollfenster</span>
     </h2>
     <p data-lang="en">
-      The header shows the logo, the version, and the settings menu (three lines, top right). Below that the window is split: program and playlist on the left, beamer and preview on the right.
+      The header shows the logo, the version, X11 or Wayland, and the settings menu (three lines, top right). Below that the window is split: program and playlist on the left, beamer and preview on the right.
     </p>
     <p data-lang="de">
-      Die Kopfzeile zeigt das Logo, die Version und das Einstellungsmenü (drei Striche oben rechts). Darunter ist das Fenster geteilt: Programm und Playlist links, Beamer und Vorschau rechts.
+      Die Kopfzeile zeigt das Logo, die Version, X11 oder Wayland und das Einstellungsmenü (drei Striche oben rechts). Darunter ist das Fenster geteilt: Programm und Playlist links, Beamer und Vorschau rechts.
     </p>
     <figure>
       <img data-lang="en" src="images/overview-en.png" alt="Cinema Player control window in English, program off">
@@ -112,18 +112,22 @@
     <figure>
       <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
       <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
-      <figcaption data-lang="en">Settings: fullscreen, design, language, beamer output, test image, test videos, quit.</figcaption>
-      <figcaption data-lang="de">Einstellungen: Vollbild, Design, Sprache, Beamerausgang, Testbild, Testvideos, Beenden.</figcaption>
+      <figcaption data-lang="en">Settings: media directories, fullscreen, design, language, beamer output, default idle media, test image, test videos, quit.</figcaption>
+      <figcaption data-lang="de">Einstellungen: Medienverzeichnisse, Vollbild, Design, Sprache, Beamerausgang, Standard-Pausenmedium, Testbild, Testvideos, Beenden.</figcaption>
     </figure>
     <ul>
+      <li data-lang="en"><strong>Media directories</strong> — add one or more folders. They are saved and offered when media is imported into the playlist.</li>
+      <li data-lang="de"><strong>Medienverzeichnisse</strong> — einen oder mehrere Ordner hinzufügen. Sie werden gespeichert und beim Laden von Medien in die Playlist angeboten.</li>
       <li data-lang="en"><strong>Fullscreen</strong> — control monitor only (<kbd>F11</kbd>).</li>
       <li data-lang="de"><strong>Vollbildmodus</strong> — nur Kontrollmonitor (<kbd>F11</kbd>).</li>
       <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
       <li data-lang="de"><strong>Helles / dunkles Design</strong> — Farben des Kontrollfensters.</li>
       <li data-lang="en"><strong>Language</strong> — English or Deutsch. The brand name Cinema Player stays untranslated.</li>
       <li data-lang="de"><strong>Sprache</strong> — English oder Deutsch. Der Name Cinema Player bleibt unübersetzt.</li>
-      <li data-lang="en"><strong>Beamer output</strong> — which connector is the projector. Locked while <strong>PLAYING</strong>.</li>
-      <li data-lang="de"><strong>Beamerausgang</strong> — welcher Anschluss der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt.</li>
+      <li data-lang="en"><strong>Beamer output</strong> — which connector is the projector. Locked while <strong>PLAYING</strong>. The submenu also has <strong>EDID</strong>, which opens a window with the projector’s complete EDID.</li>
+      <li data-lang="de"><strong>Beamerausgang</strong> — welcher Anschluss der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt. Im Untermenü gibt es außerdem <strong>EDID</strong>: ein Fenster mit den vollständigen EDID-Daten des Beamers.</li>
+      <li data-lang="en"><strong>Use default Idle Media</strong> — checkbox. When on, the projector idle clip is the file in <code>idle</code>. The choice is saved and applied again at the next start.</li>
+      <li data-lang="de"><strong>Standard-Pausenmedium verwenden</strong> — Kontrollkästchen. Wenn aktiv, ist das Pausenmedium die Datei im Ordner <code>idle</code>. Die Wahl wird gespeichert und beim nächsten Start wieder angewendet.</li>
       <li data-lang="en"><strong>Beamer test image</strong> — Cinema Player logo on the projector until you close the dialog. Only in <strong>OFF</strong>.</li>
       <li data-lang="de"><strong>Beamer-Testbild</strong> — Cinema-Player-Logo auf dem Beamer, bis der Dialog geschlossen wird. Nur bei <strong>AUS</strong>.</li>
       <li data-lang="en"><strong>Load test videos</strong> — replaces the playlist with files from <code>testdata</code>.</li>
@@ -278,8 +282,8 @@
       <tbody>
         <tr>
           <td><img src="images/icons/video_import.png" alt=""></td>
-          <td data-lang="en">Import files or a folder into the list.</td>
-          <td data-lang="de">Dateien oder einen Ordner in die Liste übernehmen.</td>
+          <td data-lang="en">Import files or a folder. Saved media directories are offered first.</td>
+          <td data-lang="de">Dateien oder einen Ordner übernehmen. Gespeicherte Medienverzeichnisse werden zuerst angeboten.</td>
         </tr>
         <tr>
           <td><img src="images/icons/playlist_new.png" alt=""></td>
@@ -315,8 +319,8 @@
     <figure>
       <img data-lang="en" src="images/menu-entry-en.png" alt="Clip context menu">
       <img data-lang="de" src="images/menu-entry-de.png" alt="Kontextmenü eines Clips">
-      <figcaption data-lang="en">Set program pointer (not during PLAYING), toggle autoplay, relink a missing file, delete the entry.</figcaption>
-      <figcaption data-lang="de">Programmzeiger setzen (nicht während WIEDERGABE), Autoplay umschalten, fehlende Datei neu verknüpfen, Eintrag löschen.</figcaption>
+      <figcaption data-lang="en">Set program pointer (not during PLAYING), toggle autoplay, toggle loop (videos), relink a missing file, delete the entry.</figcaption>
+      <figcaption data-lang="de">Programmzeiger setzen (nicht während WIEDERGABE), Autoplay umschalten, Loop umschalten (Videos), fehlende Datei neu verknüpfen, Eintrag löschen.</figcaption>
     </figure>
     <p data-lang="en">Changing the program pointer while not playing must be confirmed, so the running order cannot jump by accident.</p>
     <p data-lang="de">Ein Wechsel des Programmzeigers außerhalb der Wiedergabe muss bestätigt werden, damit die Reihenfolge nicht versehentlich springt.</p>
@@ -333,8 +337,8 @@
       <li data-lang="de"><strong>Beamerwechsel</strong> — Dialog, wenn Bildformat, PAR oder Farbraum eine Zoom-/Objektivänderung brauchen. 16:9 im 21:9-Zoom wird auf die Höhe eingepasst.</li>
       <li data-lang="en"><strong>Autoplay delay</strong> — seconds of black before the next autoplay clip, and before idle media appears after a clip.</li>
       <li data-lang="de"><strong>Autoplay-Pause</strong> — Sekunden Schwarz vor dem nächsten Autoplay-Clip und bevor das Pausenmedium erscheint.</li>
-      <li data-lang="en"><strong>Idle media</strong> — loop on the projector only while PROGRAM is armed. The button turns green while that media is on screen.</li>
-      <li data-lang="de"><strong>Pausenmedium</strong> — Schleife auf dem Beamer nur bei scharfem PROGRAMM. Die Taste wird grün, solange das Medium auf der Leinwand ist.</li>
+      <li data-lang="en"><strong>Idle media</strong> — loop on the projector only while PROGRAM is armed. The button turns green while that media is on screen. Settings → <strong>Use default Idle Media</strong> loads the file in <code>idle</code> at startup.</li>
+      <li data-lang="de"><strong>Pausenmedium</strong> — Schleife auf dem Beamer nur bei scharfem PROGRAMM. Die Taste wird grün, solange das Medium auf der Leinwand ist. Einstellungen → <strong>Standard-Pausenmedium verwenden</strong> lädt die Datei in <code>idle</code> beim Start.</li>
     </ul>
 
     <h2 id="preview">
@@ -366,10 +370,10 @@
       <figcaption data-lang="de">Scrub, Lautstärke (Lautstärke speichern schreibt sie in den Clip), In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
     </figure>
     <p data-lang="en">
-      Per clip you can set autoplay, played, audio track, and subtitle track (off unless you pick one). Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
+      Per clip you can set autoplay, loop (videos; ended with <strong>Resume</strong>), played, audio track, and subtitle track (off unless you pick one). Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
     </p>
     <p data-lang="de">
-      Pro Clip lassen sich Autoplay, Gespielt, Tonspur und Untertitel (aus, bis eine Spur gewählt wird) setzen. Die Programmwiedergabe nutzt die In- und Out-Marken. Verlauf und Uhren im Programm folgen immer diesen Marken, auch wenn auf dem Beamer ein Pausenmedium läuft.
+      Pro Clip lassen sich Autoplay, Loop (Videos; endet mit <strong>Weiter</strong>), Gespielt, Tonspur und Untertitel (aus, bis eine Spur gewählt wird) setzen. Die Programmwiedergabe nutzt die In- und Out-Marken. Verlauf und Uhren im Programm folgen immer diesen Marken, auch wenn auf dem Beamer ein Pausenmedium läuft.
     </p>
 
     <h2 id="beamer">
@@ -379,14 +383,14 @@
     <figure>
       <img data-lang="en" src="images/beamer-en.png" alt="Beamer status panel">
       <img data-lang="de" src="images/beamer-de.png" alt="Beamer-Status">
-      <figcaption data-lang="en">Aspect ratio, then the rates and resolutions the projector reports. The active mode is larger. Program values are blue, preview values yellow. Green <strong>OK</strong> when a listed rate can show the clip; red <strong>Mismatch</strong> only if none can.</figcaption>
-      <figcaption data-lang="de">Seitenverhältnis, danach die gemeldeten Frequenzen und Auflösungen. Der aktive Modus steht größer. Programmwerte sind blau, Vorschauwerte gelb. Grün <strong>OK</strong>, wenn eine gelistete Frequenz den Clip zeigen kann; rot <strong>Abweichung</strong> nur, wenn keine passt.</figcaption>
+      <figcaption data-lang="en">Device name from the projector EDID, then aspect ratio, rates and resolutions. The active mode is larger. Program values are blue, preview values yellow. Green <strong>OK</strong> when a listed rate can show the clip; red <strong>Mismatch</strong> only if none can.</figcaption>
+      <figcaption data-lang="de">Gerätename aus der Beamer-EDID, danach Seitenverhältnis, Frequenzen und Auflösungen. Der aktive Modus steht größer. Programmwerte sind blau, Vorschauwerte gelb. Grün <strong>OK</strong>, wenn eine gelistete Frequenz den Clip zeigen kann; rot <strong>Abweichung</strong> nur, wenn keine passt.</figcaption>
     </figure>
     <p data-lang="en">
-      The panel lists every refresh rate and every resolution the projector currently advertises. The mode that is <strong>on the projector now</strong> is drawn larger and bolder in that list. Values that belong to the <strong>program pointer</strong> are blue; values that belong to a clip selected for <strong>preview</strong> are yellow (the preview yellow of the playlist). A 30&nbsp;fps clip marks <strong>60p</strong> when 60&nbsp;Hz is in the list (twice the frame rate). Extra entries appear in blue or yellow only when the clip’s frame rate or resolution is not among the advertised modes.
+      The first line is the projector’s name from its EDID (the same identity as under Settings → Beamer output → EDID). Then the panel lists every refresh rate and every resolution the projector currently advertises. The mode that is <strong>on the projector now</strong> is drawn larger and bolder in that list. Values that belong to the <strong>program pointer</strong> are blue; values that belong to a clip selected for <strong>preview</strong> are yellow (the preview yellow of the playlist). A 30&nbsp;fps clip marks <strong>60p</strong> when 60&nbsp;Hz is in the list (twice the frame rate). Extra entries appear in blue or yellow only when the clip’s frame rate or resolution is not among the advertised modes.
     </p>
     <p data-lang="de">
-      Das Feld listet jede Frequenz und jede Auflösung, die der Beamer derzeit meldet. Der Modus, der <strong>gerade auf dem Beamer liegt</strong>, steht in dieser Liste größer und fett. Werte des <strong>Programmzeigers</strong> sind blau; Werte eines für die <strong>Vorschau</strong> gewählten Clips sind gelb (das Gelb der Playlist). Ein 30-fps-Clip markiert <strong>60p</strong>, wenn 60&nbsp;Hz in der Liste steht (zweifache Bildrate). Zusätzliche Einträge erscheinen nur blau oder gelb, wenn Bildrate oder Auflösung des Clips nicht unter den gemeldeten Modi sind.
+      Die erste Zeile ist der Gerätename aus der EDID des Beamers (dieselbe Identität wie unter Einstellungen → Beamerausgang → EDID). Danach listet das Feld jede Frequenz und jede Auflösung, die der Beamer derzeit meldet. Der Modus, der <strong>gerade auf dem Beamer liegt</strong>, steht in dieser Liste größer und fett. Werte des <strong>Programmzeigers</strong> sind blau; Werte eines für die <strong>Vorschau</strong> gewählten Clips sind gelb (das Gelb der Playlist). Ein 30-fps-Clip markiert <strong>60p</strong>, wenn 60&nbsp;Hz in der Liste steht (zweifache Bildrate). Zusätzliche Einträge erscheinen nur blau oder gelb, wenn Bildrate oder Auflösung des Clips nicht unter den gemeldeten Modi sind.
     </p>
     <p data-lang="en">
       <strong>OK</strong> / <strong>Mismatch</strong> compares the clip with the <em>capability list</em>, not with the rate that happens to be active. If 60&nbsp;Hz is listed, 30&nbsp;fps is OK even while the projector is still at 50&nbsp;Hz. Before a clip rolls, Cinema Player switches to a mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes.

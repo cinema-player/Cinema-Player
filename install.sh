@@ -12,6 +12,7 @@ APT_PACKAGES=(
   x11-xserver-utils
   xfonts-utils
   mutter-common-bin
+  edid-decode
   curl
   ca-certificates
 )

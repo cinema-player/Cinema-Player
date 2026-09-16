@@ -48,6 +48,7 @@ from cinema_player import (
     probe_media,
     refresh_entry_aspect,
     same_aspect_ratio,
+    session_display_name,
     session_is_wayland,
 )
 
@@ -57,6 +58,7 @@ FONT_LOGO = (FONT_FAMILY, 17, "bold")
 FONT_LOGO_LIGHT = (FONT_FAMILY, 17)
 FONT_BEAMER_PICK = (FONT_FAMILY, 13, "bold")
 FONT_TOOLTIP = (FONT_FAMILY, 11)
+FONT_EDID = ("DejaVu Sans Mono", 10)
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
 LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.png")
 BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
@@ -64,8 +66,25 @@ BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.
 BEAMER_TEST_ZOOM = -0.8
 ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
 TESTDATA_DIR = os.path.join(ROOT_DIR, "testdata")
+IDLE_DIR = os.path.join(ROOT_DIR, "idle")
 TRANSPORT_ICON_PX = 52
 DRAG_THRESHOLD = 12
+
+
+def default_idle_media_path():
+    """Return the first video or image in the project's idle folder, if any."""
+    if not os.path.isdir(IDLE_DIR):
+        return ""
+    try:
+        names = os.listdir(IDLE_DIR)
+    except OSError:
+        return ""
+    paths = [
+        os.path.join(IDLE_DIR, name)
+        for name in sorted(names)
+        if os.path.splitext(name)[1].lower() in VIDEO_EXTS | IMAGE_EXTS
+    ]
+    return paths[0] if paths else ""
 
 # Status colours keep their meaning in every design.
 COLOR_OFF = "#c62828"
@@ -889,6 +908,8 @@ class VideoPlayerGUI:
         self.idle_media_path = ""
         self.idle_showing = False
         self.beamer_test_active = False
+        self.edid_window = None
+        self.media_dirs_window = None
         self.idle_after_id = None
         self.autoplay_after_id = None
         self.still_after_id = None
@@ -906,6 +927,9 @@ class VideoPlayerGUI:
         self.last_import_dir = self.settings.get("last_import_dir") or ""
         if self.last_import_dir and not os.path.isdir(self.last_import_dir):
             self.last_import_dir = ""
+        self.media_directories = self._normalize_media_directories(
+            self.settings.get("media_directories", [])
+        )
         self.last_playlist_dir = self.settings.get("last_playlist_dir") or ""
         if self.last_playlist_dir and not os.path.isdir(self.last_playlist_dir):
             self.last_playlist_dir = ""
@@ -923,11 +947,15 @@ class VideoPlayerGUI:
         self.window_fullscreen = tk.BooleanVar(
             value=bool(self.settings.get("window_fullscreen", False))
         )
+        self.use_default_idle_media = tk.BooleanVar(
+            value=bool(self.settings.get("use_default_idle_media", False))
+        )
         self._windowed_geometry = None
         self._fullscreen_applied = False
         self.autoplay_delay = tk.StringVar(value="0")
         self.idle_media = tk.StringVar(value=t("idle_none"))
         self.autoplay_var = tk.BooleanVar(value=False)
+        self.loop_var = tk.BooleanVar(value=False)
         self.played_var = tk.BooleanVar(value=False)
         self.display_time = tk.StringVar(value="0")
         self.audio_var = tk.StringVar(value="--")
@@ -961,6 +989,8 @@ class VideoPlayerGUI:
         self._tick_meters()
         self.refresh_all()
         self._restore_last_playlist()
+        if self.use_default_idle_media.get():
+            self._apply_default_idle_media(show_error=False)
 
     def _warn_if_no_beamer_output(self):
         if self.output_manager.has_dedicated_beamer():
@@ -1012,7 +1042,9 @@ class VideoPlayerGUI:
                 plate, text="PLAYER", bg=LOGO_BG, fg=LOGO_ACCENT, font=FONT_LOGO_LIGHT,
             ).pack(side="left", padx=(7, 10), pady=4)
         tk.Label(
-            header, text=f"v{APP_VERSION}", bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_UI,
+            header,
+            text=f"v{APP_VERSION}  ·  {session_display_name()}",
+            bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_UI,
         ).pack(side="left", padx=(10, 0), pady=(0, 8), anchor="s")
 
     def _load_image(self, path):
@@ -1078,6 +1110,12 @@ class VideoPlayerGUI:
             darkcolor=COLOR_BUTTON,
         )
         style.map("Vertical.TScrollbar", background=[("active", COLOR_BUTTON_ACTIVE)])
+        style.configure(
+            "Horizontal.TScrollbar", background=COLOR_BUTTON, troughcolor=COLOR_BG,
+            arrowcolor=COLOR_TEXT, bordercolor=COLOR_BORDER, lightcolor=COLOR_BUTTON,
+            darkcolor=COLOR_BUTTON,
+        )
+        style.map("Horizontal.TScrollbar", background=[("active", COLOR_BUTTON_ACTIVE)])
 
     def toggle_theme(self):
         self.theme = apply_theme("dark" if self.theme == "light" else "light")
@@ -1223,6 +1261,8 @@ class VideoPlayerGUI:
         """Rebuild the window for the current design and re-embed the preview player."""
         self.preview_mpv.quit()
         self._close_menus()
+        self.edid_window = None
+        self.media_dirs_window = None
         for child in self.root.winfo_children():
             child.destroy()
         self.row_widgets = []
@@ -1516,7 +1556,7 @@ class VideoPlayerGUI:
         paused = playing and self.main_pause and self.blackout
         frozen = playing and self.main_pause and not self.blackout
         rolling = playing and not self.main_pause
-        clip_rolling = rolling and not self.still_waiting
+        clip_rolling = rolling and not self.still_waiting and not self._program_loop_active()
         armed = self.program_state == "PROGRAM"
         self._set_transport_active(self.btn_stop, False, enabled=self.program_state != "OFF")
         self._set_transport_active(self.btn_pause, paused, "preview", enabled=playing)
@@ -1767,6 +1807,11 @@ class VideoPlayerGUI:
                 pass
 
     def _fill_app_menu(self, menu):
+        menu.add_command(
+            label=t("media_directories"),
+            command=self.show_media_directories,
+        )
+        menu.add_separator()
         menu.add_checkbutton(
             label=t("window_fullscreen"),
             variable=self.window_fullscreen,
@@ -1791,6 +1836,11 @@ class VideoPlayerGUI:
         self._fill_beamer_output_menu(outputs)
         menu.add_cascade(label=t("beamer_output"), menu=outputs)
         menu.add_separator()
+        menu.add_checkbutton(
+            label=t("default_idle_media"),
+            variable=self.use_default_idle_media,
+            command=self._on_use_default_idle_media,
+        )
         menu.add_command(
             label=t("beamer_test"),
             command=self.show_beamer_test,
@@ -1818,15 +1868,17 @@ class VideoPlayerGUI:
         busy = self.program_state == "PLAYING"
         if not names:
             menu.add_command(label="--", state="disabled")
-            return
-        for name in names:
-            mark = "✔  " if name == current else "    "
-            menu.add_command(
-                label=f"{mark}{name}",
-                command=lambda chosen=name: self.apply_beamer_output(chosen),
-                state="disabled" if busy else "normal",
-                foreground=self._menu_check_fg() if name == current else COLOR_TEXT,
-            )
+        else:
+            for name in names:
+                mark = "✔  " if name == current else "    "
+                menu.add_command(
+                    label=f"{mark}{name}",
+                    command=lambda chosen=name: self.apply_beamer_output(chosen),
+                    state="disabled" if busy else "normal",
+                    foreground=self._menu_check_fg() if name == current else COLOR_TEXT,
+                )
+        menu.add_separator()
+        menu.add_command(label=t("edid"), command=self.show_edid)
 
     def _fill_playlist_menu(self, menu):
         menu.add_command(label=t("refresh_playlist"), command=self.check_playlist_files)
@@ -1917,6 +1969,16 @@ class VideoPlayerGUI:
         )
         self.beamer_ok.pack(side="right")
 
+        device = tk.Frame(panel, bg=COLOR_PANEL)
+        device.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(
+            device, text=t("beamer_device"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left")
+        self.beamer_device = tk.Label(
+            device, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
+        )
+        self.beamer_device.pack(side="left", padx=(8, 0), fill="x", expand=True)
+
         info = tk.Frame(panel, bg=COLOR_PANEL)
         info.pack(fill="x", padx=8, pady=(0, 4))
         tk.Label(
@@ -1972,6 +2034,9 @@ class VideoPlayerGUI:
         clip_settings = tk.Frame(footer, bg=COLOR_PANEL)
         clip_settings.pack(side="left")
         self.preview_clip_settings = clip_settings
+        self._checkbutton(
+            clip_settings, t("loop"), self.loop_var, self.apply_entry_settings, COLOR_PANEL,
+        ).pack(side="left", padx=(8, 0))
         self._checkbutton(
             clip_settings, t("played"), self.played_var, self.apply_entry_settings, COLOR_PANEL,
         ).pack(side="left", padx=(8, 0))
@@ -2312,13 +2377,18 @@ class VideoPlayerGUI:
         if entry.missing:
             widgets["autoplay"].config(text=t("missing_badge"), bg=bg, fg=COLOR_WARNING)
         else:
+            badges = []
+            if entry.autoplay:
+                badges.append(t("auto_badge"))
+            if entry.loop and not entry.is_image:
+                badges.append(t("loop_badge"))
             widgets["autoplay"].config(
-                text=t("auto_badge") if entry.autoplay else "",
+                text="\n".join(badges),
                 bg=bg, fg=fg if fg == COLOR_WHITE else ACCENT,
             )
 
     def apply_preview_layout(self, entry):
-        """Stills only need Autoplay and their display time; hide the clip controls."""
+        """Stills only need Autoplay and display time; Loop and clip controls stay hidden."""
         image = bool(entry and entry.is_image)
         if image:
             self.preview_controls.grid_remove()
@@ -2368,11 +2438,15 @@ class VideoPlayerGUI:
             self.preview_meta.config(text=t("length_empty"))
             self.audio_combo["values"] = ["--"]
             self.subtitle_combo["values"] = ["--"]
+            self.autoplay_var.set(False)
+            self.loop_var.set(False)
+            self.played_var.set(False)
             self._update_preview_bar()
             return
         if entry.missing:
             self.preview_meta.config(text=t("missing_file", path=entry.path))
             self.autoplay_var.set(entry.autoplay)
+            self.loop_var.set(bool(entry.loop) and not entry.is_image)
             self.played_var.set(entry.played)
             self._update_preview_bar()
             return
@@ -2390,6 +2464,7 @@ class VideoPlayerGUI:
                 )
             )
             self.autoplay_var.set(entry.autoplay)
+            self.loop_var.set(False)
             self.played_var.set(entry.played)
             self._update_preview_bar()
             return
@@ -2406,6 +2481,7 @@ class VideoPlayerGUI:
             )
         )
         self.autoplay_var.set(entry.autoplay)
+        self.loop_var.set(bool(entry.loop))
         self.played_var.set(entry.played)
         tracks = entry.audio_tracks or ["--"]
         self.audio_combo["values"] = tracks
@@ -2431,6 +2507,7 @@ class VideoPlayerGUI:
             self.beamer_ok.config(text="--", bg=COLOR_BADGE_IDLE)
             self.beamer_aspect.config(text="--", fg=COLOR_TEXT)
             self.beamer_clip_aspect.config(text="")
+            self._refresh_beamer_device_name()
             self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
             self.beamer_resolutions.set_choices(
                 t("beamer_resolutions", resolutions=""), [],
@@ -2543,7 +2620,16 @@ class VideoPlayerGUI:
             program_res,
             preview_res,
         )
+        self._refresh_beamer_device_name()
         self.refresh_beamer_outputs()
+
+    def _refresh_beamer_device_name(self):
+        name = ""
+        try:
+            name = self.output_manager.get_output_device_name()
+        except Exception:
+            name = ""
+        self.beamer_device.config(text=name or "--")
 
     def _beamer_capability_lists(self):
         output = self.output_manager.video_output or ""
@@ -2646,6 +2732,132 @@ class VideoPlayerGUI:
         if self.window_fullscreen.get():
             self._apply_window_fullscreen()
 
+    def show_edid(self):
+        """Show the projector's full EDID in a window on the control monitor."""
+        output = self.output_manager.video_output or self.beamer_output.get().strip()
+        if not output:
+            messagebox.showerror(t("edid"), t("edid_no_output"))
+            return
+        report = self.output_manager.edid_report(output)
+        if not report:
+            messagebox.showerror(t("edid"), t("edid_unavailable", output=output))
+            return
+        blocks = max(1, len(report["data"]) // 128)
+        body = "\n".join((
+            t("edid_output", output=report["output"]),
+            t("edid_source", source=report["source"]),
+            t("edid_size", bytes=len(report["data"]), blocks=blocks),
+            "",
+            report["decoded"],
+        ))
+        if self._edid_window_alive():
+            self._fill_edid_window(report["output"], body)
+            self.edid_window.deiconify()
+            self.edid_window.lift()
+            self.edid_window.focus_force()
+            return
+        window = tk.Toplevel(self.root)
+        window.title(t("edid_title", output=report["output"]))
+        window.configure(bg=COLOR_BG)
+        window.minsize(560, 400)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_edid_window)
+
+        holder = tk.Frame(window, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, padx=10, pady=10)
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+
+        text = tk.Text(
+            holder,
+            wrap="none",
+            font=FONT_EDID,
+            bg=COLOR_FIELD,
+            fg=COLOR_TEXT,
+            insertbackground=COLOR_TEXT,
+            selectbackground=COLOR_PROGRAM,
+            selectforeground=COLOR_WHITE,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=COLOR_BORDER,
+            padx=8,
+            pady=8,
+            undo=False,
+        )
+        yscroll = ttk.Scrollbar(holder, orient="vertical", command=text.yview)
+        xscroll = ttk.Scrollbar(holder, orient="horizontal", command=text.xview)
+        text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        text.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        text.bind("<Control-a>", self._select_all_text)
+        text.bind("<Control-A>", self._select_all_text)
+
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("edid_close"), command=self._close_edid_window, font=FONT_UI,
+        ).pack(side="right")
+
+        window._edid_text = text
+        self.edid_window = window
+        self._fill_edid_window(report["output"], body)
+        self._place_on_control_monitor(window, 820, 700)
+
+    def _edid_window_alive(self):
+        window = getattr(self, "edid_window", None)
+        if window is None:
+            return False
+        try:
+            return bool(window.winfo_exists())
+        except tk.TclError:
+            self.edid_window = None
+            return False
+
+    def _fill_edid_window(self, output, body):
+        window = self.edid_window
+        window.title(t("edid_title", output=output))
+        text = window._edid_text
+        text.configure(state="normal")
+        text.delete("1.0", "end")
+        text.insert("1.0", body)
+        text.mark_set("insert", "1.0")
+        text.configure(state="disabled")
+
+    @staticmethod
+    def _select_all_text(event):
+        event.widget.tag_add("sel", "1.0", "end")
+        return "break"
+
+    def _close_edid_window(self):
+        window = getattr(self, "edid_window", None)
+        self.edid_window = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def _place_on_control_monitor(self, window, width, height):
+        """Keep secondary windows on the control screen, never on the projector."""
+        geometry = self._control_fullscreen_geometry()
+        if geometry:
+            screen_w, screen_h, screen_x, screen_y = geometry
+            x = screen_x + max(24, (screen_w - width) // 2)
+            y = screen_y + max(24, (screen_h - height) // 2)
+        else:
+            try:
+                x = self.root.winfo_rootx() + 48
+                y = self.root.winfo_rooty() + 48
+            except tk.TclError:
+                x = y = 80
+        window.geometry(f"{width}x{height}+{x}+{y}")
+
     def _restart_main_output(self, blank=True):
         """Move the program window onto the newly chosen projector output."""
         if self.main_mpv.process:
@@ -2696,6 +2908,11 @@ class VideoPlayerGUI:
             state="disabled" if playing or missing else "normal",
         )
         menu.add_command(label=t("toggle_autoplay"), command=lambda: self.toggle_autoplay(index))
+        menu.add_command(
+            label=t("toggle_loop"),
+            command=lambda: self.toggle_loop(index),
+            state="disabled" if self.playlist[index].is_image else "normal",
+        )
         menu.add_command(
             label=t("relink_entry"), command=lambda: self.relink_entry(index),
             state="disabled" if playing and index == self.program_index else "normal",
@@ -2810,9 +3027,25 @@ class VideoPlayerGUI:
             return
         entry = self.playlist[index]
         entry.autoplay = not entry.autoplay
-        if index == self.preview_index:
+        if self.selected_entry() is entry:
             self.autoplay_var.set(entry.autoplay)
         self.repaint_playlist()
+
+    def toggle_loop(self, index):
+        if not 0 <= index < len(self.playlist):
+            return
+        entry = self.playlist[index]
+        if entry.is_image:
+            return
+        entry.loop = not entry.loop
+        if self.selected_entry() is entry:
+            self.loop_var.set(entry.loop)
+        if self.program_state == "PLAYING" and entry is self.current_entry():
+            self._apply_program_loop(entry)
+            if self.preview_live:
+                self._apply_program_loop(entry, self.preview_mpv)
+        self.repaint_playlist()
+        self.refresh_transport()
 
     def relink_entry(self, index):
         """Point this playlist row at a new file and keep cue/volume settings."""
@@ -2825,8 +3058,10 @@ class VideoPlayerGUI:
         directory = os.path.dirname(entry.path)
         if directory and os.path.isdir(directory):
             dialog_options["initialdir"] = directory
-        elif self.last_import_dir:
-            dialog_options["initialdir"] = self.last_import_dir
+        else:
+            start = self._preferred_import_dir()
+            if start:
+                dialog_options["initialdir"] = start
         if entry.filename:
             dialog_options["initialfile"] = entry.filename
         path = filedialog.askopenfilename(
@@ -2845,6 +3080,7 @@ class VideoPlayerGUI:
             messagebox.showerror(t("import_error"), f"{os.path.basename(path)}\n{exc}")
             return
         probed.autoplay = entry.autoplay
+        probed.loop = bool(entry.loop) and not probed.is_image
         probed.played = entry.played
         probed.volume = clamp_volume(entry.volume)
         probed.display_time = entry.display_time
@@ -2996,6 +3232,207 @@ class VideoPlayerGUI:
         except OSError:
             pass
 
+    @staticmethod
+    def _normalize_media_directories(paths):
+        seen = set()
+        result = []
+        if not isinstance(paths, list):
+            return result
+        for raw in paths:
+            if not isinstance(raw, str):
+                continue
+            path = os.path.abspath(os.path.expanduser(raw.strip()))
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            result.append(path)
+        return result
+
+    def _save_media_directories(self):
+        self.media_directories = self._normalize_media_directories(self.media_directories)
+        self.settings["media_directories"] = list(self.media_directories)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+
+    def _existing_media_directories(self):
+        return [path for path in self.media_directories if os.path.isdir(path)]
+
+    def _media_directory_for_path(self, path):
+        if not path:
+            return ""
+        abs_path = os.path.abspath(path)
+        match = ""
+        for folder in self._existing_media_directories():
+            try:
+                if os.path.commonpath([abs_path, folder]) == folder and len(folder) >= len(match):
+                    match = folder
+            except ValueError:
+                continue
+        return match
+
+    def _preferred_import_dir(self):
+        existing = self._existing_media_directories()
+        last = self.last_import_dir
+        if last and os.path.isdir(last):
+            if self._media_directory_for_path(last) or not existing:
+                return last
+        if existing:
+            return existing[0]
+        return last if last and os.path.isdir(last) else ""
+
+    def _media_filetypes(self):
+        return [
+            (t("media_files"), " ".join(f"*{ext}" for ext in sorted(VIDEO_EXTS | IMAGE_EXTS))),
+            (t("all_files"), "*.*"),
+        ]
+
+    def _media_paths_in_directory(self, directory):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return []
+        return [
+            os.path.join(directory, name)
+            for name in sorted(names)
+            if os.path.splitext(name)[1].lower() in VIDEO_EXTS | IMAGE_EXTS
+        ]
+
+    def _styled_listbox(self, parent):
+        return tk.Listbox(
+            parent,
+            font=FONT_UI,
+            bg=COLOR_FIELD,
+            fg=COLOR_TEXT,
+            selectbackground=COLOR_PROGRAM,
+            selectforeground=COLOR_WHITE,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=COLOR_BORDER,
+            activestyle="none",
+            exportselection=False,
+        )
+
+    def show_media_directories(self):
+        """Edit the saved media folders used when importing into the playlist."""
+        if self._media_dirs_window_alive():
+            self.media_dirs_window.deiconify()
+            self.media_dirs_window.lift()
+            self.media_dirs_window.focus_force()
+            return
+        window = tk.Toplevel(self.root)
+        window.title(t("media_directories"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(520, 280)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_media_dirs_window)
+
+        tk.Label(
+            window, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=620, justify="left",
+        ).pack(fill="x", padx=10, pady=(10, 6))
+
+        holder = tk.Frame(window, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+
+        listbox = self._styled_listbox(holder)
+        scroll = ttk.Scrollbar(holder, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("media_directories_close"),
+            command=self._close_media_dirs_window, font=FONT_UI,
+        ).pack(side="right")
+        tk.Button(
+            buttons, text=t("media_directories_remove"),
+            command=lambda: self._remove_media_directory(listbox), font=FONT_UI,
+        ).pack(side="right", padx=(0, 8))
+        tk.Button(
+            buttons, text=t("media_directories_add"),
+            command=lambda: self._add_media_directory(window, listbox), font=FONT_UI,
+        ).pack(side="right", padx=(0, 8))
+
+        window._listbox = listbox
+        self.media_dirs_window = window
+        self._refresh_media_directory_list(listbox)
+        self._place_on_control_monitor(window, 680, 360)
+
+    def _media_dirs_window_alive(self):
+        window = getattr(self, "media_dirs_window", None)
+        if window is None:
+            return False
+        try:
+            return bool(window.winfo_exists())
+        except tk.TclError:
+            self.media_dirs_window = None
+            return False
+
+    def _media_directory_label(self, path):
+        if os.path.isdir(path):
+            return path
+        return f"{path}  ({t('media_directories_missing')})"
+
+    def _refresh_media_directory_list(self, listbox, select_path=None):
+        current = select_path
+        if current is None:
+            selection = listbox.curselection()
+            if selection:
+                current = self.media_directories[selection[0]]
+        listbox.delete(0, "end")
+        for path in self.media_directories:
+            listbox.insert("end", self._media_directory_label(path))
+        if current in self.media_directories:
+            index = self.media_directories.index(current)
+            listbox.selection_set(index)
+            listbox.see(index)
+
+    def _add_media_directory(self, window, listbox):
+        options = {"parent": window, "title": t("media_directories_add")}
+        start = self._preferred_import_dir()
+        if start:
+            options["initialdir"] = start
+        path = filedialog.askdirectory(**options)
+        if not path:
+            return
+        path = os.path.abspath(path)
+        if path not in self.media_directories:
+            self.media_directories.append(path)
+            self._save_media_directories()
+        self._refresh_media_directory_list(listbox, select_path=path)
+
+    def _remove_media_directory(self, listbox):
+        selection = listbox.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        del self.media_directories[index]
+        self._save_media_directories()
+        next_path = ""
+        if self.media_directories:
+            next_path = self.media_directories[min(index, len(self.media_directories) - 1)]
+        self._refresh_media_directory_list(listbox, select_path=next_path)
+
+    def _close_media_dirs_window(self):
+        window = getattr(self, "media_dirs_window", None)
+        self.media_dirs_window = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
     def remember_playlist_dir(self, path):
         directory = path if os.path.isdir(path) else os.path.dirname(path)
         if not directory or not os.path.isdir(directory):
@@ -3025,31 +3462,148 @@ class VideoPlayerGUI:
         return options
 
     def import_media(self):
-        dialog_options = {}
-        if self.last_import_dir:
-            dialog_options["initialdir"] = self.last_import_dir
+        directories = self._existing_media_directories()
+        if directories:
+            choice = self._choose_import_action(directories)
+            if not choice:
+                return
+            mode, directory = choice
+            if mode == "folder":
+                self._import_directory(directory)
+                return
+            if mode == "other":
+                self._import_files_or_directory(self.last_import_dir)
+                return
+            self._import_files_or_directory(directory, folder_fallback=False)
+            return
+        self._import_files_or_directory(self._preferred_import_dir())
+
+    def _choose_import_action(self, directories):
+        """Let the operator pick a saved media folder, or another location."""
+        result = {"choice": None}
+        window = tk.Toplevel(self.root)
+        window.title(t("media_directories_choose"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(480, 240)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+
+        tk.Label(
+            window, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=560, justify="left",
+        ).pack(fill="x", padx=10, pady=(10, 6))
+
+        holder = tk.Frame(window, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+
+        listbox = self._styled_listbox(holder)
+        scroll = ttk.Scrollbar(holder, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        for path in directories:
+            listbox.insert("end", path)
+        selected = self._media_directory_for_path(self.last_import_dir)
+        if selected in directories:
+            index = directories.index(selected)
+        else:
+            index = 0
+        listbox.selection_set(index)
+        listbox.see(index)
+        listbox.focus_set()
+
+        def finish(mode, directory=""):
+            result["choice"] = (mode, directory)
+            window.destroy()
+
+        def selected_directory():
+            selection = listbox.curselection()
+            if not selection:
+                return ""
+            return directories[selection[0]]
+
+        def import_files(_event=None):
+            directory = selected_directory()
+            if directory:
+                finish("files", directory)
+
+        def import_folder():
+            directory = selected_directory()
+            if directory:
+                finish("folder", directory)
+
+        def cancel():
+            result["choice"] = None
+            window.destroy()
+
+        listbox.bind("<Double-Button-1>", import_files)
+        listbox.bind("<Return>", import_files)
+        window.bind("<Escape>", lambda _event: cancel())
+        window.protocol("WM_DELETE_WINDOW", cancel)
+
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("media_directories_import_files"),
+            command=import_files, font=FONT_UI,
+        ).pack(side="left")
+        tk.Button(
+            buttons, text=t("media_directories_import_folder"),
+            command=import_folder, font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("media_directories_other"),
+            command=lambda: finish("other"), font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("media_directories_close"),
+            command=cancel, font=FONT_UI,
+        ).pack(side="right")
+
+        self._place_on_control_monitor(window, 620, 320)
+        window.grab_set()
+        self.root.wait_window(window)
+        return result["choice"]
+
+    def _import_dialog_options(self, directory):
+        options = {"parent": self.root}
+        if directory and os.path.isdir(directory):
+            options["initialdir"] = directory
+        return options
+
+    def _import_files_or_directory(self, directory, folder_fallback=True):
+        dialog_options = self._import_dialog_options(directory)
         paths = filedialog.askopenfilenames(
             title=t("import_media"),
-            filetypes=[
-                (t("media_files"), " ".join(f"*{ext}" for ext in sorted(VIDEO_EXTS | IMAGE_EXTS))),
-                (t("all_files"), "*.*"),
-            ],
+            filetypes=self._media_filetypes(),
             **dialog_options,
         )
-        if not paths:
-            directory = filedialog.askdirectory(
-                title=t("import_directory"),
-                **dialog_options,
-            )
-            if directory:
-                self.remember_import_dir(directory)
-                paths = [
-                    os.path.join(directory, name)
-                    for name in sorted(os.listdir(directory))
-                    if os.path.splitext(name)[1].lower() in VIDEO_EXTS | IMAGE_EXTS
-                ]
-        elif paths:
+        if paths:
             self.remember_import_dir(paths[0])
+            self._add_imported_paths(paths)
+            return
+        if not folder_fallback:
+            return
+        folder = filedialog.askdirectory(
+            title=t("import_directory"),
+            **dialog_options,
+        )
+        if folder:
+            self._import_directory(folder)
+
+    def _import_directory(self, directory):
+        if not directory or not os.path.isdir(directory):
+            return
+        self.remember_import_dir(directory)
+        self._add_imported_paths(self._media_paths_in_directory(directory))
+
+    def _add_imported_paths(self, paths):
         for path in paths:
             self.add_media(path)
         if self.playlist and self.preview_index is None:
@@ -3168,6 +3722,11 @@ class VideoPlayerGUI:
         self.idle_media.set(
             os.path.basename(self.idle_media_path) if self.idle_media_path else t("idle_none")
         )
+        if self.use_default_idle_media.get():
+            default_path = default_idle_media_path()
+            if default_path:
+                self.idle_media_path = default_path
+                self.idle_media.set(os.path.basename(default_path))
         if "autosave_on_program_change" in data:
             self.autosave_on_program_change.set(bool(data["autosave_on_program_change"]))
         self.playlist_path = path
@@ -3268,10 +3827,48 @@ class VideoPlayerGUI:
         if self.last_import_dir:
             dialog_options["initialdir"] = self.last_import_dir
         path = filedialog.askopenfilename(title=t("idle_screen_media"), **dialog_options)
-        self.idle_media.set(os.path.basename(path) if path else t("idle_none"))
+        if not path:
+            return
+        self.remember_import_dir(path)
+        self._save_use_default_idle_media(False)
+        self._set_idle_media(path)
+
+    def _on_use_default_idle_media(self):
+        enabled = bool(self.use_default_idle_media.get())
+        if enabled:
+            if not self._apply_default_idle_media(show_error=True):
+                self._save_use_default_idle_media(False)
+                return
+        else:
+            self._set_idle_media("")
+        self._save_use_default_idle_media(enabled)
+
+    def _save_use_default_idle_media(self, enabled):
+        self.use_default_idle_media.set(bool(enabled))
+        self.settings["use_default_idle_media"] = bool(enabled)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+
+    def _apply_default_idle_media(self, show_error=False):
+        """Use the first video or image in the project's idle folder."""
+        path = default_idle_media_path()
+        if not path:
+            if show_error:
+                message = (
+                    t("default_idle_media_missing")
+                    if not os.path.isdir(IDLE_DIR)
+                    else t("default_idle_media_empty")
+                )
+                messagebox.showerror(t("default_idle_media"), message)
+            return False
+        self._set_idle_media(path)
+        return True
+
+    def _set_idle_media(self, path):
         self.idle_media_path = path or ""
-        if path:
-            self.remember_import_dir(path)
+        self.idle_media.set(os.path.basename(path) if path else t("idle_none"))
         if self.program_state != "PLAYING":
             self.blank_output()
 
@@ -3282,12 +3879,14 @@ class VideoPlayerGUI:
         entry.autoplay = self.autoplay_var.get()
         entry.played = self.played_var.get()
         if entry.is_image:
+            entry.loop = False
             try:
                 entry.display_time = max(0.0, float(self.display_time.get() or 0))
             except ValueError:
                 pass
             self.display_time.set(format_seconds(entry.display_time))
         else:
+            entry.loop = self.loop_var.get()
             entry.audio_track = self.audio_var.get()
             entry.subtitle_track = self.subtitle_var.get()
             if self.preview_mpv.has_file(entry.path):
@@ -3295,10 +3894,19 @@ class VideoPlayerGUI:
             if (
                 self.program_state == "PLAYING"
                 and entry is self.current_entry()
+                and self.main_mpv.process
+            ):
+                self._apply_program_loop(entry)
+                if self.preview_live:
+                    self._apply_program_loop(entry, self.preview_mpv)
+            if (
+                self.program_state == "PLAYING"
+                and entry is self.current_entry()
                 and self.main_mpv.has_file(entry.path)
             ):
                 self.apply_tracks(entry, self.main_mpv)
         self.repaint_playlist()
+        self.refresh_transport()
 
     def reset_played(self):
         if not messagebox.askyesno(t("reset_played_title"), t("reset_played_message")):
@@ -3405,6 +4013,7 @@ class VideoPlayerGUI:
             self._reset_program_meter()
             return
         self.main_mpv.stop()
+        self.main_mpv.set_ab_loop(None, None)
         self.main_mpv.set_loop_file(False)
         self.main_mpv.set_vid(True)
         self.current_file = None
@@ -3430,6 +4039,7 @@ class VideoPlayerGUI:
             return
         if self.beamer_test_active:
             return
+        self.main_mpv.set_ab_loop(None, None)
         self.main_mpv.set_loop_file(True)
         self.main_mpv.set_volume(100)
         self.main_mpv.load_file(path, play=True)
@@ -3513,13 +4123,17 @@ class VideoPlayerGUI:
             start = entry.in_point
         if not follow_live and not play and self.preview_mpv.has_file(entry.path):
             return
-        end = entry.out_point if follow_live else None
+        end = entry.out_point if follow_live and not (entry.loop and not entry.is_image) else None
         self.preview_mpv.load_file(
             entry.path,
             start=start,
             end=end,
             play=play,
         )
+        if follow_live:
+            self._apply_program_loop(entry, self.preview_mpv)
+        else:
+            self._apply_program_loop(None, self.preview_mpv)
 
     def start_or_resume(self):
         if not self.playlist:
@@ -3538,6 +4152,10 @@ class VideoPlayerGUI:
             return
         if self.program_state == "PLAYING" and self.still_waiting:
             # A still without display time ends when the operator resumes.
+            self.on_clip_finished()
+            return
+        if self.program_state == "PLAYING" and self._program_loop_active():
+            # A looping clip stays on air until Resume ends the loop.
             self.on_clip_finished()
             return
         if self.program_state == "PLAYING" and self.main_pause:
@@ -3612,13 +4230,14 @@ class VideoPlayerGUI:
                 "set_property", "geometry", self.output_manager.get_mpv_geometry()
             )
 
-        self.main_mpv.set_loop_file(False)
+        looping = bool(entry.loop and not entry.is_image)
+        self._apply_program_loop(entry)
         self.main_mpv.set_vid(True)
         self.idle_showing = False
         self.main_mpv.load_file(
             entry.path,
             start=entry.in_point,
-            end=entry.out_point,
+            end=None if looping else entry.out_point,
             play=True,
         )
         if session_is_wayland():
@@ -3637,6 +4256,37 @@ class VideoPlayerGUI:
         if self.preview_live:
             self.show_preview_clip(entry, follow_live=True)
         self.refresh_all()
+
+    def _program_loop_active(self):
+        """True while a looping video is on the projector and waiting for Resume."""
+        entry = self.current_entry()
+        return bool(
+            self.program_state == "PLAYING"
+            and not self.idle_showing
+            and not self.still_active()
+            and entry
+            and entry.loop
+            and not entry.is_image
+        )
+
+    def _apply_program_loop(self, entry, controller=None):
+        """Loop the current video until Resume; honour In/Out as an A-B range."""
+        controller = controller or self.main_mpv
+        if not controller or not controller.process:
+            return
+        looping = bool(entry and entry.loop and not entry.is_image)
+        if looping:
+            start = 0.0 if entry.in_point is None else float(entry.in_point)
+            controller.set_ab_loop(start, entry.out_point)
+            controller.set_loop_file(True)
+            controller.command("set_property", "end", "no")
+            return
+        controller.set_ab_loop(None, None)
+        controller.set_loop_file(False)
+        if entry and entry.out_point is not None:
+            controller.command("set_property", "end", float(entry.out_point))
+        else:
+            controller.command("set_property", "end", "no")
 
     def start_still_timer(self, entry):
         """A still runs on a timer; without a display time it waits for Resume."""
@@ -3927,6 +4577,7 @@ class VideoPlayerGUI:
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
+                self._apply_program_loop(entry, mpv)
                 if self.program_state == "PLAYING":
                     mpv.set_volume(clamp_volume(entry.volume))
             self.main_pause = False
@@ -3937,6 +4588,7 @@ class VideoPlayerGUI:
             if (
                 message.get("reason") == "eof"
                 and not self.still_active()
+                and not self._program_loop_active()
                 and self.program_state == "PLAYING"
                 and not self.idle_showing
             ):
@@ -3966,7 +4618,13 @@ class VideoPlayerGUI:
                 and entry.out_point is not None
                 and self.position >= entry.out_point - 0.04
             ):
-                self.root.after(0, self.on_clip_finished)
+                if self._program_loop_active():
+                    start = 0.0 if entry.in_point is None else entry.in_point
+                    mpv.set_position(start)
+                    if self.preview_live:
+                        self.preview_mpv.set_position(start)
+                else:
+                    self.root.after(0, self.on_clip_finished)
         elif name == "duration" and value is not None:
             try:
                 duration = float(value)
@@ -3979,6 +4637,7 @@ class VideoPlayerGUI:
         elif name == "eof-reached" and value:
             if (
                 not self.beamer_test_active
+                and not self._program_loop_active()
                 and self.program_state == "PLAYING"
                 and not self.idle_showing
             ):
@@ -3994,6 +4653,8 @@ class VideoPlayerGUI:
             entry = self.selected_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
+                if self.preview_live and self.program_state == "PLAYING":
+                    self._apply_program_loop(entry, mpv)
             return
         if event != "property-change":
             return

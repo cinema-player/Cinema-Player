@@ -66,6 +66,11 @@ def session_is_wayland():
     return bool(os.environ.get("WAYLAND_DISPLAY"))
 
 
+def session_display_name():
+    """X11 or Wayland as used for projector output."""
+    return "Wayland" if session_is_wayland() else "X11"
+
+
 def mpv_gpu_context_help(path):
     try:
         result = subprocess.run(
@@ -240,6 +245,7 @@ class PlaylistEntry:
     pixel_aspect: str = "--"
     resolution_label: str = ""
     autoplay: bool = False
+    loop: bool = False
     audio_tracks: list = field(default_factory=list)
     subtitle_tracks: list = field(default_factory=list)
     audio_track: str = "--"
@@ -264,6 +270,8 @@ class PlaylistEntry:
         if not self.filename:
             self.filename = os.path.basename(self.path)
         self.volume = clamp_volume(self.volume)
+        if self.is_image:
+            self.loop = False
 
     @classmethod
     def from_dict(cls, data):
@@ -909,7 +917,7 @@ def parse_gdctl_show(text):
             continue
 
         if section == "monitors":
-            found = re.match(r"^Monitor (\S+)\s+\(", line)
+            found = re.match(r"^Monitor (\S+)(?:\s+\((.*)\))?\s*$", line)
             if found:
                 finish_mode()
                 monitor = found.group(1)
@@ -917,6 +925,9 @@ def parse_gdctl_show(text):
                     state.order.append(monitor)
                     state.modes.setdefault(monitor, [])
                     state.identity.setdefault(monitor, {})
+                pretty = (found.group(2) or "").strip()
+                if pretty:
+                    state.identity.setdefault(monitor, {})["pretty"] = pretty
                 continue
             if monitor and line.startswith("Vendor:"):
                 state.identity.setdefault(monitor, {})["vendor"] = line.split(":", 1)[1].strip()
@@ -985,6 +996,332 @@ def parse_gdctl_show(text):
     return state
 
 
+DRM_DIR = "/sys/class/drm"
+
+# Established Timings I & II, bit 7 of byte 35 down to bit 0 of byte 37.
+_ESTABLISHED_TIMINGS = (
+    (35, 7, "720x400 @ 70 Hz"),
+    (35, 6, "720x400 @ 88 Hz"),
+    (35, 5, "640x480 @ 60 Hz"),
+    (35, 4, "640x480 @ 67 Hz"),
+    (35, 3, "640x480 @ 72 Hz"),
+    (35, 2, "640x480 @ 75 Hz"),
+    (35, 1, "800x600 @ 56 Hz"),
+    (35, 0, "800x600 @ 60 Hz"),
+    (36, 7, "800x600 @ 72 Hz"),
+    (36, 6, "800x600 @ 75 Hz"),
+    (36, 5, "832x624 @ 75 Hz"),
+    (36, 4, "1024x768 @ 87 Hz (interlaced)"),
+    (36, 3, "1024x768 @ 60 Hz"),
+    (36, 2, "1024x768 @ 70 Hz"),
+    (36, 1, "1024x768 @ 75 Hz"),
+    (36, 0, "1280x1024 @ 75 Hz"),
+    (37, 7, "1152x870 @ 75 Hz"),
+)
+
+
+def canonicalize_connector(name):
+    """Map xrandr/gdctl/sysfs names onto one HDMI-A-1 / DP-1 style key."""
+    text = re.sub(r"^card\d+-", "", (name or "").strip(), flags=re.I)
+    text = text.upper().replace("_", "-")
+    text = text.replace("DISPLAY-PORT", "DP").replace("DISPLAYPORT", "DP")
+    match = re.match(r"^HDMI-(\d+)$", text)
+    if match:
+        return f"HDMI-A-{match.group(1)}"
+    return text
+
+
+def _connector_index(name):
+    match = re.search(r"-(\d+)$", name or "")
+    return int(match.group(1)) if match else None
+
+
+def _connector_family(name):
+    return re.sub(r"-\d+$", "", name or "")
+
+
+def iter_drm_edid_paths():
+    try:
+        entries = os.listdir(DRM_DIR)
+    except OSError:
+        return
+    for entry in sorted(entries):
+        path = os.path.join(DRM_DIR, entry, "edid")
+        if entry.startswith("card") and os.path.isfile(path):
+            yield entry, path
+
+
+def read_edid_file(path):
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        return b""
+    return data or b""
+
+
+def find_sysfs_edid(output_name):
+    """Return (edid_bytes, sysfs_path) for a connector, or (None, None)."""
+    wanted = canonicalize_connector(output_name)
+    if not wanted:
+        return None, None
+    candidates = []
+    for entry, path in iter_drm_edid_paths():
+        data = read_edid_file(path)
+        if data:
+            candidates.append((canonicalize_connector(entry), path, data))
+    for canon, path, data in candidates:
+        if canon == wanted:
+            return data, path
+    family = _connector_family(wanted)
+    same = [
+        item for item in candidates
+        if item[0] == family or item[0].startswith(family + "-")
+    ]
+    wanted_num = _connector_index(wanted)
+    if wanted_num is not None:
+        for canon, path, data in same:
+            if _connector_index(canon) == wanted_num:
+                return data, path
+        nums = [n for n in (_connector_index(item[0]) for item in same) if n is not None]
+        if nums and wanted_num not in nums and min(nums) == 1 and wanted_num + 1 in nums:
+            target = wanted_num + 1
+            for canon, path, data in same:
+                if _connector_index(canon) == target:
+                    return data, path
+    if len(same) == 1:
+        return same[0][2], same[0][1]
+    return None, None
+
+
+def parse_xrandr_edid(text, output_name):
+    """Extract the EDID hex dump for one output from `xrandr --verbose`."""
+    if not text or not output_name:
+        return None
+    collecting = False
+    chunks = []
+    inside = False
+    for line in text.splitlines():
+        if re.match(r"^\S+\s+(dis)?connected", line):
+            if chunks:
+                break
+            inside = line.startswith(output_name + " ")
+            collecting = False
+            chunks = []
+            continue
+        if not inside:
+            continue
+        if re.match(r"^\s*EDID:\s*$", line, re.I):
+            collecting = True
+            continue
+        if collecting:
+            payload = re.sub(r"\s+", "", line.strip())
+            if payload and re.fullmatch(r"[0-9a-fA-F]+", payload) and len(payload) % 2 == 0:
+                chunks.append(payload)
+                continue
+            collecting = False
+            if chunks:
+                break
+    if not chunks:
+        return None
+    try:
+        return bytes.fromhex("".join(chunks))
+    except ValueError:
+        return None
+
+
+def format_edid_hex(data):
+    lines = []
+    for offset in range(0, len(data), 16):
+        chunk = data[offset:offset + 16]
+        lines.append(" ".join(f"{byte:02x}" for byte in chunk))
+    return "\n".join(lines)
+
+
+def _edid_manufacturer(data):
+    word = (data[8] << 8) | data[9]
+    letters = []
+    for shift in (10, 5, 0):
+        letters.append(chr(((word >> shift) & 0x1F) + 64))
+    return "".join(letters)
+
+
+def _edid_descriptor_text(block):
+    raw = bytes(block[5:18]).split(b"\n")[0].split(b"\x00")[0]
+    return raw.decode("latin-1", errors="replace").strip()
+
+
+def parse_edid_identity(data):
+    """Manufacturer ID and monitor name from the base EDID block."""
+    identity = {"manufacturer": "", "name": ""}
+    if not data or len(data) < 128 or data[0:8] != bytes.fromhex("00ffffffffffff00"):
+        return identity
+    try:
+        identity["manufacturer"] = _edid_manufacturer(data)
+    except (IndexError, ValueError):
+        pass
+    extra = ""
+    for offset in (54, 72, 90, 108):
+        block = data[offset:offset + 18]
+        if len(block) < 18 or block[0] or block[1] or block[2]:
+            continue
+        text = _edid_descriptor_text(block)
+        if not text:
+            continue
+        if block[3] == 0xFC:
+            identity["name"] = text
+        elif block[3] == 0xFE and not extra:
+            extra = text
+    if not identity["name"]:
+        identity["name"] = extra
+    return identity
+
+
+def format_output_device_name(edid_identity=None, monitor_identity=None):
+    """Best human-readable name for the display on a connector."""
+    edid_identity = edid_identity or {}
+    monitor_identity = monitor_identity or {}
+    for value in (
+        edid_identity.get("name"),
+        monitor_identity.get("product"),
+        monitor_identity.get("display_name"),
+        monitor_identity.get("pretty"),
+        edid_identity.get("manufacturer"),
+        monitor_identity.get("vendor"),
+    ):
+        text = " ".join(str(value or "").split())
+        if text:
+            return text
+    return ""
+
+
+def _edid_dtd_summary(block):
+    if len(block) < 18 or all(byte == 0 for byte in block):
+        return None
+    if block[0] == 0 and block[1] == 0 and block[2] == 0:
+        kind = block[3]
+        text = _edid_descriptor_text(block)
+        labels = {
+            0xFF: "Display serial",
+            0xFE: "Alphanumeric data",
+            0xFC: "Display name",
+            0xFD: "Display range limits",
+            0xFB: "Color point",
+            0xFA: "Standard timing IDs",
+        }
+        label = labels.get(kind, f"Descriptor 0x{kind:02X}")
+        if kind == 0xFD or not text:
+            return label
+        return f"{label}: {text}"
+    clock = (block[0] | (block[1] << 8)) / 100.0
+    h_active = block[2] | ((block[4] & 0xF0) << 4)
+    v_active = block[5] | ((block[7] & 0xF0) << 4)
+    h_blank = block[3] | ((block[4] & 0x0F) << 8)
+    v_blank = block[6] | ((block[7] & 0x0F) << 8)
+    h_total = h_active + h_blank
+    v_total = v_active + v_blank
+    refresh = (clock * 1_000_000 / (h_total * v_total)) if h_total and v_total else 0
+    return (
+        f"{h_active}x{v_active} @ {refresh:.3f} Hz, "
+        f"pixel clock {clock:.3f} MHz"
+    )
+
+
+def format_edid_fallback(data):
+    """Decode the base block (and CTA VICs) when edid-decode is missing."""
+    lines = ["edid-decode was not found; showing a built-in summary.", "", "Hex dump:", format_edid_hex(data)]
+    if len(data) < 128 or data[0:8] != bytes.fromhex("00ffffffffffff00"):
+        lines.append("")
+        lines.append("The blob does not look like a valid EDID header.")
+        return "\n".join(lines)
+    lines.extend(["", "Block 0, Base EDID:"])
+    lines.append(f"  Version: {data[18]}.{data[19]}")
+    lines.append(f"  Manufacturer: {_edid_manufacturer(data)}")
+    lines.append(f"  Model: {data[10] | (data[11] << 8)}")
+    serial = data[12] | (data[13] << 8) | (data[14] << 16) | (data[15] << 24)
+    lines.append(f"  Serial: {serial}")
+    week, year = data[16], 1990 + data[17]
+    if week in (0, 255):
+        lines.append(f"  Year: {year}")
+    else:
+        lines.append(f"  Made in: week {week} of {year}")
+    width_cm, height_cm = data[21], data[22]
+    if width_cm and height_cm:
+        lines.append(f"  Image size: {width_cm} cm x {height_cm} cm")
+    digital = bool(data[20] & 0x80)
+    lines.append(f"  {'Digital' if digital else 'Analog'} display")
+    established = [
+        label for offset, bit, label in _ESTABLISHED_TIMINGS
+        if data[offset] & (1 << bit)
+    ]
+    if established:
+        lines.append("  Established timings:")
+        lines.extend(f"    {item}" for item in established)
+    lines.append("  Standard timings:")
+    for index in range(8):
+        horizontal, extra = data[38 + index * 2], data[39 + index * 2]
+        if horizontal in (0x00, 0x01) or extra == 0x01:
+            continue
+        width = (horizontal + 31) * 8
+        ratio = {0: (16, 10), 1: (4, 3), 2: (5, 4), 3: (16, 9)}.get(extra >> 6, (16, 10))
+        height = width * ratio[1] // ratio[0]
+        rate = (extra & 0x3F) + 60
+        lines.append(f"    {width}x{height} @ {rate} Hz")
+    lines.append("  Detailed descriptors:")
+    for offset in (54, 72, 90, 108):
+        summary = _edid_dtd_summary(data[offset:offset + 18])
+        if summary:
+            lines.append(f"    {summary}")
+    extensions = data[126]
+    lines.append(f"  Extension blocks: {extensions}")
+    for index in range(extensions):
+        start = 128 * (index + 1)
+        block = data[start:start + 128]
+        if len(block) < 128:
+            break
+        if block[0] != 0x02:
+            lines.append(f"  Extension {index + 1}: tag 0x{block[0]:02X}")
+            continue
+        lines.append(f"  CTA-861 extension {index + 1}, revision {block[1]}")
+        dtd_offset = block[2]
+        offset = 4
+        while 4 <= offset < dtd_offset:
+            length = block[offset] & 0x1F
+            tag = block[offset] >> 5
+            payload = block[offset + 1:offset + 1 + length]
+            offset += 1 + length
+            if tag == 2:
+                vics = ", ".join(str(byte & 0x7F) for byte in payload)
+                lines.append(f"    Video VICs: {vics}")
+            elif tag == 1:
+                lines.append("    Audio data block")
+            elif tag == 3 and payload[:3] == b"\x03\x0c\x00":
+                lines.append("    HDMI vendor block")
+    return "\n".join(lines)
+
+
+def decode_edid(data):
+    """Full EDID dump via edid-decode, with a local summary as fallback."""
+    decoder = shutil.which("edid-decode")
+    if decoder:
+        try:
+            result = subprocess.run(
+                [decoder, "-"],
+                input=data,
+                capture_output=True,
+                timeout=8,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        if result is not None:
+            text = result.stdout.decode("utf-8", errors="replace").strip()
+            if not text:
+                text = result.stderr.decode("utf-8", errors="replace").strip()
+            if text:
+                return text
+    return format_edid_fallback(data)
+
+
 class VideoOutputManager:
     def __init__(self, video_output=None):
         self.video_output = video_output
@@ -995,6 +1332,7 @@ class VideoOutputManager:
         self._program_audio_output = None
         self._gdctl_cache = None
         self._gdctl_cache_at = 0.0
+        self._device_name_cache = None
 
     @staticmethod
     def desktop_env():
@@ -1024,6 +1362,7 @@ class VideoOutputManager:
     def _invalidate_display_cache(self):
         self._gdctl_cache = None
         self._gdctl_cache_at = 0.0
+        self._device_name_cache = None
 
     def gdctl_state(self):
         now = time.monotonic()
@@ -1388,6 +1727,58 @@ class VideoOutputManager:
                 ))
             i += 3
         return timings
+
+    def read_edid(self, output_name=None):
+        """Raw EDID bytes and source path for a connector (projector by default)."""
+        name = output_name or self.video_output
+        if not name:
+            return None, None
+        data, source = find_sysfs_edid(name)
+        if data:
+            return data, source
+        try:
+            verbose = self.run(["xrandr", "--verbose"])
+        except (OSError, subprocess.CalledProcessError):
+            verbose = ""
+        data = parse_xrandr_edid(verbose, name)
+        if data:
+            return data, "xrandr --verbose"
+        return None, None
+
+    def get_output_device_name(self, output_name=None):
+        """Monitor / projector name reported by EDID or the desktop for this output."""
+        name = output_name or self.video_output or ""
+        if not name:
+            return ""
+        now = time.monotonic()
+        cache = self._device_name_cache
+        if cache and cache[0] == name and now - cache[1] < 2.0:
+            return cache[2]
+        edid_identity = {}
+        data, _source = self.read_edid(name)
+        if data:
+            edid_identity = parse_edid_identity(data)
+        monitor_identity = {}
+        if self.uses_gdctl():
+            try:
+                monitor_identity = dict(self.gdctl_state().identity.get(name) or {})
+            except Exception:
+                monitor_identity = {}
+        value = format_output_device_name(edid_identity, monitor_identity)
+        self._device_name_cache = (name, now, value)
+        return value
+
+    def edid_report(self, output_name=None):
+        """Complete decoded EDID text for the projector, or None if missing."""
+        data, source = self.read_edid(output_name)
+        if not data:
+            return None
+        return {
+            "output": output_name or self.video_output,
+            "source": source,
+            "data": data,
+            "decoded": decode_edid(data),
+        }
 
     def get_video_info(self, filename):
         result = subprocess.run(
@@ -1898,6 +2289,10 @@ class MPVController:
 
     def set_loop_file(self, enabled):
         self.command("set_property", "loop-file", "inf" if enabled else "no")
+
+    def set_ab_loop(self, start=None, end=None):
+        self.command("set_property", "ab-loop-a", "no" if start is None else float(start))
+        self.command("set_property", "ab-loop-b", "no" if end is None else float(end))
 
     def _reader(self):
         buffer = b""
