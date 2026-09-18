@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shutil
 import time
 import webbrowser
 from pathlib import Path
@@ -15,7 +16,8 @@ import tkinter as tk
 from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, ttk
 
-from language import LANGUAGES, t, set_language
+from language import LANGUAGES, t, set_language, current_language
+from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_times
 from cinema_player import (
     APP_VERSION,
     FONT_FAMILY,
@@ -65,10 +67,14 @@ BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.
 # mpv log2 zoom: -0.8 ≈ 57% size, so the wide logo does not fill the screen width.
 BEAMER_TEST_ZOOM = -0.8
 ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
-TESTDATA_DIR = os.path.join(ROOT_DIR, "testdata")
+TESTDATA_DIR = os.path.join(ROOT_DIR, "testdata", "videotestdata")
+AUDIOSYNC_DIR = os.path.join(ROOT_DIR, "testdata", "audiosyncdata")
 IDLE_DIR = os.path.join(ROOT_DIR, "idle")
 TRANSPORT_ICON_PX = 52
 DRAG_THRESHOLD = 12
+AUDIO_DELAY_MIN_MS = -50
+AUDIO_DELAY_MAX_MS = 50
+AUDIO_DELAY_STEP_MS = 1
 
 
 def default_idle_media_path():
@@ -91,6 +97,7 @@ COLOR_OFF = "#c62828"
 COLOR_PROGRAM = "#1565c0"
 COLOR_PLAYING = "#2e9d3a"
 COLOR_PREVIEW = "#c9a227"
+COLOR_CALIBRATION = "#500070"
 COLOR_WARNING = "#d32f2f"
 COLOR_WHITE = "#ffffff"
 
@@ -379,6 +386,119 @@ class VolumeBar(tk.Canvas):
         self._set_at(event, dragging=False)
 
 
+def format_delay_ms(ms):
+    value = int(ms)
+    if value > 0:
+        return f"+{value} ms"
+    return f"{value} ms"
+
+
+def snap_delay_ms(value):
+    try:
+        ms = int(round(float(value) / AUDIO_DELAY_STEP_MS) * AUDIO_DELAY_STEP_MS)
+    except (TypeError, ValueError):
+        ms = 0
+    return max(AUDIO_DELAY_MIN_MS, min(AUDIO_DELAY_MAX_MS, ms))
+
+
+def audiosync_format_key(width, height, fps):
+    if not width or not height or not fps:
+        return ""
+    return f"{int(width)}x{int(height)}@{format_fps_label(fps)}"
+
+
+class DelayBar(tk.Canvas):
+    """Bipolar slider for audio delay in 1 ms steps (mpv audio-delay seconds)."""
+
+    def __init__(self, master, on_change, **kwargs):
+        kwargs.setdefault("height", 22)
+        kwargs.setdefault("highlightthickness", 0)
+        kwargs.setdefault("bd", 0)
+        kwargs.setdefault("bg", COLOR_PANEL)
+        kwargs.setdefault("cursor", "hand2")
+        super().__init__(master, **kwargs)
+        self.on_change = on_change
+        self.delay_ms = 0
+        self.dragging = False
+        self.bind("<Configure>", lambda e: self.redraw())
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Button-4>", self._wheel_up)
+        self.bind("<Button-5>", self._wheel_down)
+        self.bind("<MouseWheel>", self._wheel)
+
+    def set_delay(self, delay_ms, notify=False):
+        self.delay_ms = snap_delay_ms(delay_ms)
+        self.redraw()
+        if notify:
+            self.on_change(self.delay_ms)
+
+    def _track_box(self):
+        pad = 1
+        width = max(1, self.winfo_width() - pad * 2)
+        height = max(8, self.winfo_height() - 6)
+        top = (self.winfo_height() - height) // 2
+        return pad, top, pad + width, top + height
+
+    def _delay_for_x(self, x):
+        x0, _, x1, _ = self._track_box()
+        if x1 <= x0:
+            return 0
+        ratio = max(0.0, min(1.0, (x - x0) / (x1 - x0)))
+        span = AUDIO_DELAY_MAX_MS - AUDIO_DELAY_MIN_MS
+        return snap_delay_ms(AUDIO_DELAY_MIN_MS + ratio * span)
+
+    def redraw(self):
+        self.delete("all")
+        x0, y0, x1, y1 = self._track_box()
+        self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
+        span = AUDIO_DELAY_MAX_MS - AUDIO_DELAY_MIN_MS
+        centre = x0 + (x1 - x0) * (0 - AUDIO_DELAY_MIN_MS) / span
+        fill_x = x0 + (x1 - x0) * (self.delay_ms - AUDIO_DELAY_MIN_MS) / span
+        left = min(centre, fill_x)
+        right = max(centre, fill_x)
+        if abs(self.delay_ms) >= AUDIO_DELAY_STEP_MS:
+            self.create_rectangle(
+                left, y0 + 1, max(left + 1, right), y1 - 1,
+                fill=COLOR_VOLUME, outline="",
+            )
+        self.create_line(centre, y0 - 2, centre, y1 + 2, fill=PLAYHEAD, width=2)
+
+    def _set_at(self, event):
+        self.delay_ms = self._delay_for_x(event.x)
+        self.redraw()
+        self.on_change(self.delay_ms)
+
+    def _press(self, event):
+        self.dragging = True
+        self._set_at(event)
+
+    def _drag(self, event):
+        if self.dragging:
+            self._set_at(event)
+
+    def _release(self, event):
+        if not self.dragging:
+            return
+        self.dragging = False
+        self._set_at(event)
+
+    def _nudge(self, delta):
+        self.set_delay(self.delay_ms + delta, notify=True)
+        return "break"
+
+    def _wheel_up(self, _event):
+        return self._nudge(AUDIO_DELAY_STEP_MS)
+
+    def _wheel_down(self, _event):
+        return self._nudge(-AUDIO_DELAY_STEP_MS)
+
+    def _wheel(self, event):
+        delta = AUDIO_DELAY_STEP_MS if event.delta > 0 else -AUDIO_DELAY_STEP_MS
+        return self._nudge(delta)
+
+
 _PEAK_LEVEL_RE = re.compile(r"^lavfi\.astats\.(\d+)\.Peak_level$")
 METER_FLOOR_DB = -60.0
 METER_CEILING_DB = 0.0
@@ -639,13 +759,13 @@ class DropdownMenu(tk.Frame):
     def add_separator(self):
         tk.Frame(self, bg=COLOR_BORDER, height=1).pack(fill="x", padx=8, pady=4)
 
-    def add_cascade(self, label="", menu=None, **_kwargs):
+    def add_cascade(self, label="", menu=None, state="normal", **_kwargs):
         self._cascades.append(menu)
 
         def open_cascade(event, submenu=menu):
             self._show_cascade(event.widget, submenu)
 
-        self._add_row(f"{label}  ▸", None, "normal", None, on_press=open_cascade)
+        self._add_row(f"{label}  ▸", None, state, None, on_press=open_cascade)
 
     def _add_row(self, text, command, state, foreground, on_press=None):
         fg = foreground or COLOR_TEXT
@@ -884,6 +1004,7 @@ class VideoPlayerGUI:
         self.playlist = []
         self.playlist_path = ""
         self.program_state = "OFF"
+        self.calibration_mode = None
         self.program_index = 0
         self.zoom_confirmed_index = None
         self.preview_index = None
@@ -910,6 +1031,7 @@ class VideoPlayerGUI:
         self.beamer_test_active = False
         self.edid_window = None
         self.media_dirs_window = None
+        self.audiosync_list_window = None
         self.idle_after_id = None
         self.autoplay_after_id = None
         self.still_after_id = None
@@ -930,6 +1052,19 @@ class VideoPlayerGUI:
         self.media_directories = self._normalize_media_directories(
             self.settings.get("media_directories", [])
         )
+        self.copy_imported_media = tk.BooleanVar(
+            value=bool(self.settings.get("copy_imported_media", False))
+        )
+        self.copy_imported_media_dir = self.settings.get("copy_imported_media_dir") or ""
+        if self.copy_imported_media_dir:
+            self.copy_imported_media_dir = os.path.abspath(
+                os.path.expanduser(self.copy_imported_media_dir)
+            )
+        self.copy_imported_media_label = tk.StringVar(value=self._copy_path_label_text())
+        self.audiosync_delays = self._normalize_audiosync_delays(
+            self.settings.get("audiosync_delays", {})
+        )
+        self.audiosync_delay_ms = tk.IntVar(value=0)
         self.last_playlist_dir = self.settings.get("last_playlist_dir") or ""
         if self.last_playlist_dir and not os.path.isdir(self.last_playlist_dir):
             self.last_playlist_dir = ""
@@ -950,6 +1085,18 @@ class VideoPlayerGUI:
         self.use_default_idle_media = tk.BooleanVar(
             value=bool(self.settings.get("use_default_idle_media", False))
         )
+        self.remote_api_enabled = tk.BooleanVar(
+            value=bool(self.settings.get("remote_api_enabled", True))
+        )
+        try:
+            remote_port = int(self.settings.get("remote_api_port", DEFAULT_PORT))
+        except (TypeError, ValueError):
+            remote_port = DEFAULT_PORT
+        self.remote_api_port = tk.StringVar(value=str(remote_port))
+        self.remote_api_token = tk.StringVar(value=str(self.settings.get("remote_api_token", "") or ""))
+        self.remote_api = RemoteAPIServer(self)
+        self.remote_window = None
+        self._remote_action = False
         self._windowed_geometry = None
         self._fullscreen_applied = False
         self.autoplay_delay = tk.StringVar(value="0")
@@ -991,6 +1138,7 @@ class VideoPlayerGUI:
         self._restore_last_playlist()
         if self.use_default_idle_media.get():
             self._apply_default_idle_media(show_error=False)
+        self._start_remote_api()
 
     def _warn_if_no_beamer_output(self):
         if self.output_manager.has_dedicated_beamer():
@@ -1028,6 +1176,7 @@ class VideoPlayerGUI:
             header, t("app_menu"), self._fill_app_menu, side="right",
         )
         self._help_button(header)
+        self._build_remote_indicator(header)
 
         self.logo_image = self._load_image(LOGO_HEADER_FILE)
         if self.logo_image is not None:
@@ -1116,6 +1265,14 @@ class VideoPlayerGUI:
             darkcolor=COLOR_BUTTON,
         )
         style.map("Horizontal.TScrollbar", background=[("active", COLOR_BUTTON_ACTIVE)])
+        style.configure(
+            "Copy.Horizontal.TProgressbar",
+            troughcolor=COLOR_FIELD,
+            background=COLOR_PROGRAM,
+            bordercolor=COLOR_BORDER,
+            lightcolor=COLOR_PROGRAM,
+            darkcolor=COLOR_PROGRAM,
+        )
 
     def toggle_theme(self):
         self.theme = apply_theme("dark" if self.theme == "light" else "light")
@@ -1263,6 +1420,8 @@ class VideoPlayerGUI:
         self._close_menus()
         self.edid_window = None
         self.media_dirs_window = None
+        self.audiosync_list_window = None
+        self.remote_window = None
         for child in self.root.winfo_children():
             child.destroy()
         self.row_widgets = []
@@ -1275,7 +1434,9 @@ class VideoPlayerGUI:
         self._volume_program_key = None
         self.root.configure(bg=COLOR_BG)
         self.apply_widget_defaults()
+        self.copy_imported_media_label.set(self._copy_path_label_text())
         self.create_gui()
+        self._show_audiosync_controls(self.calibration_mode == "audio")
         self.refresh_all()
         self.root.after(200, self.restore_preview)
 
@@ -1377,8 +1538,41 @@ class VideoPlayerGUI:
         )
         volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
 
+        self.audiosync_frame = tk.Frame(progress, bg=COLOR_PANEL)
+        delay_row = tk.Frame(self.audiosync_frame, bg=COLOR_PANEL)
+        delay_row.pack(fill="x")
+        tk.Label(
+            delay_row, text=t("audiosync_delay"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_SMALL,
+        ).pack(side="left")
+        self.audiosync_delay_bar = DelayBar(delay_row, on_change=self._on_audiosync_delay, bg=COLOR_PANEL)
+        self.audiosync_delay_bar.pack(side="left", fill="x", expand=True, padx=8)
+        self.audiosync_delay_label = tk.Label(
+            delay_row, text=format_delay_ms(0), width=8, anchor="e",
+            bg=COLOR_PANEL, fg=COLOR_VOLUME, font=FONT_UI_BOLD,
+        )
+        self.audiosync_delay_label.pack(side="left")
+        tk.Button(
+            delay_row, text="−", font=FONT_UI, width=2,
+            command=lambda: self._nudge_audiosync_delay(-AUDIO_DELAY_STEP_MS),
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            delay_row, text="+", font=FONT_UI, width=2,
+            command=lambda: self._nudge_audiosync_delay(AUDIO_DELAY_STEP_MS),
+        ).pack(side="left", padx=(4, 0))
+        buttons = tk.Frame(self.audiosync_frame, bg=COLOR_PANEL)
+        buttons.pack(fill="x", pady=(4, 0))
+        tk.Button(
+            buttons, text=t("audiosync_list"), font=FONT_SMALL, command=self.show_audiosync_delays,
+        ).pack(side="left")
+        tk.Button(
+            buttons, text=t("audiosync_load"), font=FONT_SMALL, command=self.load_audiosync_delays,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("audiosync_save"), font=FONT_SMALL, command=self.save_audiosync_delays,
+        ).pack(side="left", padx=(8, 0))
+
         marks = tk.Frame(progress, bg=COLOR_PANEL)
-        marks.grid(row=2, column=0, sticky="ew", padx=8)
+        marks.grid(row=3, column=0, sticky="ew", padx=8)
         for col in range(3):
             marks.columnconfigure(col, weight=1)
         self.main_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
@@ -1434,6 +1628,11 @@ class VideoPlayerGUI:
         else:
             self.program_volume_bar = bar
             self.program_volume_label = label
+            self.program_delay_readout = tk.Label(
+                row, text="", width=9, anchor="e",
+                bg=bg, fg=COLOR_MUTED, font=FONT_SMALL,
+            )
+            self.program_delay_readout.pack(side="left", padx=(8, 0))
         return row
 
     def _set_volume_label(self, label, volume):
@@ -1694,6 +1893,40 @@ class VideoPlayerGUI:
         canvas.tooltip = IconTooltip(canvas, t("manual"))
         return canvas
 
+    def _build_remote_indicator(self, parent):
+        """Radio icon in the header while the smartphone API is running."""
+        size = 36
+        canvas = tk.Canvas(
+            parent, width=size, height=size, bg=parent.cget("bg"),
+            highlightthickness=0, bd=0, cursor="hand2",
+        )
+        cx, cy = size / 2, size * 0.7
+        color = COLOR_VOLUME
+        canvas.create_oval(cx - 2.5, cy - 2.5, cx + 2.5, cy + 2.5, fill=color, outline="")
+        for radius, start in ((8, 48), (14, 38)):
+            canvas.create_arc(
+                cx - radius, cy - radius - 1, cx + radius, cy + radius - 1,
+                start=start, extent=180 - 2 * start, style="arc",
+                outline=color, width=2,
+            )
+        canvas.bind("<Button-1>", lambda _event: self.show_remote_control())
+        canvas.tooltip = IconTooltip(canvas, t("remote_control"))
+        self.remote_indicator = canvas
+        self._refresh_remote_indicator()
+        return canvas
+
+    def _refresh_remote_indicator(self):
+        canvas = getattr(self, "remote_indicator", None)
+        if canvas is None:
+            return
+        try:
+            if self.remote_api and self.remote_api.running:
+                canvas.pack(side="right", padx=(0, 4))
+            else:
+                canvas.pack_forget()
+        except tk.TclError:
+            pass
+
     def open_manual(self):
         path = os.path.join(ROOT_DIR, "manual", "index.html")
         if not os.path.isfile(path):
@@ -1811,6 +2044,10 @@ class VideoPlayerGUI:
             label=t("media_directories"),
             command=self.show_media_directories,
         )
+        menu.add_command(
+            label=t("remote_control"),
+            command=self.show_remote_control,
+        )
         menu.add_separator()
         menu.add_checkbutton(
             label=t("window_fullscreen"),
@@ -1841,14 +2078,22 @@ class VideoPlayerGUI:
             variable=self.use_default_idle_media,
             command=self._on_use_default_idle_media,
         )
-        menu.add_command(
+        extras = self._menu(menu)
+        extras.add_command(
             label=t("beamer_test"),
             command=self.show_beamer_test,
-            state="normal" if self.program_state == "OFF" else "disabled",
+            state="normal" if self.program_state == "OFF" and not self.calibration_mode else "disabled",
         )
-        menu.add_command(
-            label=t("load_testdata"),
-            command=self.load_testdata_playlist,
+        video = self._menu(extras)
+        self._fill_calibration_kind_menu(video, "video")
+        extras.add_cascade(label=t("calibration_video"), menu=video)
+        audio = self._menu(extras)
+        self._fill_calibration_kind_menu(audio, "audio")
+        extras.add_cascade(label=t("calibration_audio"), menu=audio)
+        menu.add_cascade(
+            label=t("calibration"),
+            menu=extras,
+            state="normal" if self.program_state == "OFF" or self.calibration_mode else "disabled",
         )
         menu.add_separator()
         menu.add_command(
@@ -1879,6 +2124,31 @@ class VideoPlayerGUI:
                 )
         menu.add_separator()
         menu.add_command(label=t("edid"), command=self.show_edid)
+
+    def _fill_calibration_kind_menu(self, menu, kind):
+        menu.add_command(
+            label=t("calibration_load_all"),
+            command=lambda: self._start_calibration_mode(kind),
+        )
+        playlists = self._calibration_playlist_paths(self._calibration_spec(kind).get("folder", ""))
+        if not playlists:
+            return
+        menu.add_separator()
+        for path in playlists:
+            menu.add_command(
+                label=os.path.splitext(os.path.basename(path))[0],
+                command=lambda chosen=path: self._start_calibration_mode(kind, playlist_path=chosen),
+            )
+
+    @staticmethod
+    def _calibration_playlist_paths(folder):
+        if not folder or not os.path.isdir(folder):
+            return []
+        return [
+            os.path.join(folder, name)
+            for name in sorted(os.listdir(folder), key=str.casefold)
+            if name.lower().endswith(".pls") and os.path.isfile(os.path.join(folder, name))
+        ]
 
     def _fill_playlist_menu(self, menu):
         menu.add_command(label=t("refresh_playlist"), command=self.check_playlist_files)
@@ -2149,6 +2419,8 @@ class VideoPlayerGUI:
         }
 
     def state_color(self):
+        if self.calibration_mode:
+            return COLOR_CALIBRATION
         return {"OFF": COLOR_OFF, "PROGRAM": COLOR_PROGRAM, "PLAYING": COLOR_PLAYING}[self.program_state]
 
     def selected_entry(self):
@@ -2181,7 +2453,9 @@ class VideoPlayerGUI:
         self.refresh_beamer()
 
     def refresh_status(self):
-        state_key = {"OFF": "state_off", "PROGRAM": "state_program", "PLAYING": "state_playing"}[self.program_state]
+        state_key = self._calibration_state_key()
+        if not state_key:
+            state_key = {"OFF": "state_off", "PROGRAM": "state_program", "PLAYING": "state_playing"}[self.program_state]
         self.state_label.config(text=t(state_key), bg=self.state_color())
         stopped = self.program_state == "OFF"
         entry = None if stopped else self.current_entry()
@@ -2234,6 +2508,9 @@ class VideoPlayerGUI:
             self.time_end.config(text=end_text)
         if self.program_state != "PLAYING":
             self._load_program_volume(entry)
+        self._refresh_program_delay_readout(entry)
+        if self.calibration_mode == "audio":
+            self._sync_audiosync_slider(entry)
 
     def refresh_playlist(self):
         for child in self.playlist_inner.winfo_children():
@@ -2983,7 +3260,7 @@ class VideoPlayerGUI:
                 return True
         return False
 
-    def confirm_projection_zoom(self):
+    def confirm_projection_zoom(self, prompt=True):
         """Ask as soon as the program cursor lands on a clip that needs a zoom change."""
         if not self.projection_zoom.get() or not self.playlist:
             return True
@@ -2994,6 +3271,8 @@ class VideoPlayerGUI:
             return True
         if self.zoom_confirmed_index == self.program_index:
             return True
+        if not prompt or self._remote_action:
+            return False
         self.root.update_idletasks()
         ok = messagebox.askokcancel(
             t("projection_zoom_title"),
@@ -3020,7 +3299,7 @@ class VideoPlayerGUI:
         self.repaint_playlist()
         self.refresh_status()
         if self.program_state == "PROGRAM":
-            self.confirm_projection_zoom()
+            self.confirm_projection_zoom(prompt=not self._remote_action)
 
     def toggle_autoplay(self, index):
         if not 0 <= index < len(self.playlist):
@@ -3282,6 +3561,226 @@ class VideoPlayerGUI:
             return existing[0]
         return last if last and os.path.isdir(last) else ""
 
+    def _copy_path_label_text(self):
+        path = self.copy_imported_media_dir
+        if not path:
+            return t("copy_files_none")
+        if os.path.isdir(path):
+            return path
+        return f"{path}  ({t('media_directories_missing')})"
+
+    def _copy_destination(self):
+        path = self.copy_imported_media_dir
+        if path and os.path.isdir(path):
+            return os.path.abspath(path)
+        return ""
+
+    def _save_copy_imported_media(self):
+        self.settings["copy_imported_media"] = bool(self.copy_imported_media.get())
+        self.settings["copy_imported_media_dir"] = self.copy_imported_media_dir
+        self.copy_imported_media_label.set(self._copy_path_label_text())
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+
+    def _choose_copy_destination(self, parent=None):
+        options = {"title": t("copy_files_choose")}
+        if parent is not None:
+            options["parent"] = parent
+        start = self._copy_destination() or self._preferred_import_dir()
+        if start:
+            options["initialdir"] = start
+        path = filedialog.askdirectory(**options)
+        if not path:
+            return False
+        self.copy_imported_media_dir = os.path.abspath(path)
+        self._save_copy_imported_media()
+        return True
+
+    def _unique_copy_path(self, directory, filename):
+        base, ext = os.path.splitext(filename)
+        candidate = os.path.join(directory, filename)
+        index = 2
+        while os.path.exists(candidate):
+            candidate = os.path.join(directory, f"{base} ({index}){ext}")
+            index += 1
+        return candidate
+
+    @staticmethod
+    def _format_copy_size(nbytes):
+        value = max(0.0, float(nbytes))
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if value < 1024 or unit == "TB":
+                if unit == "B":
+                    return f"{int(value)} {unit}"
+                return f"{value:.1f} {unit}"
+            value /= 1024
+        return f"{int(nbytes)} B"
+
+    def _prepare_imported_copy(self, path, dest_dir):
+        """Return (playlist_path, source_to_copy_or_None)."""
+        source = os.path.abspath(path)
+        if not os.path.isfile(source):
+            return source, None
+        if os.path.dirname(source) == dest_dir:
+            return source, None
+        dest = os.path.join(dest_dir, os.path.basename(source))
+        if os.path.exists(dest):
+            try:
+                if os.path.samefile(source, dest):
+                    return dest, None
+            except OSError:
+                pass
+            dest = self._unique_copy_path(dest_dir, os.path.basename(source))
+        return dest, source
+
+    def _copy_file_with_progress(self, source, dest, on_progress, parent=None):
+        copied = 0
+        try:
+            with open(source, "rb") as src, open(dest, "wb") as dst:
+                while True:
+                    chunk = src.read(8 * 1024 * 1024)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    copied += len(chunk)
+                    if on_progress:
+                        on_progress(copied)
+            shutil.copystat(source, dest)
+        except OSError as exc:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            messagebox.showerror(
+                t("copy_files"),
+                t("copy_files_failed", path=os.path.basename(source), error=exc),
+                parent=parent,
+            )
+            return False
+        return True
+
+    def _open_copy_progress(self, total):
+        window = tk.Toplevel(self.root)
+        window.title(t("copy_files"))
+        window.configure(bg=COLOR_BG)
+        window.resizable(False, False)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        body = tk.Frame(window, bg=COLOR_PANEL)
+        body.pack(fill="both", expand=True, padx=10, pady=10)
+        status = tk.Label(
+            body, text=t("copy_files_progress", current=0, total=total),
+            bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI, anchor="w",
+        )
+        status.pack(fill="x")
+        name = tk.Label(
+            body, text="", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+            anchor="w", wraplength=440, justify="left",
+        )
+        name.pack(fill="x", pady=(4, 8))
+        bar = ttk.Progressbar(
+            body, orient="horizontal", mode="determinate",
+            style="Copy.Horizontal.TProgressbar", maximum=1000,
+        )
+        bar.pack(fill="x")
+        size = tk.Label(
+            body, text=t("copy_files_progress_size", done=self._format_copy_size(0), total=self._format_copy_size(0)),
+            bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+        )
+        size.pack(fill="x", pady=(6, 0))
+
+        widgets = {"status": status, "name": name, "bar": bar, "size": size, "total": total}
+        self._place_on_control_monitor(window, 480, 160)
+        window.grab_set()
+        window.lift()
+        window.update_idletasks()
+        return window, widgets
+
+    def _update_copy_progress(self, window, widgets, current, name, done_bytes, total_bytes):
+        widgets["status"].config(
+            text=t("copy_files_progress", current=current, total=widgets["total"]),
+        )
+        widgets["name"].config(text=name)
+        maximum = max(1, int(total_bytes) or 1)
+        widgets["bar"]["value"] = min(1000, int(1000 * min(done_bytes, total_bytes) / maximum))
+        widgets["size"].config(
+            text=t(
+                "copy_files_progress_size",
+                done=self._format_copy_size(done_bytes),
+                total=self._format_copy_size(total_bytes),
+            ),
+        )
+        try:
+            window.update()
+        except tk.TclError:
+            pass
+
+    def _close_copy_progress(self, window):
+        if window is None:
+            return
+        try:
+            window.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            window.destroy()
+        except tk.TclError:
+            pass
+
+    def _copy_imported_paths(self, paths):
+        dest_dir = self._copy_destination()
+        if not dest_dir:
+            messagebox.showerror(t("copy_files"), t("copy_files_missing"))
+            return []
+        jobs = []
+        total_bytes = 0
+        for path in paths:
+            dest, source = self._prepare_imported_copy(path, dest_dir)
+            size = 0
+            if source:
+                try:
+                    size = os.path.getsize(source)
+                except OSError:
+                    size = 0
+                total_bytes += size
+            jobs.append((dest, source, size))
+
+        window = None
+        widgets = None
+        if any(source for _dest, source, _size in jobs):
+            window, widgets = self._open_copy_progress(len(jobs))
+        results = []
+        done_bytes = 0
+        try:
+            for index, (dest, source, size) in enumerate(jobs, 1):
+                name = os.path.basename(source or dest)
+                if widgets is not None:
+                    self._update_copy_progress(window, widgets, index, name, done_bytes, total_bytes)
+                if source:
+                    def on_progress(copied, base=done_bytes):
+                        if widgets is not None:
+                            self._update_copy_progress(
+                                window, widgets, index, name, base + copied, total_bytes,
+                            )
+
+                    if not self._copy_file_with_progress(source, dest, on_progress, parent=window):
+                        continue
+                    done_bytes += size
+                results.append(dest)
+                if widgets is not None:
+                    self._update_copy_progress(window, widgets, index, name, done_bytes, total_bytes)
+        finally:
+            self._close_copy_progress(window)
+        return results
+
     def _media_filetypes(self):
         return [
             (t("media_files"), " ".join(f"*{ext}" for ext in sorted(VIDEO_EXTS | IMAGE_EXTS))),
@@ -3313,6 +3812,274 @@ class VideoPlayerGUI:
             activestyle="none",
             exportselection=False,
         )
+
+    def _remote_port_value(self):
+        try:
+            port = int(self.remote_api_port.get().strip() or DEFAULT_PORT)
+        except (TypeError, ValueError):
+            port = DEFAULT_PORT
+        return max(1, min(65535, port))
+
+    def _save_remote_api_settings(self):
+        self.settings["remote_api_enabled"] = bool(self.remote_api_enabled.get())
+        self.settings["remote_api_port"] = self._remote_port_value()
+        self.settings["remote_api_token"] = self.remote_api_token.get().strip()
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+
+    def _start_remote_api(self):
+        if not self.remote_api_enabled.get() or not self.remote_api_token.get().strip():
+            self._stop_remote_api()
+            self._refresh_remote_indicator()
+            return
+        port = self._remote_port_value()
+        token = self.remote_api_token.get().strip()
+        if not self.remote_api.start(port=port, token=token):
+            print(f"Remote API: {self.remote_api.error}")
+        self._refresh_remote_indicator()
+
+    def _stop_remote_api(self):
+        if self.remote_api is not None:
+            self.remote_api.stop()
+        self._refresh_remote_indicator()
+
+    def _apply_remote_api_settings(self):
+        token = self.remote_api_token.get().strip()
+        if self.remote_api_enabled.get() and not token:
+            messagebox.showerror(t("remote_control"), t("remote_control_token_required"))
+            self._stop_remote_api()
+            self._fill_remote_urls()
+            return
+        self._save_remote_api_settings()
+        self._start_remote_api()
+        self._fill_remote_urls()
+
+    def _fill_remote_urls(self):
+        widget = getattr(self, "remote_url_box", None)
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        if self.remote_api.running:
+            urls = self.remote_api.urls() or [f"http://127.0.0.1:{self.remote_api.port}/"]
+            widget.insert("end", "\n".join(urls))
+        elif self.remote_api.error:
+            widget.insert("end", self.remote_api.error)
+        elif self.remote_api_enabled.get() and not self.remote_api_token.get().strip():
+            widget.insert("end", t("remote_control_token_required"))
+        else:
+            widget.insert("end", t("remote_control_off"))
+        widget.configure(state="disabled")
+
+    def show_remote_control(self):
+        window = getattr(self, "remote_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.deiconify()
+                    window.lift()
+                    window.focus_force()
+                    self._fill_remote_urls()
+                    return
+            except tk.TclError:
+                self.remote_window = None
+        window = tk.Toplevel(self.root)
+        window.title(t("remote_control"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(480, 320)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_remote_window)
+        tk.Label(
+            window, text=t("remote_control_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=560, justify="left",
+        ).pack(fill="x", padx=10, pady=(10, 6))
+        holder = tk.Frame(window, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self._checkbutton(
+            holder, t("remote_control_enable"), self.remote_api_enabled,
+            self._apply_remote_api_settings, COLOR_PANEL,
+        ).pack(anchor="w", padx=8, pady=(8, 4))
+        port_row = tk.Frame(holder, bg=COLOR_PANEL)
+        port_row.pack(fill="x", padx=8, pady=4)
+        tk.Label(port_row, text=t("remote_control_port"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI).pack(side="left")
+        tk.Entry(port_row, textvariable=self.remote_api_port, width=8, font=FONT_UI).pack(side="left", padx=(8, 0))
+        token_row = tk.Frame(holder, bg=COLOR_PANEL)
+        token_row.pack(fill="x", padx=8, pady=4)
+        tk.Label(token_row, text=t("remote_control_token"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI).pack(side="left")
+        tk.Entry(token_row, textvariable=self.remote_api_token, font=FONT_UI, show="•").pack(
+            side="left", fill="x", expand=True, padx=(8, 0),
+        )
+        tk.Label(
+            holder, text=t("remote_control_urls"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(anchor="w", padx=8, pady=(8, 2))
+        urls = tk.Text(
+            holder, height=4, font=FONT_SMALL, bg=COLOR_FIELD, fg=COLOR_TEXT,
+            relief="flat", wrap="word",
+        )
+        urls.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.remote_url_box = urls
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("remote_control_close"), command=self._close_remote_window, font=FONT_UI,
+        ).pack(side="right")
+        tk.Button(
+            buttons, text=t("remote_control_apply"), command=self._apply_remote_api_settings, font=FONT_UI,
+        ).pack(side="right", padx=(0, 8))
+        self.remote_window = window
+        self._fill_remote_urls()
+        self._place_on_control_monitor(window, 520, 360)
+
+    def _close_remote_window(self):
+        window = getattr(self, "remote_window", None)
+        self.remote_window = None
+        self.remote_url_box = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def _remote_result(self, ok=True, error=None):
+        payload = self.remote_status()
+        payload["ok"] = ok
+        if error:
+            payload["error"] = error
+        elif "error" in payload:
+            del payload["error"]
+        return payload
+
+    def remote_status(self):
+        stopped = self.program_state == "OFF"
+        entry = self.current_entry() if self.playlist else None
+        duration = 0.0 if stopped else (self.duration or (entry.duration if entry else 0) or 0)
+        times = clip_times(self.program_state, duration, self.position)
+        paused = self.program_state == "PLAYING" and self.main_pause and self.blackout
+        frozen = self.program_state == "PLAYING" and self.main_pause and not self.blackout
+        rolling = self.program_state == "PLAYING" and not self.main_pause
+        clip_rolling = rolling and not self.still_waiting and not self._program_loop_active()
+        state_key = self._calibration_state_key()
+        if not state_key:
+            state_key = {
+                "OFF": "state_off",
+                "PROGRAM": "state_program",
+                "PLAYING": "state_playing",
+            }[self.program_state]
+        playlist = []
+        for index, item in enumerate(self.playlist):
+            playlist.append({
+                "index": index,
+                "filename": item.filename,
+                "duration": item.duration,
+                "duration_label": self._row_duration_text(item),
+                "played": bool(item.played),
+                "missing": bool(item.missing),
+                "autoplay": bool(item.autoplay),
+                "loop": bool(item.loop),
+                "is_image": bool(item.is_image),
+                "current": index == self.program_index,
+            })
+        clip = None
+        if entry is not None:
+            clip = {
+                "filename": entry.filename,
+                "index": self.program_index,
+                "duration": duration if not stopped else (entry.duration or 0),
+                "position": self.position if self.program_state == "PLAYING" else 0.0,
+                "in_point": entry.in_point,
+                "out_point": entry.out_point,
+            }
+        return {
+            "ok": True,
+            "version": APP_VERSION,
+            "language": current_language(),
+            "state": self.program_state,
+            "state_label": t(state_key),
+            "calibration": self.calibration_mode,
+            "paused": paused,
+            "still": frozen,
+            "idle": bool(self.idle_showing),
+            "loop": bool(self._program_loop_active()),
+            "volume": clamp_volume(self.program_volume.get()),
+            "program_index": self.program_index if self.playlist else 0,
+            "playlist_name": self.playlist_name.get().strip() if getattr(self, "playlist_name", None) else "",
+            "playlist": playlist,
+            "clip": clip,
+            "times": times,
+            "actions": {
+                "resume": bool(self.playlist) and not clip_rolling,
+                "pause": self.program_state == "PLAYING",
+                "still": self.program_state == "PLAYING",
+                "stop": self.program_state == "PLAYING",
+                "volume": True,
+                "set_program": bool(self.playlist) and self.program_state != "PLAYING",
+            },
+        }
+
+    def remote_resume(self):
+        self._remote_action = True
+        try:
+            if not self.playlist:
+                return self._remote_result(False, "no_playlist")
+            if self.program_state == "PROGRAM" and not self.confirm_projection_zoom(prompt=False):
+                return self._remote_result(False, "projection_zoom_required")
+            self.start_or_resume()
+            return self._remote_result(True)
+        finally:
+            self._remote_action = False
+
+    def remote_pause(self):
+        if not self._apply_pause():
+            return self._remote_result(False, "not_playing")
+        return self._remote_result(True)
+
+    def remote_still(self):
+        if not self._apply_still():
+            return self._remote_result(False, "not_playing")
+        return self._remote_result(True)
+
+    def remote_stop(self):
+        self._remote_action = True
+        try:
+            if not self._apply_stop_clip():
+                return self._remote_result(False, "not_playing")
+            return self._remote_result(True)
+        finally:
+            self._remote_action = False
+
+    def remote_set_volume(self, value):
+        volume = clamp_volume(value)
+        self._on_program_volume(volume)
+        if getattr(self, "program_volume_bar", None):
+            self.program_volume_bar.set_volume(volume)
+        return self._remote_result(True)
+
+    def remote_set_program(self, index):
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            return self._remote_result(False, "invalid_index")
+        if not self.playlist:
+            return self._remote_result(False, "no_playlist")
+        if self.program_state == "PLAYING":
+            return self._remote_result(False, "playing")
+        if not 0 <= index < len(self.playlist):
+            return self._remote_result(False, "invalid_index")
+        if self.playlist[index].missing:
+            return self._remote_result(False, "missing")
+        self._remote_action = True
+        try:
+            self.set_program_point(index)
+        finally:
+            self._remote_action = False
+        return self._remote_result(True)
 
     def show_media_directories(self):
         """Edit the saved media folders used when importing into the playlist."""
@@ -3484,7 +4251,7 @@ class VideoPlayerGUI:
         window = tk.Toplevel(self.root)
         window.title(t("media_directories_choose"))
         window.configure(bg=COLOR_BG)
-        window.minsize(480, 240)
+        window.minsize(520, 280)
         if self.icon_image is not None:
             try:
                 window.iconphoto(True, self.icon_image)
@@ -3494,11 +4261,11 @@ class VideoPlayerGUI:
 
         tk.Label(
             window, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
-            font=FONT_SMALL, wraplength=560, justify="left",
+            font=FONT_SMALL, wraplength=600, justify="left",
         ).pack(fill="x", padx=10, pady=(10, 6))
 
         holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        holder.pack(fill="both", expand=True, padx=10, pady=(0, 8))
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
 
@@ -3518,7 +4285,56 @@ class VideoPlayerGUI:
         listbox.see(index)
         listbox.focus_set()
 
+        copy_row = tk.Frame(window, bg=COLOR_BG)
+        copy_row.pack(fill="x", padx=10, pady=(0, 8))
+        path_holder = tk.Frame(copy_row, bg=COLOR_BG)
+        path_button = tk.Button(
+            path_holder,
+            textvariable=self.copy_imported_media_label,
+            command=lambda: self._choose_copy_destination(window),
+            font=FONT_SMALL,
+        )
+        path_button.pack(side="left", fill="x", expand=True)
+
+        def show_copy_path(visible):
+            if visible:
+                path_holder.pack(side="left", fill="x", expand=True, padx=(12, 0))
+            else:
+                path_holder.pack_forget()
+
+        def on_copy_toggle():
+            enabled = bool(self.copy_imported_media.get())
+            if enabled:
+                show_copy_path(True)
+                if not self._copy_destination():
+                    if not self._choose_copy_destination(window):
+                        self.copy_imported_media.set(False)
+                        show_copy_path(False)
+                        self._save_copy_imported_media()
+                        return
+            else:
+                show_copy_path(False)
+            self._save_copy_imported_media()
+
+        self._checkbutton(
+            copy_row, t("copy_files"), self.copy_imported_media, on_copy_toggle, COLOR_BG,
+        ).pack(side="left")
+        self.copy_imported_media_label.set(self._copy_path_label_text())
+        show_copy_path(bool(self.copy_imported_media.get()))
+
+        def ready_to_copy():
+            if not self.copy_imported_media.get():
+                return True
+            if self._copy_destination():
+                return True
+            if self._choose_copy_destination(window):
+                return True
+            messagebox.showerror(t("copy_files"), t("copy_files_missing"), parent=window)
+            return False
+
         def finish(mode, directory=""):
+            if not ready_to_copy():
+                return
             result["choice"] = (mode, directory)
             window.destroy()
 
@@ -3535,8 +4351,14 @@ class VideoPlayerGUI:
 
         def import_folder():
             directory = selected_directory()
-            if directory:
-                finish("folder", directory)
+            if not directory:
+                return
+            options = {"title": t("import_directory"), "parent": window}
+            if os.path.isdir(directory):
+                options["initialdir"] = directory
+            chosen = filedialog.askdirectory(**options)
+            if chosen:
+                finish("folder", chosen)
 
         def cancel():
             result["choice"] = None
@@ -3566,7 +4388,7 @@ class VideoPlayerGUI:
             command=cancel, font=FONT_UI,
         ).pack(side="right")
 
-        self._place_on_control_monitor(window, 620, 320)
+        self._place_on_control_monitor(window, 680, 380)
         window.grab_set()
         self.root.wait_window(window)
         return result["choice"]
@@ -3604,7 +4426,13 @@ class VideoPlayerGUI:
         self._add_imported_paths(self._media_paths_in_directory(directory))
 
     def _add_imported_paths(self, paths):
-        for path in paths:
+        playlist_paths = []
+        copy_enabled = bool(self.copy_imported_media.get())
+        if copy_enabled:
+            playlist_paths = self._copy_imported_paths(paths)
+        else:
+            playlist_paths = list(paths)
+        for path in playlist_paths:
             self.add_media(path)
         if self.playlist and self.preview_index is None:
             self.program_index = 0
@@ -3636,6 +4464,7 @@ class VideoPlayerGUI:
             self.root.after_cancel(self.autoplay_after_id)
             self.autoplay_after_id = None
         self.program_state = "OFF"
+        self.calibration_mode = None
         self.playlist = []
         self.playlist_path = ""
         self.program_index = 0
@@ -3644,29 +4473,153 @@ class VideoPlayerGUI:
         self.preview_live = True
         self.preview_mpv.stop()
         self._reset_preview_meter()
+        self.main_mpv.set_audio_delay(0)
+        self._show_audiosync_controls(False)
+        self._close_audiosync_list_window()
         self.blank_output()
         self.playlist_name.delete(0, "end")
         self.playlist_name.insert(0, "untitled.pls")
         self.refresh_all()
 
-    def load_testdata_playlist(self):
-        """Replace the current playlist with every video in testdata/."""
-        if not messagebox.askyesno(t("load_testdata_title"), t("load_testdata_message")):
+    def start_video_calibration(self):
+        self._start_calibration_mode("video")
+
+    def start_audio_calibration(self):
+        self._start_calibration_mode("audio")
+
+    def _calibration_state_key(self, kind=None):
+        kind = self.calibration_mode if kind is None else kind
+        if kind == "video":
+            return "state_video_calibration"
+        if kind == "audio":
+            return "state_audio_calibration"
+        return ""
+
+    def _calibration_spec(self, kind=None):
+        kind = self.calibration_mode if kind is None else kind
+        if kind == "video":
+            return {
+                "folder": TESTDATA_DIR,
+                "warning": "calibration_video_warning",
+                "missing": "calibration_video_missing",
+                "empty": "calibration_video_empty",
+                "stop": "calibration_video_stop",
+                "playlist": "testdata.pls",
+            }
+        if kind == "audio":
+            return {
+                "folder": AUDIOSYNC_DIR,
+                "warning": "calibration_audio_warning",
+                "missing": "calibration_audio_missing",
+                "empty": "calibration_audio_empty",
+                "stop": "calibration_audio_stop",
+                "playlist": "audiosync.pls",
+            }
+        return {}
+
+    def _load_calibration_playlist_entries(self, path, title):
+        name = os.path.basename(path)
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            messagebox.showerror(title, t("calibration_playlist_error", name=name, error=exc))
+            return None
+        if not isinstance(data, dict):
+            messagebox.showerror(title, t("calibration_playlist_error", name=name, error=""))
+            return None
+        entries = [PlaylistEntry.from_dict(item) for item in data.get("entries", [])]
+        if not entries:
+            messagebox.showerror(title, t("calibration_playlist_empty", name=name))
+            return None
+        return entries
+
+    def _start_calibration_mode(self, kind, playlist_path=None):
+        """Replace the playlist with calibration clips and arm the program."""
+        if self.program_state != "OFF" and not self.calibration_mode:
             return
-        if not os.path.isdir(TESTDATA_DIR):
-            messagebox.showerror(t("load_testdata_title"), t("load_testdata_missing"))
+        spec = self._calibration_spec(kind)
+        title = t(self._calibration_state_key(kind))
+        if playlist_path:
+            warning = t(
+                "calibration_playlist_warning",
+                mode=title,
+                name=os.path.basename(playlist_path),
+            )
+        else:
+            warning = t(spec["warning"])
+        if not messagebox.askyesno(title, warning):
             return
-        paths = [
-            os.path.join(TESTDATA_DIR, name)
-            for name in sorted(os.listdir(TESTDATA_DIR))
-            if os.path.splitext(name)[1].lower() in VIDEO_EXTS
-        ]
-        if not paths:
-            messagebox.showerror(t("load_testdata_title"), t("load_testdata_empty"))
-            return
+        entries = None
+        paths = []
+        if playlist_path:
+            entries = self._load_calibration_playlist_entries(playlist_path, title)
+            if not entries:
+                return
+            display_name = os.path.basename(playlist_path)
+        else:
+            folder = spec["folder"]
+            if not os.path.isdir(folder):
+                messagebox.showerror(title, t(spec["missing"]))
+                return
+            paths = [
+                os.path.join(folder, name)
+                for name in sorted(os.listdir(folder))
+                if os.path.splitext(name)[1].lower() in VIDEO_EXTS
+            ]
+            if not paths:
+                messagebox.showerror(title, t(spec["empty"]))
+                return
+            display_name = spec["playlist"]
         if self.autoplay_after_id:
             self.root.after_cancel(self.autoplay_after_id)
             self.autoplay_after_id = None
+        if self.calibration_mode:
+            self.program_state = "PROGRAM"
+            self.blank_output(show_idle=False)
+            if kind != "audio":
+                self._close_audiosync_list_window()
+        self.playlist = []
+        self.playlist_path = playlist_path or ""
+        self.program_index = 0
+        self.zoom_confirmed_index = None
+        self.preview_index = None
+        self.preview_live = True
+        self.preview_mpv.stop()
+        self._reset_preview_meter()
+        self.playlist_name.delete(0, "end")
+        self.playlist_name.insert(0, display_name)
+        if entries is not None:
+            self.playlist = entries
+            self._scan_playlist_media()
+        else:
+            for path in paths:
+                self.add_media(path)
+        for entry in self.playlist:
+            if not entry.is_image:
+                entry.loop = True
+        if not self.playlist:
+            messagebox.showerror(
+                title,
+                t("calibration_playlist_empty", name=display_name) if playlist_path else t(spec["empty"]),
+            )
+            return
+        self.calibration_mode = kind
+        self.program_state = "PROGRAM"
+        self.program_index = 0
+        self.apply_beamer_mode_for_pointer()
+        self.ensure_main_output()
+        self.blank_output()
+        self._show_audiosync_controls(kind == "audio")
+        if kind == "audio":
+            self._sync_audiosync_slider(self.current_entry(), force=True)
+        self.refresh_all()
+
+    def _exit_calibration_mode(self):
+        if self.autoplay_after_id:
+            self.root.after_cancel(self.autoplay_after_id)
+            self.autoplay_after_id = None
+        self.calibration_mode = None
         self.program_state = "OFF"
         self.playlist = []
         self.playlist_path = ""
@@ -3676,15 +4629,225 @@ class VideoPlayerGUI:
         self.preview_live = True
         self.preview_mpv.stop()
         self._reset_preview_meter()
-        self.blank_output()
+        self.main_mpv.set_audio_delay(0)
         self.playlist_name.delete(0, "end")
-        self.playlist_name.insert(0, "testdata.pls")
-        for path in paths:
-            self.add_media(path)
-        if self.playlist:
-            self.program_index = 0
-            self.apply_beamer_mode_for_pointer()
+        self.playlist_name.insert(0, "untitled.pls")
+        self._show_audiosync_controls(False)
+        self._close_audiosync_list_window()
+        self.blank_output()
         self.refresh_all()
+
+    def _show_audiosync_controls(self, visible):
+        frame = getattr(self, "audiosync_frame", None)
+        if frame is None:
+            return
+        if visible:
+            frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
+        else:
+            frame.grid_forget()
+        readout = getattr(self, "program_delay_readout", None)
+        if readout is not None and visible:
+            readout.config(text="")
+
+    @staticmethod
+    def _normalize_audiosync_delays(raw):
+        delays = {}
+        items = raw.items() if isinstance(raw, dict) else []
+        if isinstance(raw, dict) and "delays" in raw and isinstance(raw["delays"], dict):
+            items = raw["delays"].items()
+        for key, value in items:
+            if key in ("delays",):
+                continue
+            try:
+                delays[str(key)] = snap_delay_ms(value)
+            except (TypeError, ValueError):
+                continue
+        return delays
+
+    def _save_audiosync_delays(self):
+        self.settings["audiosync_delays"] = dict(self.audiosync_delays)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+
+    def _audiosync_key_for_entry(self, entry):
+        if not entry or entry.is_image:
+            return ""
+        return audiosync_format_key(entry.width, entry.height, entry.fps)
+
+    def _audiosync_lookup(self, entry):
+        key = self._audiosync_key_for_entry(entry)
+        if not key or key not in self.audiosync_delays:
+            return None
+        return self.audiosync_delays[key]
+
+    def _refresh_program_delay_readout(self, entry):
+        readout = getattr(self, "program_delay_readout", None)
+        if readout is None:
+            return
+        if self.calibration_mode == "audio":
+            readout.config(text="")
+            return
+        delay = self._audiosync_lookup(entry)
+        readout.config(text=format_delay_ms(delay) if delay is not None else "")
+
+    def _sync_audiosync_slider(self, entry, force=False):
+        bar = getattr(self, "audiosync_delay_bar", None)
+        if bar is None or self.calibration_mode != "audio":
+            return
+        if bar.dragging and not force:
+            return
+        delay = self._audiosync_lookup(entry)
+        ms = 0 if delay is None else delay
+        if not force and ms == int(self.audiosync_delay_ms.get()):
+            return
+        self.audiosync_delay_ms.set(ms)
+        bar.set_delay(ms)
+        label = getattr(self, "audiosync_delay_label", None)
+        if label is not None:
+            label.config(text=format_delay_ms(ms))
+
+    def _on_audiosync_delay(self, value):
+        ms = snap_delay_ms(value)
+        self.audiosync_delay_ms.set(ms)
+        label = getattr(self, "audiosync_delay_label", None)
+        if label is not None:
+            label.config(text=format_delay_ms(ms))
+        entry = self.current_entry()
+        key = self._audiosync_key_for_entry(entry)
+        if key:
+            self.audiosync_delays[key] = ms
+            self._save_audiosync_delays()
+        if self.program_state == "PLAYING" and not self.idle_showing:
+            self.main_mpv.set_audio_delay(ms / 1000.0)
+
+    def _nudge_audiosync_delay(self, delta):
+        bar = getattr(self, "audiosync_delay_bar", None)
+        if bar is None:
+            return
+        bar.set_delay(int(self.audiosync_delay_ms.get()) + delta, notify=True)
+
+    def _apply_program_audio_delay(self, entry):
+        if self.calibration_mode == "audio":
+            ms = int(self.audiosync_delay_ms.get())
+        else:
+            delay = self._audiosync_lookup(entry)
+            ms = 0 if delay is None else delay
+        self.main_mpv.set_audio_delay(ms / 1000.0)
+
+    def _audiosync_payload(self):
+        return {"delays": dict(sorted(self.audiosync_delays.items()))}
+
+    def show_audiosync_delays(self):
+        window = getattr(self, "audiosync_list_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    self._fill_audiosync_list(window)
+                    window.deiconify()
+                    window.lift()
+                    window.focus_force()
+                    return
+            except tk.TclError:
+                self.audiosync_list_window = None
+        window = tk.Toplevel(self.root)
+        window.title(t("audiosync_list_title"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(420, 240)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_audiosync_list_window)
+        holder = tk.Frame(window, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, padx=10, pady=10)
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+        listbox = self._styled_listbox(holder)
+        scroll = ttk.Scrollbar(holder, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("media_directories_close"),
+            command=self._close_audiosync_list_window, font=FONT_UI,
+        ).pack(side="right")
+        window._listbox = listbox
+        self.audiosync_list_window = window
+        self._fill_audiosync_list(window)
+        self._place_on_control_monitor(window, 520, 320)
+
+    def _fill_audiosync_list(self, window):
+        listbox = window._listbox
+        listbox.delete(0, "end")
+        if not self.audiosync_delays:
+            listbox.insert("end", t("audiosync_list_empty"))
+            return
+        for key in sorted(self.audiosync_delays):
+            listbox.insert(
+                "end",
+                t("audiosync_list_row", format=key, delay=format_delay_ms(self.audiosync_delays[key])),
+            )
+
+    def _close_audiosync_list_window(self):
+        window = getattr(self, "audiosync_list_window", None)
+        self.audiosync_list_window = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def load_audiosync_delays(self):
+        path = filedialog.askopenfilename(
+            title=t("audiosync_load_title"),
+            initialdir=AUDIOSYNC_DIR,
+            filetypes=[("JSON", "*.json"), (t("all_files"), "*.*")],
+            parent=self.root,
+        )
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, json.JSONDecodeError):
+            messagebox.showerror(t("audiosync"), t("audiosync_load_error"))
+            return
+        self.audiosync_delays = self._normalize_audiosync_delays(data)
+        self._save_audiosync_delays()
+        self._sync_audiosync_slider(self.current_entry(), force=True)
+        self._refresh_program_delay_readout(self.current_entry())
+        if self.program_state == "PLAYING":
+            self._apply_program_audio_delay(self.current_entry())
+        window = getattr(self, "audiosync_list_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    self._fill_audiosync_list(window)
+            except tk.TclError:
+                pass
+
+    def save_audiosync_delays(self):
+        path = filedialog.asksaveasfilename(
+            title=t("audiosync_save_title"),
+            defaultextension=".json",
+            initialdir=AUDIOSYNC_DIR,
+            initialfile="audiosync.json",
+            filetypes=[("JSON", "*.json")],
+            parent=self.root,
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(self._audiosync_payload(), handle, indent=2)
+        except OSError as exc:
+            messagebox.showerror(t("audiosync"), t("audiosync_save_error", error=exc))
 
     def load_playlist(self):
         path = filedialog.askopenfilename(
@@ -4029,7 +5192,7 @@ class VideoPlayerGUI:
 
     def idle_allowed(self):
         """The idle background belongs to an armed program, not to a stopped one."""
-        return self.program_state == "PROGRAM"
+        return self.program_state == "PROGRAM" and not self.calibration_mode
 
     def show_idle_media(self):
         """Put the idle background on screen after the black gap."""
@@ -4137,6 +5300,8 @@ class VideoPlayerGUI:
 
     def start_or_resume(self):
         if not self.playlist:
+            if self._remote_action:
+                return
             self.import_media()
             if not self.playlist:
                 return
@@ -4148,7 +5313,7 @@ class VideoPlayerGUI:
             # Arming brings up the idle background, if one is set.
             self.blank_output()
             self.refresh_all()
-            self.confirm_projection_zoom()
+            self.confirm_projection_zoom(prompt=not self._remote_action)
             return
         if self.program_state == "PLAYING" and self.still_waiting:
             # A still without display time ends when the operator resumes.
@@ -4186,9 +5351,10 @@ class VideoPlayerGUI:
             self.program_state = "PROGRAM"
             self.blank_output()
             self.refresh_all()
-            messagebox.showinfo(t("playback"), t("missing_playback"))
+            if not self._remote_action:
+                messagebox.showinfo(t("playback"), t("missing_playback"))
             return
-        if not self.confirm_projection_zoom():
+        if not self.confirm_projection_zoom(prompt=not self._remote_action):
             self.program_state = "PROGRAM"
             self.refresh_all()
             return
@@ -4205,9 +5371,11 @@ class VideoPlayerGUI:
                 self.program_state = "PROGRAM"
                 self.blank_output()
                 self.refresh_all()
-                messagebox.showinfo(t("playback"), t("missing_playback"))
+                if not self._remote_action:
+                    messagebox.showinfo(t("playback"), t("missing_playback"))
                 return
-            messagebox.showerror(t("playback"), str(exc))
+            if not self._remote_action:
+                messagebox.showerror(t("playback"), str(exc))
             self.program_state = "PROGRAM"
             self.refresh_all()
             return
@@ -4218,7 +5386,8 @@ class VideoPlayerGUI:
                 self.refresh_all()
                 return
         elif not self.ensure_main_output():
-            messagebox.showerror(t("playback"), t("output_failed"))
+            if not self._remote_action:
+                messagebox.showerror(t("playback"), t("output_failed"))
             self.program_state = "PROGRAM"
             self.refresh_all()
             return
@@ -4246,6 +5415,7 @@ class VideoPlayerGUI:
         volume = clamp_volume(entry.volume)
         self._load_program_volume(entry, force=True)
         self.main_mpv.set_volume(volume)
+        self._apply_program_audio_delay(entry)
         self.main_pause = False
         self.blackout = False
         self.current_file = entry.path
@@ -4332,47 +5502,77 @@ class VideoPlayerGUI:
         if self.program_state != "PLAYING":
             return
         if messagebox.askyesno(t("pause_title"), t("pause_message")):
-            self.main_mpv.set_pause(True)
-            self.main_mpv.set_vid(False)
-            self.preview_mpv.set_pause(True)
-            self.main_pause = True
-            self.blackout = True
+            self._apply_pause()
 
     def confirm_still(self):
         if self.program_state != "PLAYING":
             return
         if messagebox.askyesno(t("still_title"), t("still_message")):
-            self.main_mpv.set_vid(True)
-            self.main_mpv.set_pause(True)
-            self.preview_mpv.set_pause(True)
-            self.main_pause = True
-            self.blackout = False
+            self._apply_still()
+
+    def _apply_pause(self):
+        if self.program_state != "PLAYING":
+            return False
+        self.main_mpv.set_pause(True)
+        self.main_mpv.set_vid(False)
+        self.preview_mpv.set_pause(True)
+        self.main_pause = True
+        self.blackout = True
+        self.refresh_transport()
+        return True
+
+    def _apply_still(self):
+        if self.program_state != "PLAYING":
+            return False
+        self.main_mpv.set_vid(True)
+        self.main_mpv.set_pause(True)
+        self.preview_mpv.set_pause(True)
+        self.main_pause = True
+        self.blackout = False
+        self.refresh_transport()
+        return True
+
+    def _apply_stop_clip(self):
+        """End the clip on air and return to PROGRAM. Does not stop the program."""
+        if self.program_state != "PLAYING":
+            return False
+        if self.autoplay_after_id:
+            self.root.after_cancel(self.autoplay_after_id)
+            self.autoplay_after_id = None
+        if self.current_entry():
+            self.current_entry().played = True
+        self.program_state = "PROGRAM"
+        self.blank_output()
+        self.preview_mpv.stop()
+        self._reset_preview_meter()
+        self._skip_to_playable(inclusive=False)
+        self.refresh_all()
+        self.confirm_projection_zoom(prompt=not self._remote_action)
+        return True
 
     def confirm_stop(self):
         if self.program_state == "OFF":
             return
         playing = self.program_state == "PLAYING"
+        if self.calibration_mode and not playing:
+            spec = self._calibration_spec()
+            if not messagebox.askyesno(t(self._calibration_state_key()), t(spec["stop"])):
+                return
+            self._exit_calibration_mode()
+            return
         question = t("stop_clip") if playing else t("stop_program")
         if not messagebox.askyesno(t("stop_title"), question):
+            return
+        if playing:
+            self._apply_stop_clip()
             return
         if self.autoplay_after_id:
             self.root.after_cancel(self.autoplay_after_id)
             self.autoplay_after_id = None
-        if playing:
-            if self.current_entry():
-                self.current_entry().played = True
-            self.program_state = "PROGRAM"
-            self.blank_output()
-            self.preview_mpv.stop()
-            self._reset_preview_meter()
-            self._skip_to_playable(inclusive=False)
-        else:
-            # A stopped program means a dark screen, so no idle background either.
-            self.program_state = "OFF"
-            self.blank_output()
+        # A stopped program means a dark screen, so no idle background either.
+        self.program_state = "OFF"
+        self.blank_output()
         self.refresh_all()
-        if playing:
-            self.confirm_projection_zoom()
 
     def on_clip_finished(self):
         if self.program_state != "PLAYING":
@@ -4789,6 +5989,7 @@ class VideoPlayerGUI:
             messagebox.showinfo(t("quit"), t("quit_busy"))
             return "break"
         self._close_menus()
+        self._stop_remote_api()
         for after_id in (
             self.autoplay_after_id, self.idle_after_id, self.still_after_id, self._meter_after_id,
         ):

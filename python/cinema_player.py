@@ -2391,6 +2391,10 @@ class MPVController:
     def set_volume(self, volume):
         self.command("set_property", "volume", float(volume))
 
+    def set_audio_delay(self, seconds):
+        """Positive values delay audio relative to video (mpv audio-delay)."""
+        self.command("set_property", "audio-delay", float(seconds))
+
     def quit(self):
         self.running = False
 

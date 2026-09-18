@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(ROOT, "python"))
 os.chdir(ROOT)
 
 IMAGES = os.path.join(ROOT, "manual", "images")
-TESTDATA = os.path.join(ROOT, "testdata")
+TESTDATA = os.path.join(ROOT, "testdata", "videotestdata")
 DISPLAY = os.environ.get("DISPLAY", ":0")
 
 _X11 = None

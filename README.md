@@ -38,20 +38,24 @@ The window can be switched to fullscreen on the control monitor (**F11** or Sett
 The burger menu in the header covers booth setup:
 
 - Media directories (saved folders offered when importing into the playlist)
+- Remote control (LAN HTTP API and smartphone page; port and required token)
 - Fullscreen on the control monitor (`F11`)
 - Light or dark design
 - Language (English / Deutsch)
 - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
 - Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
-- Beamer test image (Cinema Player logo on the projector; only while **OFF**)
-- Load the videos from `testdata`
+- Calibration (in **OFF** and while already calibrating)
+  - Beamer test image (Cinema Player logo on the projector; only in **OFF**)
+  - Video / Audio
+    - Load all files (clips from `testdata/videotestdata` or `testdata/audiosyncdata`, loop on)
+    - Playlists in that folder, listed below a separator when present
 - Quit
 
 If only one display is connected at startup, a warning asks the projectionist to attach a second output and select it under **Beamer output**.
 
 ## Playlist
 
-The playlist is the central user interface of the player. It displays a scrollable list of the files in the order in which they will be played. Videos, images, or entire directories can be added to the list. Folders saved under **Media directories** are offered when importing. The position of an entry in the list can be changed by dragging it.
+The playlist is the central user interface of the player. It displays a scrollable list of the files in the order in which they will be played. Videos, images, or entire directories can be added to the list. Folders saved under **Media directories** are offered when importing. If **Copy files** is enabled there, imports are copied into a chosen folder and the playlist links those copies. A popup shows copy progress. The position of an entry in the list can be changed by dragging it.
 
 Missing files stay in the list and are marked. They are skipped during the program. An entry can be relinked from its context menu.
 
@@ -78,9 +82,30 @@ These settings control the behavior of the playlist.
 - **Resume** – Start or continue the current clip (**PROGRAM** → **PLAYING**), or unpause / leave still.
 - **Pause** – Pause playback and retain the current position. The video output is rendered black.
 - **Still** – Like Pause, but displays a still image of the current video position.
-- **Stop** – While **PLAYING**, end the current clip and return to **PROGRAM**. Pressed again in **PROGRAM**, end the program (**OFF**) and blank the projector.
+- **Stop** – While **PLAYING**, end the current clip and return to **PROGRAM**. Pressed again in **PROGRAM**, end the program (**OFF**) and blank the projector. In **Video calibration** or **Audio calibration**, Stop from **PROGRAM** leaves the mode and clears the test playlist.
 
 **Pause**, **Still**, and **Stop** must be confirmed before the action is performed. Pause and Still are only available while a clip is **PLAYING**. Stop is disabled in **OFF**.
+
+### Remote control
+
+Cinema Player listens on the LAN (default port **8765**) so a smartphone can run the show. Settings → **Remote control** lists the URL, can switch the API off, and requires a token (`X-Cinema-Token` or `Authorization: Bearer`). A radio icon appears in the header while the API is running. Opening the URL in a phone browser loads a remote page. A native app can use the same JSON API:
+
+- `GET /api/status` — state, playlist, progress, clocks, volume, and which actions are available
+- `GET /api/playlist` — playlist only
+- `POST /api/resume` — same as **Resume** / **Start** (no booth confirmation dialogs)
+- `POST /api/pause` — black pause
+- `POST /api/still` — freeze the current frame
+- `POST /api/stop` — end the clip on air and return to **PROGRAM** (does not end the program)
+- `PUT /api/volume` — body `{"volume": 0…100}`
+- `POST /api/program` — body `{"index": 0…}` sets the program pointer (not while **PLAYING**)
+
+The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC.
+
+### Calibration
+
+**Video** and **Audio** under **Calibration** (only while **OFF** or already calibrating) use the same mode. Each submenu offers **Load all files** (every clip in `testdata/videotestdata` or `testdata/audiosyncdata`) and, below a separator, any `.pls` playlists in that folder. The chosen list replaces the current playlist with loop on and arms the program. Idle media is not shown. The status reads **Video calibration** or **Audio calibration**. Stop from **PROGRAM** leaves the mode and clears the test playlist.
+
+In **Audio calibration**, a delay slider under the program volume sets audio vs. video in 1 ms steps (mpv `audio-delay`); the value is stored per resolution and frame rate. **Delays** lists the stored values; **Load** / **Save** read and write them as JSON. During a normal show, the matching delay is applied and shown next to the program volume.
 
 ### Time Displays
 

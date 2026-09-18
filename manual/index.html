@@ -85,8 +85,8 @@
     <ul>
       <li data-lang="en"><strong>Status bar</strong> — program state, clip name, playlist position.</li>
       <li data-lang="de"><strong>Statuszeile</strong> — Programmzustand, Clipname, Position in der Playlist.</li>
-      <li data-lang="en"><strong>Program block</strong> — progress, volume, In/Out, transport, four clocks, VU meter.</li>
-      <li data-lang="de"><strong>Programmblock</strong> — Verlauf, Lautstärke, In/Out, Transport, vier Uhren, VU-Meter.</li>
+      <li data-lang="en"><strong>Program block</strong> — progress, volume (and stored A/V delay if one exists), In/Out, transport, four clocks, VU meter.</li>
+      <li data-lang="de"><strong>Programmblock</strong> — Verlauf, Lautstärke (und gespeicherter A/V-Versatz, falls vorhanden), In/Out, Transport, vier Uhren, VU-Meter.</li>
       <li data-lang="en"><strong>Playlist tools</strong> — name, import / new / load / save, beamer change, autoplay delay, idle media.</li>
       <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Beamerwechsel, Autoplay-Pause, Pausenmedium.</li>
       <li data-lang="en"><strong>Playlist</strong> — the running order.</li>
@@ -112,12 +112,14 @@
     <figure>
       <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
       <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
-      <figcaption data-lang="en">Settings: media directories, fullscreen, design, language, beamer output, default idle media, test image, test videos, quit.</figcaption>
-      <figcaption data-lang="de">Einstellungen: Medienverzeichnisse, Vollbild, Design, Sprache, Beamerausgang, Standard-Pausenmedium, Testbild, Testvideos, Beenden.</figcaption>
+      <figcaption data-lang="en">Settings: media directories, fullscreen, design, language, beamer output, default idle media, calibration, quit.</figcaption>
+      <figcaption data-lang="de">Einstellungen: Medienverzeichnisse, Vollbild, Design, Sprache, Beamerausgang, Standard-Pausenmedium, Kalibrierung, Beenden.</figcaption>
     </figure>
     <ul>
-      <li data-lang="en"><strong>Media directories</strong> — add one or more folders. They are saved and offered when media is imported into the playlist.</li>
-      <li data-lang="de"><strong>Medienverzeichnisse</strong> — einen oder mehrere Ordner hinzufügen. Sie werden gespeichert und beim Laden von Medien in die Playlist angeboten.</li>
+      <li data-lang="en"><strong>Media directories</strong> — add one or more folders. They are saved and offered when media is imported into the playlist. The import dialog can also <strong>Copy files</strong> into a chosen folder and link those copies. A popup shows the copy progress.</li>
+      <li data-lang="de"><strong>Medienverzeichnisse</strong> — einen oder mehrere Ordner hinzufügen. Sie werden gespeichert und beim Laden von Medien in die Playlist angeboten. Im Import-Dialog können Dateien mit <strong>Files kopieren</strong> in einen gewählten Ordner kopiert und von dort verlinkt werden. Ein Popup zeigt den Kopierfortschritt.</li>
+      <li data-lang="en"><strong>Remote control</strong> — LAN API for a smartphone (default port 8765). A token is required. A radio icon in the header shows when it is running. Resume, Pause, Still, Stop (clip only, not the program), volume, playlist, progress, and clocks. Tap a playlist row to set the program pointer. Pause, Still, Stop, and the program pointer must be confirmed on the phone.</li>
+      <li data-lang="de"><strong>Fernsteuerung</strong> — LAN-API fürs Smartphone (Standardport 8765). Ein Token ist Pflicht. Ein Funk-Icon in der Kopfzeile zeigt, wenn sie läuft. Weiter, Pause, Standbild, Stop (nur Clip, nicht das Programm), Lautstärke, Playlist, Fortschritt und Zeiten. Antippen einer Playlistzeile setzt den Programmzeiger. Pause, Standbild, Stop und der Programmzeiger müssen am Telefon bestätigt werden.</li>
       <li data-lang="en"><strong>Fullscreen</strong> — control monitor only (<kbd>F11</kbd>).</li>
       <li data-lang="de"><strong>Vollbildmodus</strong> — nur Kontrollmonitor (<kbd>F11</kbd>).</li>
       <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
@@ -128,10 +130,8 @@
       <li data-lang="de"><strong>Beamerausgang</strong> — welcher Anschluss der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt. Im Untermenü gibt es außerdem <strong>EDID</strong>: ein Fenster mit den vollständigen EDID-Daten des Beamers.</li>
       <li data-lang="en"><strong>Use default Idle Media</strong> — checkbox. When on, the projector idle clip is the file in <code>idle</code>. The choice is saved and applied again at the next start.</li>
       <li data-lang="de"><strong>Standard-Pausenmedium verwenden</strong> — Kontrollkästchen. Wenn aktiv, ist das Pausenmedium die Datei im Ordner <code>idle</code>. Die Wahl wird gespeichert und beim nächsten Start wieder angewendet.</li>
-      <li data-lang="en"><strong>Beamer test image</strong> — Cinema Player logo on the projector until you close the dialog. Only in <strong>OFF</strong>.</li>
-      <li data-lang="de"><strong>Beamer-Testbild</strong> — Cinema-Player-Logo auf dem Beamer, bis der Dialog geschlossen wird. Nur bei <strong>AUS</strong>.</li>
-      <li data-lang="en"><strong>Load test videos</strong> — replaces the playlist with files from <code>testdata</code>.</li>
-      <li data-lang="de"><strong>Testvideos laden</strong> — ersetzt die Playlist durch die Dateien in <code>testdata</code>.</li>
+      <li data-lang="en"><strong>Calibration</strong> — in <strong>OFF</strong> and while already calibrating. <strong>Beamer test image</strong> (logo on the projector until you close the dialog; only in <strong>OFF</strong>). <strong>Video</strong> and <strong>Audio</strong> each have a submenu: <strong>Load all files</strong> (every clip in <code>testdata/videotestdata</code> or <code>testdata/audiosyncdata</code>, loop on), then any <code>.pls</code> playlists in that folder. Audio also has the A/V delay slider.</li>
+      <li data-lang="de"><strong>Kalibrierung</strong> — bei <strong>AUS</strong> und während einer Kalibrierung. <strong>Beamer-Testbild</strong> (Logo auf dem Beamer, bis der Dialog geschlossen wird; nur bei <strong>AUS</strong>). <strong>Video</strong> und <strong>Audio</strong> haben je ein Untermenü: <strong>Alle Files laden</strong> (alle Clips in <code>testdata/videotestdata</code> bzw. <code>testdata/audiosyncdata</code>, Loop an), darunter vorhandene <code>.pls</code>-Playlists. Audio hat zusätzlich den A/V-Versatzregler.</li>
       <li data-lang="en"><strong>Quit</strong> — only enabled in <strong>OFF</strong>.</li>
       <li data-lang="de"><strong>Beenden</strong> — nur bei <strong>AUS</strong> aktiv.</li>
     </ul>
@@ -141,10 +141,10 @@
       <span data-lang="de">4. Programmzustände und Transport</span>
     </h2>
     <p data-lang="en">
-      A show has three states. <strong>Start</strong> only arms the program. <strong>Resume</strong> rolls the clip. Idle media (if set) appears only in <strong>PROGRAM</strong>, never in <strong>OFF</strong>.
+      A show has three states. <strong>Start</strong> only arms the program. <strong>Resume</strong> rolls the clip. Idle media (if set) appears only in <strong>PROGRAM</strong>, never in <strong>OFF</strong>. <strong>Video calibration</strong> and <strong>Audio calibration</strong> overlay that status; Stop from PROGRAM leaves the mode.
     </p>
     <p data-lang="de">
-      Eine Vorstellung hat drei Zustände. <strong>Start</strong> schaltet das Programm nur scharf. <strong>Weiter</strong> startet den Clip. Ein Pausenmedium erscheint nur im Zustand <strong>PROGRAMM</strong>, niemals bei <strong>AUS</strong>.
+      Eine Vorstellung hat drei Zustände. <strong>Start</strong> schaltet das Programm nur scharf. <strong>Weiter</strong> startet den Clip. Ein Pausenmedium erscheint nur im Zustand <strong>PROGRAMM</strong>, niemals bei <strong>AUS</strong>. <strong>Videokalibrierung</strong> und <strong>Audiokalibrierung</strong> überlagern diesen Status; Stop aus PROGRAMM verlässt den Modus.
     </p>
     <div class="states">
       <figure>
@@ -227,8 +227,8 @@
           <td><img src="images/icons/stop.png" alt=""></td>
           <td data-lang="en">Stop</td>
           <td data-lang="de">Stop</td>
-          <td data-lang="en">While PLAYING: end the clip → PROGRAM. Again: end the program → OFF.</td>
-          <td data-lang="de">Bei WIEDERGABE: Clip beenden → PROGRAMM. Nochmals: Programm beenden → AUS.</td>
+          <td data-lang="en">While PLAYING: end the clip → PROGRAM. Again: end the program → OFF. In calibration, Stop from PROGRAM leaves the mode.</td>
+          <td data-lang="de">Bei WIEDERGABE: Clip beenden → PROGRAMM. Nochmals: Programm beenden → AUS. In der Kalibrierung verlässt Stop aus PROGRAMM den Modus.</td>
         </tr>
       </tbody>
     </table>
@@ -282,8 +282,8 @@
       <tbody>
         <tr>
           <td><img src="images/icons/video_import.png" alt=""></td>
-          <td data-lang="en">Import files or a folder. Saved media directories are offered first.</td>
-          <td data-lang="de">Dateien oder einen Ordner übernehmen. Gespeicherte Medienverzeichnisse werden zuerst angeboten.</td>
+          <td data-lang="en">Import files or a folder. Saved media directories are offered first; <strong>Import folder</strong> opens a folder dialog there so the path can still be changed. Optional <strong>Copy files</strong> copies them into a chosen folder and links the copies.</td>
+          <td data-lang="de">Dateien oder einen Ordner übernehmen. Gespeicherte Medienverzeichnisse werden zuerst angeboten; <strong>Ordner importieren</strong> öffnet dort einen Ordnerdialog, damit der Pfad noch geändert werden kann. Optional <strong>Files kopieren</strong> kopiert sie in einen gewählten Ordner und verlinkt die Kopien.</td>
         </tr>
         <tr>
           <td><img src="images/icons/playlist_new.png" alt=""></td>

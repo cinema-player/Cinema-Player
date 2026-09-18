@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#111111">
+  <title>Cinema Player</title>
+  <style>
+    :root {
+      --bg: #111;
+      --panel: #1c1c1c;
+      --text: #eee;
+      --muted: #9a9a9a;
+      --off: #c62828;
+      --program: #1565c0;
+      --playing: #2e9d3a;
+      --cal: #500070;
+      --btn: #2a2a2a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      padding: calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+    }
+    h1 { font-size: 1.05rem; margin: 0 0 8px; font-weight: 700; letter-spacing: .04em; }
+    .status {
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      background: var(--off);
+      color: #fff;
+    }
+    .status .name { font-size: 1.15rem; font-weight: 700; }
+    .status .meta { opacity: .9; font-size: .9rem; margin-top: 4px; }
+    .clocks {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .clock {
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+    }
+    .clock span { display: block; color: var(--muted); font-size: .75rem; }
+    .clock b { font-size: 1.15rem; }
+    .bar {
+      height: 8px;
+      background: #333;
+      border-radius: 99px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .bar i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: var(--playing);
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    #stop { background: var(--off); color: #fff; }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      background: var(--btn);
+      color: var(--text);
+      font: inherit;
+      font-weight: 700;
+      padding: 18px 8px;
+      min-height: 64px;
+    }
+    button:disabled { opacity: .35; }
+    button.active { outline: 3px solid #fff; }
+    .vol { margin-bottom: 16px; }
+    .vol label { display: flex; justify-content: space-between; font-size: .9rem; margin-bottom: 6px; }
+    input[type=range] { width: 100%; }
+    .list {
+      background: var(--panel);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid #2a2a2a;
+      font-size: .92rem;
+      cursor: pointer;
+    }
+    .row[data-disabled="1"] { cursor: default; }
+    .row:first-child { border-top: 0; }
+    .row.current { background: #16325a; }
+    .row.playing { background: #1a4a22; }
+    .row .n { width: 1.6rem; color: var(--muted); }
+    .row .f { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .err { color: #ff8a80; font-size: .85rem; min-height: 1.2em; margin: 0 0 10px; }
+    .token { margin-bottom: 12px; }
+    .token input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 0;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .72);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 20;
+    }
+    .modal[hidden] { display: none; }
+    .dialog {
+      background: var(--panel);
+      border-radius: 16px;
+      padding: 20px 18px 16px;
+      width: min(420px, 100%);
+    }
+    .dialog h2 { margin: 0 0 10px; font-size: 1.15rem; }
+    .dialog p { margin: 0 0 18px; color: var(--muted); line-height: 1.4; }
+    .dialog .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .dialog .yes { background: var(--off); color: #fff; }
+  </style>
+</head>
+<body>
+  <h1>Cinema Player</h1>
+  <div id="token-box" class="token">
+    <input id="token" type="password" autocomplete="off" placeholder="Token">
+  </div>
+  <p class="err" id="err"></p>
+  <div class="status" id="status">
+    <div class="name" id="state">…</div>
+    <div class="meta" id="clip"></div>
+  </div>
+  <div class="bar"><i id="progress"></i></div>
+  <div class="clocks">
+    <div class="clock"><span data-i="total">Total</span><b id="t-total">--:--</b></div>
+    <div class="clock"><span data-i="elapsed">Elapsed</span><b id="t-elapsed">--:--</b></div>
+    <div class="clock"><span data-i="remaining">Remaining</span><b id="t-remaining">--:--</b></div>
+    <div class="clock"><span data-i="end">End</span><b id="t-end">--:--</b></div>
+  </div>
+  <div class="actions">
+    <button id="resume" type="button">Resume</button>
+    <button id="pause" type="button">Pause</button>
+    <button id="still" type="button">Still</button>
+    <button id="stop" type="button">Stop</button>
+  </div>
+  <div class="vol">
+    <label><span data-i="volume">Volume</span><b id="vol-label">100</b></label>
+    <input id="volume" type="range" min="0" max="100" value="100">
+  </div>
+  <div class="list" id="playlist"></div>
+  <div class="modal" id="confirm" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-text"></p>
+      <div class="choices">
+        <button type="button" id="confirm-no">No</button>
+        <button type="button" class="yes" id="confirm-yes">Yes</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const I18N = {
+      en: { resume: "Resume", pause: "Pause", still: "Still", stop: "Stop", volume: "Volume",
+            total: "Total", elapsed: "Elapsed", remaining: "Remaining", end: "End",
+            token: "Token", yes: "Yes", no: "No",
+            pause_title: "Pause",
+            pause_message: "Pause playback? The projector output will go black.",
+            still_title: "Still",
+            still_message: "Freeze the current frame on the projector?",
+            stop_title: "Stop",
+            stop_message: "Stop the current clip?",
+            set_program: "Set program pointer",
+            program_message: "Set the program pointer to {name}?" },
+      de: { resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
+            total: "Gesamt", elapsed: "Gelaufen", remaining: "Rest", end: "Ende",
+            token: "Token", yes: "Ja", no: "Nein",
+            pause_title: "Pause",
+            pause_message: "Wiedergabe pausieren? Die Beamerausgabe wird schwarz.",
+            still_title: "Standbild",
+            still_message: "Aktuelles Bild auf dem Beamer einfrieren?",
+            stop_title: "Stop",
+            stop_message: "Aktuellen Clip stoppen?",
+            set_program: "Programmzeiger setzen",
+            program_message: "Programmzeiger auf {name} setzen?" }
+    };
+    const tokenInput = document.getElementById("token");
+    tokenInput.value = sessionStorage.getItem("cinema-token") || "";
+    const colors = { OFF: "var(--off)", PROGRAM: "var(--program)", PLAYING: "var(--playing)" };
+    let lastVolume = 100;
+    let dragging = false;
+    let uiLang = "en";
+
+    function headers() {
+      const token = tokenInput.value.trim();
+      const h = { "Content-Type": "application/json" };
+      if (token) h["X-Cinema-Token"] = token;
+      return h;
+    }
+
+    async function api(path, method, body) {
+      const res = await fetch(path, {
+        method: method || "GET",
+        headers: headers(),
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const data = await res.json();
+      if (res.status === 401) {
+        document.getElementById("token-box").hidden = false;
+        throw new Error("unauthorized");
+      }
+      return data;
+    }
+
+    function applyLang(lang) {
+      const table = I18N[lang] || I18N.en;
+      document.getElementById("resume").textContent = table.resume;
+      document.getElementById("pause").textContent = table.pause;
+      document.getElementById("still").textContent = table.still;
+      document.getElementById("stop").textContent = table.stop;
+      document.querySelector('[data-i="volume"]').textContent = table.volume;
+      document.querySelector('[data-i="total"]').textContent = table.total;
+      document.querySelector('[data-i="elapsed"]').textContent = table.elapsed;
+      document.querySelector('[data-i="remaining"]').textContent = table.remaining;
+      document.querySelector('[data-i="end"]').textContent = table.end;
+      tokenInput.placeholder = table.token;
+      document.getElementById("confirm-yes").textContent = table.yes;
+      document.getElementById("confirm-no").textContent = table.no;
+    }
+
+    function render(data) {
+      const err = document.getElementById("err");
+      err.textContent = data.ok === false && data.error && data.error !== "unauthorized"
+        ? data.error : "";
+      const state = data.state || "OFF";
+      document.getElementById("state").textContent = data.state_label || state;
+      document.getElementById("status").style.background =
+        data.calibration ? "var(--cal)" : (colors[state] || colors.OFF);
+      const clip = data.clip || {};
+      document.getElementById("clip").textContent = clip.filename
+        ? `${(clip.index || 0) + 1} · ${clip.filename}`
+        : "";
+      const times = data.times || {};
+      document.getElementById("t-total").textContent = times.total || "--:--";
+      document.getElementById("t-elapsed").textContent = times.elapsed || "--:--";
+      document.getElementById("t-remaining").textContent = times.remaining || "--:--";
+      document.getElementById("t-end").textContent = times.end || "--:--";
+      document.getElementById("progress").style.width =
+        `${Math.round((times.progress || 0) * 100)}%`;
+      const actions = data.actions || {};
+      document.getElementById("resume").disabled = !actions.resume;
+      document.getElementById("pause").disabled = !actions.pause;
+      document.getElementById("still").disabled = !actions.still;
+      document.getElementById("stop").disabled = !actions.stop;
+      document.getElementById("pause").classList.toggle("active", !!data.paused);
+      document.getElementById("still").classList.toggle("active", !!data.still);
+      if (!dragging && typeof data.volume === "number") {
+        lastVolume = data.volume;
+        document.getElementById("volume").value = data.volume;
+        document.getElementById("vol-label").textContent = data.volume;
+      }
+      uiLang = data.language || "en";
+      applyLang(uiLang);
+      const list = document.getElementById("playlist");
+      const canCue = !!(actions.set_program);
+      list.innerHTML = (data.playlist || []).map((row) => {
+        const cls = row.current && state === "PLAYING" ? "row playing"
+          : row.current ? "row current" : "row";
+        const disabled = !canCue || row.missing || row.current;
+        const marks = [
+          row.loop ? "LOOP" : "",
+          row.autoplay ? "AUTO" : "",
+          row.played ? "●" : "",
+          row.missing ? "!" : ""
+        ].filter(Boolean).join(" ");
+        return `<div class="${cls}" data-index="${row.index}" data-name="${esc(row.filename)}" data-disabled="${disabled ? "1" : "0"}">` +
+          `<span class="n">${row.index + 1}</span>` +
+          `<span class="f">${esc(row.filename)}</span>` +
+          `<span>${esc(row.duration_label)}${marks ? " " + marks : ""}</span></div>`;
+      }).join("");
+    }
+
+    function esc(text) {
+      return String(text || "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    async function poll() {
+      try {
+        render(await api("/api/status"));
+      } catch (exc) {
+        document.getElementById("err").textContent = exc.message;
+      }
+    }
+
+    async function command(path, method, body) {
+      try {
+        render(await api(path, method, body));
+      } catch (exc) {
+        document.getElementById("err").textContent = exc.message;
+      }
+    }
+
+    const confirmBox = document.getElementById("confirm");
+    let confirmAction = null;
+
+    function askConfirm(kind, path, extra) {
+      extra = extra || {};
+      const table = I18N[uiLang] || I18N.en;
+      if (kind === "program") {
+        document.getElementById("confirm-title").textContent = table.set_program;
+        document.getElementById("confirm-text").textContent =
+          table.program_message.replace("{name}", extra.name || "");
+      } else {
+        document.getElementById("confirm-title").textContent = table[kind + "_title"];
+        document.getElementById("confirm-text").textContent = table[kind + "_message"];
+      }
+      confirmAction = { path: path, body: extra.body || null };
+      confirmBox.hidden = false;
+    }
+
+    function closeConfirm() {
+      confirmAction = null;
+      confirmBox.hidden = true;
+    }
+
+    document.getElementById("resume").onclick = () => command("/api/resume", "POST");
+    document.getElementById("pause").onclick = () => askConfirm("pause", "/api/pause");
+    document.getElementById("still").onclick = () => askConfirm("still", "/api/still");
+    document.getElementById("stop").onclick = () => askConfirm("stop", "/api/stop");
+    document.getElementById("confirm-yes").onclick = () => {
+      const action = confirmAction;
+      closeConfirm();
+      if (action) command(action.path, "POST", action.body);
+    };
+    document.getElementById("confirm-no").onclick = closeConfirm;
+    confirmBox.addEventListener("click", (event) => {
+      if (event.target === confirmBox) closeConfirm();
+    });
+    document.getElementById("playlist").addEventListener("click", (event) => {
+      const row = event.target.closest("[data-index]");
+      if (!row || row.dataset.disabled === "1") return;
+      askConfirm("program", "/api/program", {
+        name: row.dataset.name,
+        body: { index: Number(row.dataset.index) },
+      });
+    });
+    const slider = document.getElementById("volume");
+    slider.addEventListener("pointerdown", () => { dragging = true; });
+    slider.addEventListener("pointerup", () => { dragging = false; });
+    slider.addEventListener("input", () => {
+      document.getElementById("vol-label").textContent = slider.value;
+    });
+    slider.addEventListener("change", () => {
+      command("/api/volume", "PUT", { volume: Number(slider.value) });
+    });
+    tokenInput.addEventListener("change", () => {
+      sessionStorage.setItem("cinema-token", tokenInput.value.trim());
+      poll();
+    });
+    poll();
+    setInterval(poll, 500);
+  </script>
+</body>
+</html>
