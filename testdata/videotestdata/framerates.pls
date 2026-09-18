@@ -2,12 +2,12 @@
   "projection_zoom": false,
   "autoplay_delay": 0.0,
   "idle_media": "AFC Idle.mp4",
-  "idle_media_path": "/home/administrator/Cinema-Player/idle/AFC Idle.mp4",
+  "idle_media_path": "./idle/AFC Idle.mp4",
   "program_index": 0,
   "autosave_on_program_change": false,
   "entries": [
     {
-      "path": "/home/administrator/Cinema-Player/testdata/videotestdata/UHD_25fps.mp4",
+      "path": "./testdata/videotestdata/UHD_25fps.mp4",
       "filename": "UHD_25fps.mp4",
       "duration": 10.0,
       "container": "MP4",
@@ -45,7 +45,7 @@
       "loudness_lufs": null
     },
     {
-      "path": "/home/administrator/Cinema-Player/testdata/videotestdata/UHD_30fps.mp4",
+      "path": "./testdata/videotestdata/UHD_30fps.mp4",
       "filename": "UHD_30fps.mp4",
       "duration": 10.0,
       "container": "MP4",
@@ -83,7 +83,7 @@
       "loudness_lufs": null
     },
     {
-      "path": "/home/administrator/Cinema-Player/testdata/videotestdata/rec2020-16x9.mp4",
+      "path": "./testdata/videotestdata/rec2020-16x9.mp4",
       "filename": "rec2020-16x9.mp4",
       "duration": 6.0,
       "container": "MP4",

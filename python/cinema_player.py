@@ -110,6 +110,41 @@ def gpu_context_for_mpv(path, embed=False):
     return "auto"
 
 
+_mpv_list_options_cache = {}
+
+
+def mpv_list_options(path):
+    cached = _mpv_list_options_cache.get(path)
+    if cached is not None:
+        return cached
+    try:
+        result = subprocess.run(
+            [path, "--list-options"],
+            capture_output=True, text=True, timeout=5,
+        )
+        text = f"{result.stdout}\n{result.stderr}"
+    except (OSError, subprocess.TimeoutExpired):
+        text = ""
+    _mpv_list_options_cache[path] = text
+    return text
+
+
+def mpv_has_option(path, name):
+    token = f"--{name}"
+    for line in mpv_list_options(path).splitlines():
+        stripped = line.strip()
+        if stripped == token or stripped.startswith(token + " "):
+            return True
+    return False
+
+
+def mpv_background_args(path):
+    """Solid black behind the video; syntax changed in mpv 0.38."""
+    if mpv_has_option(path, "background-color"):
+        return ["--background=color", "--background-color=#000000"]
+    return ["--background=#000000"]
+
+
 def find_mpv():
     candidates = []
     env_path = os.environ.get("CINEMA_MPV")
@@ -2163,8 +2198,7 @@ class VideoOutputManager:
             "--force-window=yes",
             "--osd-level=0",
             "--osc=no",
-            "--background=color",
-            "--background-color=#000000",
+            *mpv_background_args(mpv_path),
             "--cursor-autohide=always",
             "--sid=no",
             "--sub-auto=no",

@@ -2,12 +2,12 @@
   "projection_zoom": false,
   "autoplay_delay": 0.0,
   "idle_media": "AFC Idle.mp4",
-  "idle_media_path": "/home/administrator/Cinema-Player/idle/AFC Idle.mp4",
+  "idle_media_path": "./idle/AFC Idle.mp4",
   "program_index": 1,
   "autosave_on_program_change": false,
   "entries": [
     {
-      "path": "/home/administrator/Cinema-Player/testdata/videotestdata/h264-subtitle.mp4",
+      "path": "./testdata/videotestdata/h264-subtitle.mp4",
       "filename": "h264-subtitle.mp4",
       "duration": 10.0,
       "container": "MP4",
@@ -48,7 +48,7 @@
       "loudness_lufs": null
     },
     {
-      "path": "/home/administrator/Cinema-Player/testdata/videotestdata/dv_pal_16x9.avi",
+      "path": "./testdata/videotestdata/dv_pal_16x9.avi",
       "filename": "dv_pal_16x9.avi",
       "duration": 8.0,
       "container": "AVI",
@@ -84,7 +84,7 @@
       "loudness_lufs": null
     },
     {
-      "path": "/home/administrator/Cinema-Player/testdata/videotestdata/dv_pal_4x3.avi",
+      "path": "./testdata/videotestdata/dv_pal_4x3.avi",
       "filename": "dv_pal_4x3.avi",
       "duration": 5.0,
       "container": "AVI",
