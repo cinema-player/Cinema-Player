@@ -3,10 +3,11 @@
 """
 Linux / NVIDIA / mpv Video Player
 Two mpv instances:
-    - Main: exclusive video output on a separate HDMI output
+    - Main: exclusive video output on a GPU connector or a Blackmagic DeckLink card
     - Preview: separate mpv window on the control monitor
 
 Display control uses XRandR on X11 and GNOME gdctl on Wayland.
+DeckLink cards are driven through ffmpeg or GStreamer, not as a desktop screen.
 """
 
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
@@ -24,6 +25,8 @@ import threading
 import tomllib
 from dataclasses import dataclass, field, fields
 from fractions import Fraction
+
+import decklink
 
 
 VIDEO_OUTPUT = None
@@ -1368,6 +1371,10 @@ class VideoOutputManager:
         self._gdctl_cache = None
         self._gdctl_cache_at = 0.0
         self._device_name_cache = None
+        self._decklink_sink = None
+        self._decklink_backend = None
+        self._decklink_modes_cache = {}
+        self._decklink_sink_key = None
 
     @staticmethod
     def desktop_env():
@@ -1408,7 +1415,14 @@ class VideoOutputManager:
         self._gdctl_cache_at = now
         return self._gdctl_cache
 
-    def get_outputs(self):
+    def is_decklink(self, name=None):
+        return decklink.is_decklink_output(name if name is not None else self.video_output)
+
+    def output_label(self, name=None):
+        value = name if name is not None else self.video_output
+        return decklink.format_output_label(value) if value else ""
+
+    def get_desktop_outputs(self):
         if session_is_wayland() and not self.uses_gdctl():
             raise RuntimeError(
                 "Wayland ohne GNOME `gdctl`: Display-Steuerung wird nicht unterstützt."
@@ -1421,6 +1435,26 @@ class VideoOutputManager:
             if match:
                 outputs.append(match.group(1))
         return outputs
+
+    def get_decklink_outputs(self):
+        try:
+            return decklink.list_decklink_output_ids()
+        except Exception:
+            return []
+
+    def get_outputs(self):
+        desktop = []
+        desktop_error = None
+        try:
+            desktop = self.get_desktop_outputs()
+        except RuntimeError as exc:
+            desktop_error = exc
+        cards = self.get_decklink_outputs()
+        if desktop or cards:
+            return [*desktop, *cards]
+        if desktop_error:
+            raise desktop_error
+        return []
 
     def get_primary_output(self):
         if self.uses_gdctl():
@@ -1435,6 +1469,8 @@ class VideoOutputManager:
         return None
 
     def get_output_geometry(self, output_name):
+        if self.is_decklink(output_name):
+            return None
         if self.uses_gdctl():
             state = self.gdctl_state()
             current = state.current.get(output_name)
@@ -1460,6 +1496,8 @@ class VideoOutputManager:
         """
         named = []
         for name in self.get_outputs():
+            if self.is_decklink(name):
+                continue
             geometry = self.get_output_geometry(name)
             if geometry:
                 named.append((name, geometry))
@@ -1492,6 +1530,7 @@ class VideoOutputManager:
             raise RuntimeError("Keine angeschlossenen Anzeigeausgänge gefunden.")
 
         if preferred:
+            preferred = self.canonicalize_video_output(preferred, outputs)
             if preferred not in outputs:
                 raise RuntimeError(f"Ausgang {preferred} ist nicht angeschlossen.")
             self.video_output = preferred
@@ -1499,41 +1538,173 @@ class VideoOutputManager:
             return preferred
 
         if self.video_output:
-            if self.video_output not in outputs:
+            current = self.canonicalize_video_output(self.video_output, outputs)
+            if current not in outputs:
                 raise RuntimeError(f"Ausgang {self.video_output} ist nicht angeschlossen.")
+            self.video_output = current
             return self.video_output
 
-        primary = self.get_primary_output()
-        for output in outputs:
+        primary = None
+        try:
+            primary = self.get_primary_output()
+        except Exception:
+            primary = None
+        desktop = [name for name in outputs if not self.is_decklink(name)]
+        cards = [name for name in outputs if self.is_decklink(name)]
+        for output in desktop:
             if output != primary:
                 self.video_output = output
                 self._program_audio_device = None
                 return output
+        if cards:
+            self.video_output = cards[0]
+            self._program_audio_device = None
+            return cards[0]
 
         self.video_output = outputs[0]
         self._program_audio_device = None
         return self.video_output
 
     def has_dedicated_beamer(self):
-        """True when a second connected output can be used as the projector."""
+        """True when a second display or a DeckLink card can take the projector."""
         try:
-            return len(self.get_outputs()) >= 2
+            desktop = self.get_desktop_outputs()
         except Exception:
-            return False
+            desktop = []
+        if len(desktop) >= 2:
+            return True
+        return bool(self.get_decklink_outputs())
+
+    def canonicalize_video_output(self, name, outputs=None):
+        """Resolve a saved DeckLink id onto the current SDI/HDMI item when needed."""
+        if not name:
+            return name
+        if not self.is_decklink(name):
+            return name
+        resolved = decklink.canonicalize_output_id(name)
+        if outputs is None:
+            return resolved
+        if resolved in outputs:
+            return resolved
+        if name in outputs:
+            return name
+        wanted = decklink.decklink_device_name(name)
+        for candidate in outputs:
+            if self.is_decklink(candidate) and decklink.decklink_device_name(candidate) == wanted:
+                return candidate
+        return resolved
 
     def set_video_output(self, name):
         """Switch the projector connector and restore the previous display mode."""
         outputs = self.get_outputs()
+        name = self.canonicalize_video_output(name, outputs)
         if name not in outputs:
             raise RuntimeError(f"Ausgang {name} ist nicht angeschlossen.")
         if name == self.video_output:
             return name
+        self.stop_program_sink()
         self.restore_original_mode()
         self.video_output = name
         self.video_mode = None
         self._program_audio_device = None
         self._program_audio_output = None
         return name
+
+    def _decklink_display_modes(self, output_name):
+        cached = self._decklink_modes_cache.get(output_name)
+        if cached is not None:
+            return list(cached)
+        modes = []
+        for item in decklink.list_decklink_modes(output_name):
+            modes.append(DisplayMode(
+                output_name,
+                item.width,
+                item.height,
+                item.refresh,
+                name=item.format_code or item.gst_mode,
+            ))
+        self._decklink_modes_cache[output_name] = tuple(modes)
+        return list(modes)
+
+    def decklink_vf(self, black=False):
+        mode = self.effective_mode()
+        if not mode:
+            return ""
+        vf = decklink.video_filter(mode.width, mode.height, mode.refresh)
+        if black:
+            return f"{vf},eq=brightness=-1:saturation=0"
+        return vf
+
+    def decklink_mode_for_sink(self):
+        mode = self.effective_mode()
+        if not mode:
+            return None
+        for item in decklink.list_decklink_modes(self.video_output):
+            if (
+                item.width == mode.width
+                and item.height == mode.height
+                and self.refresh_close(item.refresh, mode.refresh)
+            ):
+                return item
+        return decklink.DeckLinkMode(
+            width=mode.width,
+            height=mode.height,
+            refresh=mode.refresh,
+            format_code=mode.name,
+            gst_mode=decklink.gst_mode_name(mode.width, mode.height, mode.refresh),
+        )
+
+    def start_program_sink(self):
+        """Start the DeckLink encoder sink. No-op for GPU connectors."""
+        self.stop_program_sink()
+        if not self.is_decklink():
+            return None
+        if not self.effective_mode():
+            preferred = self.get_preferred_mode(self.video_output)
+            if preferred:
+                self.video_mode = preferred
+        mode = self.decklink_mode_for_sink()
+        if mode is None:
+            raise RuntimeError("Kein DeckLink-Modus gesetzt.")
+        sink = decklink.start_sink(self.video_output, mode)
+        self._decklink_sink = sink
+        self._decklink_backend = sink.backend
+        self._decklink_sink_key = (mode.width, mode.height, mode.refresh)
+        return sink
+
+    def stop_program_sink(self):
+        sink = self._decklink_sink
+        self._decklink_sink = None
+        self._decklink_backend = None
+        self._decklink_sink_key = None
+        if sink:
+            decklink.stop_sink(sink)
+
+    def sink_mode_matches(self, mode):
+        if not self.is_decklink() or not self._decklink_sink or not self._decklink_sink_key:
+            return False
+        width, height, refresh = self._decklink_sink_key
+        return (
+            mode is not None
+            and width == mode.width
+            and height == mode.height
+            and self.refresh_close(refresh, mode.refresh)
+        )
+
+    def sink_stdin(self):
+        sink = self._decklink_sink
+        return sink.stdin if sink else None
+
+    def release_sink_stdin(self):
+        """Close the parent's copy of the sink pipe after mpv has attached."""
+        sink = self._decklink_sink
+        if not sink or not sink.stdin:
+            return
+        try:
+            sink.stdin.close()
+        except OSError:
+            pass
+        sink.stdin = None
 
     def program_audio_device(self, mpv_path):
         """Audio device for program playback: the projector HDMI, not the desktop default."""
@@ -1543,6 +1714,9 @@ class VideoOutputManager:
                 output = self.select_video_output()
             except RuntimeError:
                 return None
+        if self.is_decklink(output):
+            # Embedded SDI/HDMI audio is muxed by the DeckLink sink, not Pulse/ALSA.
+            return None
         if self._program_audio_device and self._program_audio_output == output:
             return self._program_audio_device
         siblings = []
@@ -1567,6 +1741,8 @@ class VideoOutputManager:
         return device
 
     def get_modes(self, output_name):
+        if self.is_decklink(output_name):
+            return self._decklink_display_modes(output_name)
         if self.uses_gdctl():
             return list(self.gdctl_state().modes.get(output_name, []))
         modes = []
@@ -1610,6 +1786,11 @@ class VideoOutputManager:
         return modes
 
     def get_current_mode(self, output_name):
+        if self.is_decklink(output_name):
+            if self.video_mode and self.video_mode.output == output_name:
+                return self.video_mode
+            preferred = self.get_preferred_mode(output_name)
+            return preferred
         if self.uses_gdctl():
             state = self.gdctl_state()
             current = state.current.get(output_name)
@@ -1667,6 +1848,17 @@ class VideoOutputManager:
         return None
 
     def get_preferred_mode(self, output_name):
+        if self.is_decklink(output_name):
+            modes = self.get_modes(output_name)
+            if not modes:
+                return None
+            hd = [m for m in modes if m.width == 1920 and m.height == 1080]
+            pool = hd or modes
+            for rate in (25.0, 24.0, 24000 / 1001, 50.0):
+                for mode in pool:
+                    if self.refresh_close(mode.refresh, rate):
+                        return mode
+            return pool[0]
         if self.uses_gdctl():
             return self.gdctl_state().preferred.get(output_name)
         inside = False
@@ -1703,7 +1895,7 @@ class VideoOutputManager:
         return None
 
     def get_timings(self, output_name):
-        if self.uses_gdctl():
+        if self.is_decklink(output_name) or self.uses_gdctl():
             return []
         timings = []
         inside = False
@@ -1766,7 +1958,7 @@ class VideoOutputManager:
     def read_edid(self, output_name=None):
         """Raw EDID bytes and source path for a connector (projector by default)."""
         name = output_name or self.video_output
-        if not name:
+        if not name or self.is_decklink(name):
             return None, None
         data, source = find_sysfs_edid(name)
         if data:
@@ -1781,10 +1973,12 @@ class VideoOutputManager:
         return None, None
 
     def get_output_device_name(self, output_name=None):
-        """Monitor / projector name reported by EDID or the desktop for this output."""
+        """Monitor / projector name reported by EDID, DeckLink, or the desktop."""
         name = output_name or self.video_output or ""
         if not name:
             return ""
+        if self.is_decklink(name):
+            return self.output_label(name)
         now = time.monotonic()
         cache = self._device_name_cache
         if cache and cache[0] == name and now - cache[1] < 2.0:
@@ -1804,7 +1998,17 @@ class VideoOutputManager:
         return value
 
     def edid_report(self, output_name=None):
-        """Complete decoded EDID text for the projector, or None if missing."""
+        """Complete decoded EDID text for the projector, or DeckLink mode list."""
+        name = output_name or self.video_output
+        if self.is_decklink(name):
+            text = decklink.formats_report(name)
+            return {
+                "output": self.output_label(name),
+                "source": "DeckLink",
+                "data": text.encode("utf-8"),
+                "decoded": text,
+                "kind": "decklink",
+            }
         data, source = self.read_edid(output_name)
         if not data:
             return None
@@ -1914,7 +2118,11 @@ class VideoOutputManager:
         if not modes:
             return None, False
 
+        create = create and not self.is_decklink()
         targets = self.target_refresh_rates(video.fps)
+        if self.is_decklink():
+            # SDI should use the clip's native rate when the card has it (25p, not 50p).
+            targets = sorted(targets, key=lambda item: (item[1] != 1, item[1]))
         self.target_refresh = targets[0][0] if targets else video.fps
         width, height = video.width, video.height
 
@@ -1957,7 +2165,7 @@ class VideoOutputManager:
         return fallback, self.refresh_matches(video.fps, fallback.refresh)
 
     def ensure_custom_mode(self, output_name, width, height, refresh):
-        if self.uses_gdctl():
+        if self.is_decklink(output_name) or self.uses_gdctl():
             return None
         modes = self.get_modes(output_name)
         existing = self.find_refresh_mode(modes, width, height, refresh)
@@ -2080,7 +2288,7 @@ class VideoOutputManager:
 
     def ensure_operator_layout(self):
         """Keep the booth display at (0, 0) so GNOME desktop icons stay off the projector."""
-        if not self.uses_gdctl() or not self.video_output:
+        if self.is_decklink() or not self.uses_gdctl() or not self.video_output:
             return
         try:
             state = self.gdctl_state()
@@ -2106,6 +2314,10 @@ class VideoOutputManager:
         self._gdctl_apply_mode(current)
 
     def set_mode(self, mode):
+        if self.is_decklink(mode.output):
+            self.video_mode = mode
+            return
+
         if self.original_mode is None:
             self.original_mode = self.get_current_mode(mode.output)
 
@@ -2185,6 +2397,23 @@ class VideoOutputManager:
         if not mode:
             raise RuntimeError("Kein Video-Modus gesetzt.")
         mpv_path = mpv_path or find_mpv()
+        if self.is_decklink():
+            backend = self._decklink_backend
+            if not backend and self._decklink_sink:
+                backend = self._decklink_sink.backend
+            if not backend:
+                backend, _tool = decklink.choose_decklink_backend()
+            if not backend:
+                raise RuntimeError(
+                    "DeckLink-Ausgabe braucht Blackmagic Desktop Video und ffmpeg "
+                    "(--enable-decklink) oder GStreamer decklinkvideosink."
+                )
+            self._decklink_backend = backend
+            arguments = decklink.mpv_arguments(mode, backend)
+            black = os.path.join(ROOT_DIR, "black.png")
+            if os.path.isfile(black):
+                arguments.append(black)
+            return arguments
         wayland = session_is_wayland()
         arguments = [
             "--no-border",
@@ -2216,7 +2445,10 @@ class VideoOutputManager:
         return arguments
 
     def restore_original_mode(self):
-        if not self.original_mode:
+        if not self.original_mode or self.is_decklink(self.original_mode.output):
+            self.original_mode = None
+            if self.is_decklink():
+                self.video_mode = None
             return
 
         mode = self.original_mode
@@ -2270,7 +2502,7 @@ class MPVController:
             return f"{reason}\n\nmpv-Log ({self.log_path}):\n{details}"
         return reason
 
-    def start(self, arguments):
+    def start(self, arguments, stdout=None):
         try:
             os.unlink(self.socket_path)
         except FileNotFoundError:
@@ -2286,7 +2518,7 @@ class MPVController:
 
         self.process = subprocess.Popen(
             command,
-            stdout=subprocess.DEVNULL,
+            stdout=stdout if stdout is not None else subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
 

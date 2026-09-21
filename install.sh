@@ -105,11 +105,28 @@ install_launchers() {
   fi
 }
 
+install_decklink_support() {
+  if ! need_cmd dpkg; then
+    return 0
+  fi
+  if dpkg -s gstreamer1.0-plugins-bad >/dev/null 2>&1; then
+    log "GStreamer DeckLink-Plugin ist installiert."
+    return 0
+  fi
+  if apt-cache show gstreamer1.0-plugins-bad >/dev/null 2>&1; then
+    log "Installiere gstreamer1.0-plugins-bad (DeckLink)…"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gstreamer1.0-plugins-bad \
+      || log "Hinweis: gstreamer1.0-plugins-bad konnte nicht installiert werden."
+  fi
+}
+
 log "Cinema Player Installation"
 log "Verzeichnis: $ROOT"
 install_apt_packages
+install_decklink_support
 install_pixi
 install_python_env
 install_icon
 install_launchers
 log "Fertig. Start mit ${ROOT}/start oder über den Starter Cinema Player."
+log "Für DeckLink: Blackmagic Desktop Video installieren. Distro-ffmpeg hat oft kein DeckLink; dann gstreamer1.0-plugins-bad (decklinkvideosink) verwenden."

@@ -1,6 +1,6 @@
 # Cinema Player
 
-The Cinema Player is designed to play videos on a projector in a small private cinema. It uses two outputs (HDMI, DVI, or DisplayPort) from a dedicated graphics card to separate the video output from the control interface.
+The Cinema Player is designed to play videos on a projector in a small private cinema. It uses two outputs (HDMI, DVI, or DisplayPort) from a dedicated graphics card — or a Blackmagic DeckLink card — to separate the video output from the control interface.
 
 The aim is to provide the audience with a high-quality cinema experience, free from distracting text or OSD elements on the big screen, while offering the projectionist an intuitive yet powerful user interface.
 
@@ -42,7 +42,7 @@ The burger menu in the header covers booth setup:
 - Fullscreen on the control monitor (`F11`)
 - Light or dark design
 - Language (English / Deutsch)
-- Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
+- Beamer output (the connector used for the projector, including a Blackmagic DeckLink card; cannot be changed while **PLAYING**)
 - Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
 - Calibration (in **OFF** and while already calibrating)
   - Beamer test image (Cinema Player logo on the projector; only in **OFF**)
@@ -51,7 +51,7 @@ The burger menu in the header covers booth setup:
     - Playlists in that folder, listed below a separator when present
 - Quit
 
-If only one display is connected at startup, a warning asks the projectionist to attach a second output and select it under **Beamer output**.
+If only one display is connected at startup, a warning asks the projectionist to attach a second output or a DeckLink card and select it under **Beamer output**.
 
 ## Playlist
 
@@ -208,11 +208,17 @@ The preview meter shows program-independent audio levels. After **Analyze loudne
 
 ## Architecture
 
-The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used only for optional loudness analysis.
+The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used for optional loudness analysis and, when a DeckLink card is selected, for program playout.
+
+A Blackmagic DeckLink card can be chosen as **Beamer output** instead of a GPU connector. The booth GUI and preview stay on the desktop; program picture and embedded audio go out the card’s SDI or HDMI. Cinema Player lists cards through ffmpeg (`-sinks decklink`) or GStreamer (`decklinkvideosink`). Playout is a live encode from the program mpv instance into ffmpeg (`-f decklink`) or GStreamer. A black generator keeps the SDI lock when the program is idle, paused (black), or between clips. Still holds the last frame.
+
+Cards that have more than one video output (for example Mini Monitor 4K with SDI and HDMI) get a nested **Beamer output** submenu for that card. Single-port cards stay one menu item. The default is SDI. A saved id without a connector suffix (`decklink:DeckLink Mini Monitor 4K`) still selects SDI. Switching uses the DeckLink SDK (`IDeckLinkConfiguration`) when `libDeckLinkAPI.so` can be loaded; if that call fails, both connectors may stay live.
+
+Install Blackmagic Desktop Video so `libDeckLinkAPI.so` is present. Distro ffmpeg is usually built without DeckLink; either compile ffmpeg with `--enable-decklink` or install `gstreamer1.0-plugins-bad` (element `decklinkvideosink`).
 
 For good performance, the graphics card must support hardware decoding of both the H.264 and H.265 codecs.
 
-mpv is started with OSD and subtitles off. The projector instance uses `--screen-name` / `--fs-screen-name` for the selected output.
+mpv is started with OSD and subtitles off. On a GPU connector the projector instance uses `--screen-name` / `--fs-screen-name`. On DeckLink it encodes a live stream to the card instead of opening a window.
 
 ## Frame Rate
 
@@ -221,7 +227,7 @@ To achieve smooth, flicker-free playback, the graphics card’s refresh rate is 
 1. The video’s metadata is read.
 2. The refresh rates supported by the projector are checked (shown as **Rates** / **Frequenzen** in the beamer panel).
 3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**.
-4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME Wayland is limited to EDID modes).
+4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 GPU outputs only; GNOME Wayland is limited to EDID modes). DeckLink cards use only the progressive modes the hardware advertises.
 
 If a listed rate can show the clip without dropping frames (native or 2× refresh), the projector status shows **OK** (green). 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz.
 
@@ -231,7 +237,7 @@ This check is performed when videos are added to the playlist and when a playlis
 
 ## Audio
 
-The audio track of the program is streamed via the HDMI output of the selected projector connector, not the desktop default. Preview audio can be listened to on a separate device. Each clip has its own volume; program and preview each have a VU meter.
+The audio track of the program is streamed via the HDMI output of the selected projector connector, or embedded in the DeckLink SDI/HDMI signal, not the desktop default. Preview audio can be listened to on a separate device. Each clip has its own volume; program and preview each have a VU meter.
 
 ## Run
 
@@ -244,6 +250,6 @@ From the repository root:
 ./start
 ```
 
-`./install.sh` installs system packages (mpv, ffmpeg, xrandr, gdctl), Pixi and the Python environment, registers the application icon, and adds a menu / Desktop launcher. `./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`.
+`./install.sh` installs system packages (mpv, ffmpeg, xrandr, gdctl, GStreamer plugins-bad for DeckLink), Pixi and the Python environment, registers the application icon, and adds a menu / Desktop launcher. `./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`.
 
-mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`.
+mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`. DeckLink output uses system ffmpeg (if built with DeckLink) or GStreamer `decklinkvideosink`.

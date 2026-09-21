@@ -72,6 +72,11 @@ STRINGS = {
         "edid_source": "Source: {source}",
         "edid_size": "{bytes} bytes, {blocks} EDID block(s)",
         "edid_close": "Close",
+        "decklink_formats": "DeckLink formats",
+        "decklink_formats_title": "DeckLink — {output}",
+        "decklink_sdi": "SDI",
+        "decklink_hdmi": "HDMI",
+        "decklink_optical_sdi": "Optical SDI",
         "beamer_test": "Beamer test image",
         "beamer_test_active": "The beamer test image is active.\nClose this window to end it.",
         "beamer_test_missing": "The Cinema Player logo file was not found.",
@@ -207,7 +212,7 @@ STRINGS = {
         "beamer_no_output_title": "No projector output",
         "beamer_no_output": (
             "No dedicated display was found for the projector.\n"
-            "Connect a second output and choose it under Beamer output."
+            "Connect a second output or a Blackmagic DeckLink card and choose it under Beamer output."
         ),
         "pause_title": "Pause",
         "pause_message": "Pause playback? The projector output will go black.",
@@ -287,6 +292,11 @@ STRINGS = {
         "edid_source": "Quelle: {source}",
         "edid_size": "{bytes} Byte, {blocks} EDID-Block(s)",
         "edid_close": "Schließen",
+        "decklink_formats": "DeckLink-Formate",
+        "decklink_formats_title": "DeckLink — {output}",
+        "decklink_sdi": "SDI",
+        "decklink_hdmi": "HDMI",
+        "decklink_optical_sdi": "Optisches SDI",
         "beamer_test": "Beamer-Testbild",
         "beamer_test_active": "Das Beamer-Testbild ist aktiv.\nDieses Fenster schließen, um es zu beenden.",
         "beamer_test_missing": "Die Cinema-Player-Logo-Datei wurde nicht gefunden.",
@@ -422,7 +432,8 @@ STRINGS = {
         "beamer_no_output_title": "Kein Beamerausgang",
         "beamer_no_output": (
             "Es wurde kein eigener Bildschirm für den Beamer gefunden.\n"
-            "Schließen Sie einen zweiten Ausgang an und wählen Sie ihn unter Beamerausgang."
+            "Schließen Sie einen zweiten Ausgang oder eine Blackmagic-DeckLink-Karte an "
+            "und wählen Sie ihn unter Beamerausgang."
         ),
         "pause_title": "Pause",
         "pause_message": "Wiedergabe pausieren? Die Beamerausgabe wird schwarz.",

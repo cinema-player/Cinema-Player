@@ -60,10 +60,10 @@
       Schließen Sie zwei Ausgänge der Grafikkarte an: einen für den Kontrollmonitor, einen für den Beamer (HDMI, DVI oder DisplayPort). Im Projektordner starten Sie mit <code>./start</code> oder <code>pixi run start</code>. Die Datei <code>Cinema-Player.desktop</code> startet dasselbe Skript.
     </p>
     <p data-lang="en">
-      If only one display is found, a warning asks you to attach a second output and select it under <strong>Beamer output</strong>. The projector instance of mpv uses that connector. Preview audio can stay on the control machine; program audio goes out with the projector HDMI.
+      If only one display is found, a warning asks you to attach a second GPU output or a Blackmagic DeckLink card and select it under <strong>Beamer output</strong>. A GPU connector is driven by mpv as a fullscreen window; a DeckLink card takes the program picture and embedded audio on SDI or HDMI. Preview audio can stay on the control machine; program audio follows the chosen beamer output.
     </p>
     <p data-lang="de">
-      Wird nur ein Bildschirm gefunden, warnt Cinema Player und bittet, einen zweiten Ausgang anzuschließen und unter <strong>Beamerausgang</strong> zu wählen. Die mpv-Instanz für den Beamer nutzt diesen Anschluss. Vorschau-Ton kann am Kontrollrechner bleiben; der Programmton geht mit dem HDMI des Beamers.
+      Wird nur ein Bildschirm gefunden, warnt Cinema Player und bittet, einen zweiten Grafikausgang oder eine Blackmagic-DeckLink-Karte anzuschließen und unter <strong>Beamerausgang</strong> zu wählen. Ein GPU-Anschluss wird von mpv als Vollbildfenster angesteuert; eine DeckLink-Karte gibt Programmbild und eingebetteten Ton über SDI oder HDMI aus. Vorschau-Ton kann am Kontrollrechner bleiben; der Programmton folgt dem gewählten Beamerausgang.
     </p>
 
     <h2 id="layout">
@@ -126,8 +126,8 @@
       <li data-lang="de"><strong>Helles / dunkles Design</strong> — Farben des Kontrollfensters.</li>
       <li data-lang="en"><strong>Language</strong> — English or Deutsch. The brand name Cinema Player stays untranslated.</li>
       <li data-lang="de"><strong>Sprache</strong> — English oder Deutsch. Der Name Cinema Player bleibt unübersetzt.</li>
-      <li data-lang="en"><strong>Beamer output</strong> — which connector is the projector. Locked while <strong>PLAYING</strong>. The submenu also has <strong>EDID</strong>, which opens a window with the projector’s complete EDID.</li>
-      <li data-lang="de"><strong>Beamerausgang</strong> — welcher Anschluss der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt. Im Untermenü gibt es außerdem <strong>EDID</strong>: ein Fenster mit den vollständigen EDID-Daten des Beamers.</li>
+      <li data-lang="en"><strong>Beamer output</strong> — which GPU connector or Blackmagic DeckLink card is the projector. Locked while <strong>PLAYING</strong>. DeckLink cards with both SDI and HDMI open a nested connector submenu (default SDI); single-port cards stay one item. The submenu also has <strong>EDID</strong> (GPU) or <strong>DeckLink formats</strong> (card).</li>
+      <li data-lang="de"><strong>Beamerausgang</strong> — welcher GPU-Anschluss oder welche Blackmagic-DeckLink-Karte der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt. Karten mit SDI und HDMI öffnen ein Untermenü für den Anschluss (Standard SDI); Karten mit einem Ausgang bleiben ein Eintrag. Im Untermenü gibt es außerdem <strong>EDID</strong> (GPU) oder <strong>DeckLink-Formate</strong> (Karte).</li>
       <li data-lang="en"><strong>Use default Idle Media</strong> — checkbox. When on, the projector idle clip is the file in <code>idle</code>. The choice is saved and applied again at the next start.</li>
       <li data-lang="de"><strong>Standard-Pausenmedium verwenden</strong> — Kontrollkästchen. Wenn aktiv, ist das Pausenmedium die Datei im Ordner <code>idle</code>. Die Wahl wird gespeichert und beim nächsten Start wieder angewendet.</li>
       <li data-lang="en"><strong>Calibration</strong> — in <strong>OFF</strong> and while already calibrating. <strong>Beamer test image</strong> (logo on the projector until you close the dialog; only in <strong>OFF</strong>). <strong>Video</strong> and <strong>Audio</strong> each have a submenu: <strong>Load all files</strong> (every clip in <code>testdata/videotestdata</code> or <code>testdata/audiosyncdata</code>, loop on), then any <code>.pls</code> playlists in that folder. Audio also has the A/V delay slider.</li>

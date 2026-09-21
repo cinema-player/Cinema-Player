@@ -18,6 +18,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from language import LANGUAGES, t, set_language, current_language
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_times
+import decklink
 from cinema_player import (
     APP_VERSION,
     FONT_FAMILY,
@@ -66,6 +67,7 @@ LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.pn
 BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
 # mpv log2 zoom: -0.8 ≈ 57% size, so the wide logo does not fill the screen width.
 BEAMER_TEST_ZOOM = -0.8
+BLACK_FILE = os.path.join(ROOT_DIR, "black.png")
 ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
 TESTDATA_DIR = os.path.join(ROOT_DIR, "testdata", "videotestdata")
 AUDIOSYNC_DIR = os.path.join(ROOT_DIR, "testdata", "audiosyncdata")
@@ -759,13 +761,13 @@ class DropdownMenu(tk.Frame):
     def add_separator(self):
         tk.Frame(self, bg=COLOR_BORDER, height=1).pack(fill="x", padx=8, pady=4)
 
-    def add_cascade(self, label="", menu=None, state="normal", **_kwargs):
+    def add_cascade(self, label="", menu=None, state="normal", foreground=None, **_kwargs):
         self._cascades.append(menu)
 
         def open_cascade(event, submenu=menu):
             self._show_cascade(event.widget, submenu)
 
-        self._add_row(f"{label}  ▸", None, state, None, on_press=open_cascade)
+        self._add_row(f"{label}  ▸", None, state, foreground, on_press=open_cascade)
 
     def _add_row(self, text, command, state, foreground, on_press=None):
         fg = foreground or COLOR_TEXT
@@ -2108,22 +2110,52 @@ class VideoPlayerGUI:
         except Exception:
             names = []
         current = self.output_manager.video_output or self.beamer_output.get().strip()
+        if self.output_manager.is_decklink(current):
+            current = self.output_manager.canonicalize_video_output(current, names)
         if current and current not in names:
             names = [current, *names]
+        desktop = [name for name in names if not self.output_manager.is_decklink(name)]
+        cards = [name for name in names if self.output_manager.is_decklink(name)]
         busy = self.program_state == "PLAYING"
+
+        def add_output(target, name, label=None):
+            mark = "✔  " if name == current else "    "
+            target.add_command(
+                label=f"{mark}{label or self.output_manager.output_label(name)}",
+                command=lambda chosen=name: self.apply_beamer_output(chosen),
+                state="disabled" if busy else "normal",
+                foreground=self._menu_check_fg() if name == current else COLOR_TEXT,
+            )
+
         if not names:
             menu.add_command(label="--", state="disabled")
         else:
-            for name in names:
-                mark = "✔  " if name == current else "    "
-                menu.add_command(
-                    label=f"{mark}{name}",
-                    command=lambda chosen=name: self.apply_beamer_output(chosen),
+            for name in desktop:
+                add_output(menu, name)
+            if desktop and cards:
+                menu.add_separator()
+            for device_name, items in decklink.group_decklink_outputs(cards):
+                if len(items) < 2:
+                    add_output(menu, items[0][0])
+                    continue
+                submenu = self._menu(menu)
+                selected = any(output_id == current for output_id, _connector in items)
+                for output_id, connector in items:
+                    add_output(
+                        submenu,
+                        output_id,
+                        label=t(decklink.connector_label_key(connector)),
+                    )
+                parent_mark = "✔  " if selected else "    "
+                menu.add_cascade(
+                    label=f"{parent_mark}{decklink.format_device_label(device_name)}",
+                    menu=submenu,
                     state="disabled" if busy else "normal",
-                    foreground=self._menu_check_fg() if name == current else COLOR_TEXT,
+                    foreground=self._menu_check_fg() if selected else COLOR_TEXT,
                 )
         menu.add_separator()
-        menu.add_command(label=t("edid"), command=self.show_edid)
+        edid_label = t("decklink_formats") if self.output_manager.is_decklink() else t("edid")
+        menu.add_command(label=edid_label, command=self.show_edid)
 
     def _fill_calibration_kind_menu(self, menu, kind):
         menu.add_command(
@@ -2986,6 +3018,9 @@ class VideoPlayerGUI:
             self.beamer_output.set(output)
         if not output:
             return
+        if self.output_manager.is_decklink(output):
+            output = self.output_manager.canonicalize_video_output(output)
+            self.beamer_output.set(output)
         if self.program_state == "PLAYING":
             messagebox.showinfo(t("beamer_status"), t("beamer_output_busy"))
             self.beamer_output.set(self.output_manager.video_output or "")
@@ -3019,22 +3054,34 @@ class VideoPlayerGUI:
         if not report:
             messagebox.showerror(t("edid"), t("edid_unavailable", output=output))
             return
-        blocks = max(1, len(report["data"]) // 128)
-        body = "\n".join((
-            t("edid_output", output=report["output"]),
-            t("edid_source", source=report["source"]),
-            t("edid_size", bytes=len(report["data"]), blocks=blocks),
-            "",
-            report["decoded"],
-        ))
+        title_output = report["output"]
+        if report.get("kind") == "decklink":
+            body = "\n".join((
+                t("edid_output", output=title_output),
+                t("edid_source", source=report["source"]),
+                "",
+                report["decoded"],
+            ))
+            window_title = t("decklink_formats_title", output=title_output)
+        else:
+            blocks = max(1, len(report["data"]) // 128)
+            body = "\n".join((
+                t("edid_output", output=report["output"]),
+                t("edid_source", source=report["source"]),
+                t("edid_size", bytes=len(report["data"]), blocks=blocks),
+                "",
+                report["decoded"],
+            ))
+            window_title = t("edid_title", output=report["output"])
         if self._edid_window_alive():
-            self._fill_edid_window(report["output"], body)
+            self._fill_edid_window(title_output, body)
+            self.edid_window.title(window_title)
             self.edid_window.deiconify()
             self.edid_window.lift()
             self.edid_window.focus_force()
             return
         window = tk.Toplevel(self.root)
-        window.title(t("edid_title", output=report["output"]))
+        window.title(window_title)
         window.configure(bg=COLOR_BG)
         window.minsize(560, 400)
         if self.icon_image is not None:
@@ -3144,6 +3191,7 @@ class VideoPlayerGUI:
                 pass
             self.main_mpv = MPVController("main", self.mpv_path)
             self.main_mpv.add_callback(self.main_mpv_event)
+        self.output_manager.stop_program_sink()
         if not self.ensure_main_output(auto=False):
             messagebox.showerror(t("beamer_status"), t("output_failed"))
             return False
@@ -3154,7 +3202,7 @@ class VideoPlayerGUI:
     def _pin_main_output_to_beamer(self):
         """Keep the Wayland mpv surface on the projector after a mode change."""
         output = self.output_manager.video_output
-        if not output or not self.main_mpv.process:
+        if not output or not self.main_mpv.process or self.output_manager.is_decklink():
             return
         self.main_mpv.command("set_property", "screen-name", output)
         self.main_mpv.command("set_property", "fs-screen-name", output)
@@ -3240,7 +3288,7 @@ class VideoPlayerGUI:
             or before.height != mode.height
             or not self.output_manager.refresh_close(before.refresh, mode.refresh)
         )
-        if changed and session_is_wayland() and self.main_mpv.process:
+        if changed and self._output_needs_restart() and self.main_mpv.process:
             self._restart_main_output(blank=False)
             if self.program_state == "PROGRAM":
                 self.blank_output()
@@ -5136,22 +5184,33 @@ class VideoPlayerGUI:
                 self.show_preview_clip(entry)
         self.refresh_all()
 
+    def _output_needs_restart(self):
+        """Wayland GPU placement and DeckLink format_code both need a process restart."""
+        return session_is_wayland() or self.output_manager.is_decklink()
+
     def ensure_main_output(self, auto=False):
         """Open the output window early so the projector shows black, not the desktop."""
         if self.main_mpv.process:
             return True
         try:
             output = self.output_manager.select_video_output()
-            if auto and output == self.output_manager.get_primary_output():
+            if (
+                auto
+                and not self.output_manager.is_decklink(output)
+                and output == self.output_manager.get_primary_output()
+            ):
                 # No dedicated projector display: don't cover the control screen.
                 return False
             self.output_manager.ensure_operator_layout()
+            self.output_manager.start_program_sink()
             arguments = self.output_manager.get_mpv_arguments(self.mpv_path)
             arguments.append(f"--af={METER_AF}")
-            self.main_mpv.start(arguments)
+            self.main_mpv.start(arguments, stdout=self.output_manager.sink_stdin())
+            self.output_manager.release_sink_stdin()
             self.main_mpv.observe("af-metadata/meter", 5)
         except Exception as exc:
             print(f"Videoausgang nicht verfuegbar: {exc}")
+            self.output_manager.stop_program_sink()
             return False
         self.blank_output()
         return True
@@ -5175,9 +5234,7 @@ class VideoPlayerGUI:
         if not self.main_mpv.process:
             self._reset_program_meter()
             return
-        self.main_mpv.stop()
         self.main_mpv.set_ab_loop(None, None)
-        self.main_mpv.set_loop_file(False)
         self.main_mpv.set_vid(True)
         self.current_file = None
         self.main_pause = False
@@ -5186,6 +5243,13 @@ class VideoPlayerGUI:
         self.duration = 0.0
         self.position = 0.0
         self._reset_program_meter()
+        if self.output_manager.is_decklink() and os.path.isfile(BLACK_FILE):
+            # Keep sending frames so the SDI/HDMI lock on the card does not drop.
+            self.main_mpv.set_loop_file(True)
+            self.main_mpv.load_file(BLACK_FILE, play=True)
+        else:
+            self.main_mpv.set_loop_file(False)
+            self.main_mpv.stop()
         if show_idle and self.idle_allowed() and self.idle_media_file():
             delay = int(self.autoplay_seconds() * 1000)
             self.idle_after_id = self.root.after(delay, self.show_idle_media)
@@ -5324,6 +5388,10 @@ class VideoPlayerGUI:
             self.on_clip_finished()
             return
         if self.program_state == "PLAYING" and self.main_pause:
+            if self.output_manager.is_decklink():
+                vf = self.output_manager.decklink_vf()
+                if vf:
+                    self.main_mpv.command("set_property", "vf", vf)
             self.main_mpv.set_vid(True)
             self.blackout = False
             self.main_mpv.set_pause(False)
@@ -5380,7 +5448,10 @@ class VideoPlayerGUI:
             self.refresh_all()
             return
 
-        if session_is_wayland():
+        if session_is_wayland() or (
+            self.output_manager.is_decklink()
+            and not self.output_manager.sink_mode_matches(mode)
+        ):
             if not self._restart_main_output(blank=False):
                 self.program_state = "PROGRAM"
                 self.refresh_all()
@@ -5392,7 +5463,11 @@ class VideoPlayerGUI:
             self.refresh_all()
             return
         self.main_mpv.command("set_property", "override-display-fps", float(mode.refresh))
-        if session_is_wayland():
+        if self.output_manager.is_decklink():
+            vf = self.output_manager.decklink_vf()
+            if vf:
+                self.main_mpv.command("set_property", "vf", vf)
+        elif session_is_wayland():
             self._pin_main_output_to_beamer()
         else:
             self.main_mpv.command(
@@ -5513,6 +5588,12 @@ class VideoPlayerGUI:
     def _apply_pause(self):
         if self.program_state != "PLAYING":
             return False
+        if self.output_manager.is_decklink():
+            vf = self.output_manager.decklink_vf(black=True)
+            if vf:
+                self.main_mpv.command("set_property", "vf", vf)
+            self.root.after(80, self._finish_decklink_pause)
+            return True
         self.main_mpv.set_pause(True)
         self.main_mpv.set_vid(False)
         self.preview_mpv.set_pause(True)
@@ -5520,6 +5601,15 @@ class VideoPlayerGUI:
         self.blackout = True
         self.refresh_transport()
         return True
+
+    def _finish_decklink_pause(self):
+        if self.program_state != "PLAYING":
+            return
+        self.main_mpv.set_pause(True)
+        self.preview_mpv.set_pause(True)
+        self.main_pause = True
+        self.blackout = True
+        self.refresh_transport()
 
     def _apply_still(self):
         if self.program_state != "PLAYING":
@@ -5999,6 +6089,7 @@ class VideoPlayerGUI:
             self.preview_mpv.quit()
             self.main_mpv.quit()
         finally:
+            self.output_manager.stop_program_sink()
             self.output_manager.restore_original_mode()
             self.root.destroy()
 

@@ -4,9 +4,11 @@ Two-instance mpv video player for X11 or GNOME Wayland with NVIDIA.
 
 ## Features
 
-- Main mpv instance for dedicated HDMI video output
+- Main mpv instance for dedicated HDMI / DisplayPort or Blackmagic DeckLink output
 - Second mpv instance for preview
 - Display mode switching via XRandR (X11) or GNOME gdctl (Wayland)
+- DeckLink mode switching via advertised SDI/HDMI formats
+- SDI / HDMI selector on DeckLink cards that have more than one video output
 - Automatic video FPS detection with ffprobe
 - Selects a matching display refresh rate at the video resolution
 - `--geometry` / fullscreen placement for the video window
@@ -29,6 +31,8 @@ This installs Pixi, the Python environment, distro `mpv`, display tools, the app
 
 On X11, `xrandr` comes from `x11-xserver-utils`. On GNOME Wayland, `gdctl` is part of the desktop (Mutter).
 
+Blackmagic DeckLink output needs Desktop Video installed. Use a DeckLink-enabled ffmpeg (`--enable-decklink`) or GStreamer `decklinkvideosink` from `gstreamer1.0-plugins-bad`.
+
 ## Run
 
 From the repository root:
@@ -48,5 +52,13 @@ Set `VIDEO_OUTPUT` in `cinema_player.py` if you want to force a specific output,
 ```python
 VIDEO_OUTPUT = "HDMI-1"
 ```
+
+or a DeckLink card:
+
+```python
+VIDEO_OUTPUT = "decklink:DeckLink Mini Monitor 4K|sdi"
+```
+
+The form without `|sdi` / `|hdmi` is still accepted and maps to SDI when the card has both connectors.
 
 With `None`, the program automatically prefers the non-primary output.
