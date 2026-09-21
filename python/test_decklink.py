@@ -38,6 +38,31 @@ FFMPEG_FORMATS = """
         hp50            1280x720p 50
 """
 
+GST_DEVICE_MONITOR = """
+Probing devices...
+
+
+Device found:
+
+	name  : DeckLink Mini Monitor 4K (Video Output)
+	class : Video/Sink/Hardware
+	caps  : video/x-raw, width=1920, height=1080, pixel-aspect-ratio=1/1, interlace-mode=progressive, framerate=25/1, colorimetry=bt709
+	        video/x-raw, width=1920, height=1080, pixel-aspect-ratio=1/1, interlace-mode=progressive, framerate=50/1, colorimetry=bt709
+	        video/x-raw, width=1920, height=1080, pixel-aspect-ratio=1/1, interlace-mode=interleaved, framerate=25/1, colorimetry=bt709
+	        video/x-raw, width=3840, height=2160, pixel-aspect-ratio=1/1, interlace-mode=progressive, framerate=25/1, colorimetry=bt709
+	properties:
+		model-name = DeckLink Mini Monitor 4K
+		display-name = DeckLink Mini Monitor 4K
+		persistent-id = 307676183 (gint64)
+	gst-launch-1.0 ... ! decklinkvideosink persistent-id=307676183
+
+Device found:
+
+	name  : Intel(R) HD Graphics 530 (SKL GT2)
+	class : Video/Sink
+	gst-launch-1.0 ... ! vulkansink
+"""
+
 
 class DeckLinkParseTests(unittest.TestCase):
     def test_output_id_and_label(self):
@@ -160,6 +185,40 @@ class DeckLinkParseTests(unittest.TestCase):
         self.assertIn("DeckLink Mini Monitor 4K", names)
         self.assertIn("DeckLink Quad 2 (2)", names)
 
+    def test_parse_gst_device_monitor_dedupes_suffix_and_launch_line(self):
+        devices = decklink.parse_gst_device_monitor(GST_DEVICE_MONITOR)
+        self.assertEqual(len(devices), 1)
+        device = devices[0]
+        self.assertEqual(device.name, "DeckLink Mini Monitor 4K")
+        self.assertEqual(device.persistent_id, 307676183)
+        self.assertEqual(device.index, 0)
+        sizes = {(item.width, item.height, round(item.refresh)) for item in device.advertised_modes}
+        self.assertIn((1920, 1080, 25), sizes)
+        self.assertIn((1920, 1080, 50), sizes)
+        self.assertIn((3840, 2160, 25), sizes)
+        self.assertTrue(all(not item.interlaced for item in device.advertised_modes))
+        command = decklink._gst_command("gst-launch-1.0", device, device.advertised_modes[0])
+        self.assertIn("persistent-id=307676183", command)
+        self.assertFalse(any(part.startswith("device-number=") for part in command))
+        self.assertIn("fdsrc", command)
+        self.assertIn("is-live=true", command)
+        self.assertIn("rawvideoparse", command)
+        self.assertIn("decklinkvideosink", command)
+        self.assertTrue(any(part.startswith("mode=") for part in command))
+        self.assertNotIn("compositor", command)
+        self.assertNotIn("decklinkaudiosink", command)
+        self.assertNotIn("y4mdec", command)
+
+    def test_canonical_name_strips_gstreamer_suffix(self):
+        self.assertEqual(
+            decklink.canonical_device_name("DeckLink Mini Monitor 4K (Video Output)"),
+            "DeckLink Mini Monitor 4K",
+        )
+        self.assertEqual(
+            decklink.parse_output_id("decklink:DeckLink Mini Monitor 4K (Video Output)|hdmi"),
+            ("DeckLink Mini Monitor 4K", "hdmi"),
+        )
+
     def test_parse_formats_skips_interlaced(self):
         modes = decklink.parse_list_formats(FFMPEG_FORMATS)
         sizes = {(m.width, m.height, round(m.refresh, 3)) for m in modes}
@@ -175,8 +234,8 @@ class DeckLinkParseTests(unittest.TestCase):
     def test_fps_arg(self):
         self.assertEqual(decklink.fps_arg(25), "25")
         self.assertEqual(decklink.fps_arg(24000 / 1001), "24000/1001")
-        self.assertEqual(decklink.gst_mode_name(1920, 1080, 25), "1080p25")
-        self.assertEqual(decklink.gst_mode_name(3840, 2160, 50), "2160p50")
+        self.assertEqual(decklink.encoder_time_base(25), "1/25")
+        self.assertEqual(decklink.encoder_time_base(24000 / 1001), "1001/24000")
 
     def test_fallback_modes_include_hd_and_uhd(self):
         modes = decklink.fallback_modes()
@@ -188,7 +247,7 @@ class DeckLinkParseTests(unittest.TestCase):
         self.assertIn("scale=1920:1080:force_original_aspect_ratio=decrease", vf)
         self.assertIn("pad=1920:1080", vf)
         self.assertIn("fps=25", vf)
-        self.assertIn("format=uyvy422", vf)
+        self.assertIn("format=yuv422p", vf)
 
     def test_mpv_arguments_pick_container(self):
         mode = DisplayMode("decklink:card", 1920, 1080, 25, name="Hp25")
@@ -196,9 +255,39 @@ class DeckLinkParseTests(unittest.TestCase):
         self.assertIn("--o=-", ffmpeg_args)
         self.assertIn("--of=nut", ffmpeg_args)
         self.assertIn("--oac=pcm_s16le", ffmpeg_args)
+        self.assertIn("--ovcopts=time_base=1/25", ffmpeg_args)
+        self.assertNotIn("--oautofps", ffmpeg_args)
         gst_args = decklink.mpv_arguments(mode, "gstreamer", audio_file="/tmp/silence.wav")
-        self.assertIn("--of=yuv4mpegpipe", gst_args)
+        self.assertIn("--of=rawvideo", gst_args)
         self.assertIn("--no-audio", gst_args)
+        self.assertIn("--untimed=yes", gst_args)
+        self.assertIn("--hwdec=no", gst_args)
+        self.assertIn("format=uyvy422", " ".join(gst_args))
+        self.assertNotIn("--of=yuv4mpegpipe", gst_args)
+        self.assertIn("--ovcopts=time_base=1/25", gst_args)
+        self.assertNotIn("--oautofps", gst_args)
+        self.assertNotIn("--oneverdrop", gst_args)
+
+    def test_gst_mode_name_uses_dci_tokens(self):
+        self.assertEqual(decklink.gst_mode_name(1920, 1080, 25), "1080p25")
+        self.assertEqual(decklink.gst_mode_name(1920, 1080, 24), "1080p24")
+        self.assertEqual(decklink.gst_mode_name(2048, 1080, 24), "2kdcip24")
+        self.assertEqual(decklink.gst_mode_name(3840, 2160, 25), "2160p25")
+        self.assertEqual(decklink.gst_mode_name(4096, 2160, 24), "4kdcip24")
+
+    def test_device_list_cache_survives_slow_probe(self):
+        device = decklink.DeckLinkDevice(name="DeckLink Mini Monitor 4K", index=0)
+        decklink._DEVICE_CACHE = (None, ())
+        with patch.object(decklink, "_list_ffmpeg_devices", return_value=[]):
+            with patch.object(decklink, "query_sdk_output_connections", return_value={}):
+                with patch.object(
+                    decklink, "_probe_gst_devices", return_value=[device]
+                ) as probe:
+                    first = decklink.list_decklink_devices()
+                    second = decklink.list_decklink_devices()
+        self.assertEqual(probe.call_count, 1)
+        self.assertEqual(first[0].name, device.name)
+        self.assertEqual(second[0].name, device.name)
 
 
 class DeckLinkOutputManagerTests(unittest.TestCase):
@@ -222,6 +311,17 @@ class DeckLinkOutputManagerTests(unittest.TestCase):
         mode, matched = manager.find_best_mode(video)
         self.assertTrue(matched)
         self.assertEqual(mode.refresh, 50.0)
+
+    def test_find_best_mode_keeps_24_and_2398_apart(self):
+        manager = VideoOutputManager("decklink:test")
+        hd2398 = DisplayMode("decklink:test", 1920, 1080, 24000 / 1001, name="Hp2398")
+        hd24 = DisplayMode("decklink:test", 1920, 1080, 24.0, name="Hp24")
+        manager.get_modes = lambda _name: [hd2398, hd24]
+        video = SimpleNamespace(width=1920, height=1080, fps=24.0)
+        mode, matched = manager.find_best_mode(video)
+        self.assertTrue(matched)
+        self.assertEqual(mode.name, "Hp24")
+        self.assertFalse(manager._rate_matches(24000 / 1001, 24.0))
 
     def test_has_dedicated_beamer_with_only_decklink(self):
         manager = VideoOutputManager()

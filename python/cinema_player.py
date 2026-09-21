@@ -1688,7 +1688,7 @@ class VideoOutputManager:
             mode is not None
             and width == mode.width
             and height == mode.height
-            and self.refresh_close(refresh, mode.refresh)
+            and self._rate_matches(refresh, mode.refresh)
         )
 
     def sink_stdin(self):
@@ -2103,11 +2103,17 @@ class VideoOutputManager:
         best = max(modes, key=lambda m: m.width * m.height)
         return best.width, best.height
 
+    def _rate_matches(self, left, right):
+        """DeckLink 23.976 and 24.0 are different card modes; xrandr may round."""
+        if self.is_decklink():
+            return decklink.fps_fraction(left) == decklink.fps_fraction(right)
+        return self.refresh_close(left, right)
+
     def find_refresh_mode(self, modes, width, height, rate):
         matches = [
             m for m in modes
             if m.width == width and m.height == height
-            and self.refresh_close(m.refresh, rate)
+            and self._rate_matches(m.refresh, rate)
         ]
         if matches:
             return matches[0]
@@ -2315,6 +2321,8 @@ class VideoOutputManager:
 
     def set_mode(self, mode):
         if self.is_decklink(mode.output):
+            # The card follows `decklinkvideosink mode=` at sink start; the GUI
+            # restarts that process when sink_mode_matches() is false.
             self.video_mode = mode
             return
 
@@ -2409,11 +2417,7 @@ class VideoOutputManager:
                     "(--enable-decklink) oder GStreamer decklinkvideosink."
                 )
             self._decklink_backend = backend
-            arguments = decklink.mpv_arguments(mode, backend)
-            black = os.path.join(ROOT_DIR, "black.png")
-            if os.path.isfile(black):
-                arguments.append(black)
-            return arguments
+            return decklink.mpv_arguments(mode, backend)
         wayland = session_is_wayland()
         arguments = [
             "--no-border",
@@ -2661,7 +2665,7 @@ class MPVController:
         """Positive values delay audio relative to video (mpv audio-delay)."""
         self.command("set_property", "audio-delay", float(seconds))
 
-    def quit(self):
+    def quit(self, timeout=2):
         self.running = False
 
         try:
@@ -2678,9 +2682,13 @@ class MPVController:
 
         if self.process:
             try:
-                self.process.wait(timeout=2)
+                self.process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self.process.kill()
+                try:
+                    self.process.wait(timeout=0.4)
+                except subprocess.TimeoutExpired:
+                    pass
             self.process = None
 
         try:

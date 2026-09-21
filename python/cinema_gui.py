@@ -1048,6 +1048,7 @@ class VideoPlayerGUI:
         self._posted_menu = None
         self._menu_ignore_press = False
         self._menu_binds_armed = False
+        self._last_output_error = ""
         self.last_import_dir = self.settings.get("last_import_dir") or ""
         if self.last_import_dir and not os.path.isdir(self.last_import_dir):
             self.last_import_dir = ""
@@ -3184,19 +3185,18 @@ class VideoPlayerGUI:
 
     def _restart_main_output(self, blank=True):
         """Move the program window onto the newly chosen projector output."""
+        # Stop the DeckLink sink first so mpv is not stuck writing into a full pipe.
+        self.output_manager.stop_program_sink()
         if self.main_mpv.process:
             try:
-                self.main_mpv.quit()
+                self.main_mpv.quit(timeout=0.4)
             except Exception:
                 pass
             self.main_mpv = MPVController("main", self.mpv_path)
             self.main_mpv.add_callback(self.main_mpv_event)
-        self.output_manager.stop_program_sink()
-        if not self.ensure_main_output(auto=False):
-            messagebox.showerror(t("beamer_status"), t("output_failed"))
+        if not self.ensure_main_output(auto=False, blank=blank):
+            messagebox.showerror(t("beamer_status"), self._output_failed_message())
             return False
-        if blank and self.program_state != "PLAYING":
-            self.blank_output()
         return True
 
     def _pin_main_output_to_beamer(self):
@@ -5188,7 +5188,7 @@ class VideoPlayerGUI:
         """Wayland GPU placement and DeckLink format_code both need a process restart."""
         return session_is_wayland() or self.output_manager.is_decklink()
 
-    def ensure_main_output(self, auto=False):
+    def ensure_main_output(self, auto=False, blank=True):
         """Open the output window early so the projector shows black, not the desktop."""
         if self.main_mpv.process:
             return True
@@ -5204,16 +5204,26 @@ class VideoPlayerGUI:
             self.output_manager.ensure_operator_layout()
             self.output_manager.start_program_sink()
             arguments = self.output_manager.get_mpv_arguments(self.mpv_path)
-            arguments.append(f"--af={METER_AF}")
+            if not self.output_manager.is_decklink():
+                arguments.append(f"--af={METER_AF}")
             self.main_mpv.start(arguments, stdout=self.output_manager.sink_stdin())
             self.output_manager.release_sink_stdin()
             self.main_mpv.observe("af-metadata/meter", 5)
         except Exception as exc:
             print(f"Videoausgang nicht verfuegbar: {exc}")
+            self._last_output_error = str(exc)
             self.output_manager.stop_program_sink()
             return False
-        self.blank_output()
+        self._last_output_error = ""
+        if blank:
+            self.blank_output()
         return True
+
+    def _output_failed_message(self):
+        detail = (getattr(self, "_last_output_error", "") or "").strip()
+        if detail:
+            return f"{t('output_failed')}\n\n{detail}"
+        return t("output_failed")
 
     def idle_media_file(self):
         path = self.idle_media_path
@@ -5243,10 +5253,18 @@ class VideoPlayerGUI:
         self.duration = 0.0
         self.position = 0.0
         self._reset_program_meter()
-        if self.output_manager.is_decklink() and os.path.isfile(BLACK_FILE):
-            # Keep sending frames so the SDI/HDMI lock on the card does not drop.
-            self.main_mpv.set_loop_file(True)
-            self.main_mpv.load_file(BLACK_FILE, play=True)
+        if self.output_manager.is_decklink():
+            # PNG has no frame rate; a short black video keeps the Y4M encoder alive.
+            mode = self.output_manager.effective_mode()
+            black = None
+            if mode:
+                black = decklink.black_video_path(mode.width, mode.height, mode.refresh)
+            if black:
+                self.main_mpv.set_loop_file(True)
+                self.main_mpv.load_file(black, play=True)
+            else:
+                self.main_mpv.set_loop_file(False)
+                self.main_mpv.stop()
         else:
             self.main_mpv.set_loop_file(False)
             self.main_mpv.stop()
@@ -5283,7 +5301,7 @@ class VideoPlayerGUI:
             messagebox.showerror(t("beamer_test"), t("beamer_test_missing"))
             return
         if not self.ensure_main_output(auto=False):
-            messagebox.showerror(t("beamer_status"), t("output_failed"))
+            messagebox.showerror(t("beamer_status"), self._output_failed_message())
             return
         if self.idle_after_id:
             self.root.after_cancel(self.idle_after_id)
@@ -5456,9 +5474,9 @@ class VideoPlayerGUI:
                 self.program_state = "PROGRAM"
                 self.refresh_all()
                 return
-        elif not self.ensure_main_output():
+        elif not self.ensure_main_output(blank=False):
             if not self._remote_action:
-                messagebox.showerror(t("playback"), t("output_failed"))
+                messagebox.showerror(t("playback"), self._output_failed_message())
             self.program_state = "PROGRAM"
             self.refresh_all()
             return

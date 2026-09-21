@@ -1,9 +1,10 @@
 """Blackmagic DeckLink detection and program playout.
 
 DeckLink cards are not desktop connectors. Program video is encoded by mpv
-(raw Nut or Y4M on stdout) and handed to ffmpeg (`-f decklink`) or
-GStreamer (`decklinkvideosink`). A black generator keeps SDI locked when
-mpv pauses or goes idle.
+(raw UYVY or Nut on stdout) and handed to ffmpeg (`-f decklink`) or
+GStreamer (`decklinkvideosink`). mpv keeps sending frames (a looping black
+clip while idle) so SDI/HDMI stay locked; the card mode is the GStreamer
+`mode=` / ffmpeg `-format_code` used when the sink process starts.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import struct
 import subprocess
 import tempfile
@@ -68,8 +70,13 @@ _IID_CONFIGURATION = (
 )
 
 _DEVICE_CACHE = (None, ())
-_DEVICE_CACHE_TTL = 2.0
+# gst-device-monitor takes ~2.5 s here; the TTL must outlive that or every
+# lookup misses and clip start waits on a full rescan.
+_DEVICE_CACHE_TTL = 45.0
 _MODE_CACHE = {}
+_FFMPEG_DECKLINK = {}
+_GST_DECKLINK = None
+_BACKEND_CACHE = None
 _SILENCE_WAV = None
 
 _SINK_LINE = re.compile(
@@ -88,6 +95,17 @@ _FORMAT_ALT = re.compile(
     r"(?P<fps>\d+(?:\.\d+)?(?:/\d+)?)\s*(?:fps|p|i)?",
     re.IGNORECASE,
 )
+_GST_OUTPUT_SUFFIX = re.compile(
+    r"\s*\((?:Video|Audio)\s+Output\)\s*$",
+    re.IGNORECASE,
+)
+_GST_CAPS_LINE = re.compile(
+    r"width\s*=\s*(?P<width>\d+)[^\n]*?"
+    r"height\s*=\s*(?P<height>\d+)[^\n]*?"
+    r"interlace-mode\s*=\s*(?P<scan>[^,;\s]+)[^\n]*?"
+    r"framerate\s*=\s*(?P<num>\d+)\s*/\s*(?P<den>\d+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -96,6 +114,8 @@ class DeckLinkDevice:
     index: int = 0
     backend: str = ""
     connectors: tuple = ()
+    persistent_id: int | None = None
+    advertised_modes: tuple = ()
 
     def __post_init__(self):
         if self.connectors:
@@ -148,8 +168,8 @@ def parse_output_id(name):
         device, suffix = rest.rsplit(CONNECTOR_SEP, 1)
         connector = _CONNECTOR_ALIASES.get(suffix.strip().lower())
         if connector and device:
-            return device, connector
-    return rest, None
+            return canonical_device_name(device), connector
+    return canonical_device_name(rest), None
 
 
 def make_output_id(device_name, connector=None):
@@ -158,11 +178,16 @@ def make_output_id(device_name, connector=None):
     return f"{OUTPUT_PREFIX}{device_name}"
 
 
+def canonical_device_name(name):
+    """Strip GStreamer suffixes such as '(Video Output)'."""
+    return _GST_OUTPUT_SUFFIX.sub("", (name or "").strip())
+
+
 def decklink_device_name(name):
     if not is_decklink_output(name):
-        return name or ""
+        return canonical_device_name(name)
     device, _connector = parse_output_id(name)
-    return device
+    return canonical_device_name(device)
 
 
 def ordered_connectors(connectors):
@@ -294,16 +319,19 @@ def gst_mode_name(width, height, refresh, interlaced=False):
         Fraction(60, 1): "60",
     }.get(frac, str(frac.numerator) if frac.denominator == 1 else "25")
     scan = "i" if interlaced else "p"
+    # GStreamer uses 2kdcip25 / 4kdcip25 for DCI; 1080p25 is strictly 1920x1080.
+    if width >= 4000 and height >= 2100:
+        return f"4kdci{scan}{token}"
     if width >= 3800 and height >= 2100:
         return f"2160{scan}{token}"
-    if width >= 2000 and height >= 1000 and width < 3800:
-        return f"1080{scan}{token}"
+    if width >= 2000 and height >= 1000:
+        return f"2kdci{scan}{token}"
     if width == 1920 and height == 1080:
         return f"1080{scan}{token}"
     if width == 1280 and height == 720:
         return f"720{scan}{token}"
     if width == 720 and height in (486, 480):
-        return "ntsc" if not interlaced else "ntsc"
+        return "ntsc"
     if width == 720 and height == 576:
         return "pal"
     return f"1080{scan}{token}"
@@ -408,6 +436,76 @@ def parse_list_formats(text):
     return modes
 
 
+def parse_gst_caps_modes(text):
+    """Progressive modes advertised on a gst-device-monitor block."""
+    modes = []
+    seen = set()
+    for match in _GST_CAPS_LINE.finditer(text or ""):
+        scan = (match.group("scan") or "").lower()
+        if "interleave" in scan or scan == "mixed":
+            continue
+        width = int(match.group("width"))
+        height = int(match.group("height"))
+        num = int(match.group("num"))
+        den = int(match.group("den") or 1) or 1
+        fps = num / den
+        if width < 320 or height < 240 or fps < 10:
+            continue
+        key = (width, height, round(fps, 3))
+        if key in seen:
+            continue
+        seen.add(key)
+        modes.append(DeckLinkMode(
+            width=width,
+            height=height,
+            refresh=fps,
+            gst_mode=gst_mode_name(width, height, fps, interlaced=False),
+        ))
+    return modes
+
+
+def parse_gst_device_monitor(text):
+    """Unique DeckLink sinks from `gst-device-monitor-1.0 Video/Sink`."""
+    devices = []
+    seen = set()
+    if not text:
+        return devices
+    blocks = re.split(r"\nDevice found:\n", "\n" + text)
+    for block in blocks[1:]:
+        blob = block.lower()
+        if "decklink" not in blob and "blackmagic" not in blob:
+            continue
+        display = re.search(r"display-name\s*=\s*(.+)$", block, re.MULTILINE)
+        model = re.search(r"model-name\s*=\s*(.+)$", block, re.MULTILINE)
+        named = re.search(r"^\tname\s*:\s*(.+)$", block, re.MULTILINE)
+        raw = ""
+        if display:
+            raw = display.group(1).strip()
+        elif model:
+            raw = model.group(1).strip()
+        elif named:
+            raw = named.group(1).strip()
+        name = canonical_device_name(raw)
+        if not name:
+            continue
+        persistent = None
+        pid = re.search(r"persistent-id\s*=\s*(-?\d+)", block)
+        if pid:
+            persistent = int(pid.group(1))
+        key = persistent if persistent not in (None, -1) else name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        devices.append(DeckLinkDevice(
+            name=name,
+            index=len(devices),
+            backend="gstreamer",
+            persistent_id=persistent if persistent not in (None, -1) else None,
+            advertised_modes=tuple(parse_gst_caps_modes(block)),
+        ))
+    return devices
+
+
 def fallback_modes():
     """Progressive HD/UHD family used when the card cannot list formats."""
     rates = (
@@ -485,17 +583,26 @@ def find_host_ffmpeg(preferred=None):
 def ffmpeg_has_decklink(ffmpeg_path):
     if not ffmpeg_path:
         return False
+    cached = _FFMPEG_DECKLINK.get(ffmpeg_path)
+    if cached is not None:
+        return cached
     text = _run([ffmpeg_path, "-hide_banner", "-sinks", "decklink"], timeout=6)
     lower = text.lower()
+    found = False
     if "unknown output format" in lower or "unknown input format" in lower:
-        return False
-    if "not enabled" in lower or "no such device" in lower and "decklink" in lower:
+        found = False
+    elif "not enabled" in lower or "no such device" in lower and "decklink" in lower:
         if "auto-detected" not in lower and "sink" not in lower:
-            return False
-    if "decklink" in lower and ("sink" in lower or "device" in lower or "[" in lower):
-        return True
-    muxers = _run([ffmpeg_path, "-hide_banner", "-muxers"], timeout=6)
-    return bool(re.search(r"\bdecklink\b", muxers, re.IGNORECASE))
+            found = False
+        elif "decklink" in lower and ("sink" in lower or "device" in lower or "[" in lower):
+            found = True
+    elif "decklink" in lower and ("sink" in lower or "device" in lower or "[" in lower):
+        found = True
+    elif "decklink" in lower:
+        muxers = _run([ffmpeg_path, "-hide_banner", "-muxers"], timeout=6)
+        found = bool(re.search(r"\bdecklink\b", muxers, re.IGNORECASE))
+    _FFMPEG_DECKLINK[ffmpeg_path] = found
+    return found
 
 
 def decklink_api_present():
@@ -512,11 +619,18 @@ def decklink_api_present():
 
 
 def gst_has_decklink():
+    global _GST_DECKLINK
+    if _GST_DECKLINK is not None:
+        return _GST_DECKLINK
     inspect = shutil.which("gst-inspect-1.0")
     if not inspect:
+        _GST_DECKLINK = False
         return False
     text = _run([inspect, "decklinkvideosink"], timeout=6)
-    return "decklinkvideosink" in text.lower() and "no such element" not in text.lower()
+    _GST_DECKLINK = (
+        "decklinkvideosink" in text.lower() and "no such element" not in text.lower()
+    )
+    return _GST_DECKLINK
 
 
 def find_gst_launch():
@@ -542,20 +656,13 @@ def _probe_gst_devices():
     if not gst_has_decklink():
         return []
     monitor = shutil.which("gst-device-monitor-1.0")
-    names = []
     if monitor:
-        text = _run([monitor, "Video/Sink"], timeout=6)
-        for match in re.finditer(
-            r"(DeckLink[^\n]*|Blackmagic[^\n]*)", text, re.IGNORECASE
-        ):
-            name = match.group(1).strip()
-            name = re.sub(r"\s+", " ", name)
-            if name and name not in names:
-                names.append(name)
-    if names:
-        return names
+        text = _run([monitor, "Video/Sink"], timeout=8)
+        devices = parse_gst_device_monitor(text)
+        if devices:
+            return devices
     if decklink_api_present():
-        return ["DeckLink"]
+        return [DeckLinkDevice(name="DeckLink", index=0, backend="gstreamer")]
     return []
 
 
@@ -777,21 +884,26 @@ def list_decklink_devices(ffmpeg_path=None, refresh=False):
 
     ffmpeg_path = find_host_ffmpeg(ffmpeg_path)
     names = _list_ffmpeg_devices(ffmpeg_path)
-    backend = "ffmpeg" if names else ""
-    if not names:
-        names = _probe_gst_devices()
-        backend = "gstreamer" if names else ""
     sdk_connectors = query_sdk_output_connections()
-    devices = [
-        DeckLinkDevice(
-            name=name,
-            index=index,
-            backend=backend,
-            connectors=_lookup_connectors(name, sdk_connectors),
-        )
-        for index, name in enumerate(names)
-    ]
-    _DEVICE_CACHE = (now, tuple(devices))
+    if names:
+        devices = [
+            DeckLinkDevice(
+                name=canonical_device_name(name),
+                index=index,
+                backend="ffmpeg",
+                connectors=_lookup_connectors(canonical_device_name(name), sdk_connectors),
+            )
+            for index, name in enumerate(names)
+        ]
+    else:
+        devices = []
+        for index, device in enumerate(_probe_gst_devices()):
+            device.index = index
+            device.backend = device.backend or "gstreamer"
+            device.name = canonical_device_name(device.name)
+            device.connectors = _lookup_connectors(device.name, sdk_connectors)
+            devices.append(device)
+    _DEVICE_CACHE = (time.monotonic(), tuple(devices))
     return list(devices)
 
 
@@ -803,9 +915,14 @@ def list_decklink_output_ids(ffmpeg_path=None, refresh=False):
 
 
 def find_device(output_id, ffmpeg_path=None):
-    wanted = decklink_device_name(output_id) if is_decklink_output(output_id) else output_id
+    wanted = canonical_device_name(
+        decklink_device_name(output_id) if is_decklink_output(output_id) else output_id
+    )
+    wanted_lower = wanted.lower()
     for device in list_decklink_devices(ffmpeg_path):
-        if device.name == wanted or device.output_id == make_output_id(wanted):
+        if canonical_device_name(device.name).lower() == wanted_lower:
+            return device
+        if device.output_id == make_output_id(wanted):
             return device
     return None
 
@@ -839,7 +956,9 @@ def list_decklink_modes(output_id, ffmpeg_path=None):
 
     ffmpeg_path = find_host_ffmpeg(ffmpeg_path)
     modes = []
-    if ffmpeg_path and ffmpeg_has_decklink(ffmpeg_path):
+    if device.advertised_modes:
+        modes = list(device.advertised_modes)
+    elif ffmpeg_path and ffmpeg_has_decklink(ffmpeg_path):
         text = _run(
             [
                 ffmpeg_path, "-hide_banner",
@@ -858,12 +977,18 @@ def list_decklink_modes(output_id, ffmpeg_path=None):
 
 
 def choose_decklink_backend(ffmpeg_path=None):
+    global _BACKEND_CACHE
+    if _BACKEND_CACHE is not None:
+        return _BACKEND_CACHE
     ffmpeg_path = find_host_ffmpeg(ffmpeg_path)
     if ffmpeg_path and ffmpeg_has_decklink(ffmpeg_path):
-        return "ffmpeg", ffmpeg_path
+        _BACKEND_CACHE = ("ffmpeg", ffmpeg_path)
+        return _BACKEND_CACHE
     if gst_has_decklink() and find_gst_launch():
-        return "gstreamer", find_gst_launch()
-    return None, ffmpeg_path
+        _BACKEND_CACHE = ("gstreamer", find_gst_launch())
+        return _BACKEND_CACHE
+    _BACKEND_CACHE = (None, ffmpeg_path)
+    return _BACKEND_CACHE
 
 
 def playout_available(ffmpeg_path=None):
@@ -871,13 +996,52 @@ def playout_available(ffmpeg_path=None):
     return backend is not None
 
 
-def video_filter(width, height, refresh):
+def video_filter(width, height, refresh, pixel_format="yuv422p"):
     rate = fps_arg(refresh)
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
-        f"fps={rate},format=uyvy422"
+        f"fps={rate},format={pixel_format}"
     )
+
+
+def encoder_time_base(fps):
+    """rawvideo/yuv4mpeg time_base (1/fps). mpv 0.41 dropped --oautofps."""
+    frac = fps_fraction(fps)
+    return f"{frac.denominator}/{frac.numerator}"
+
+
+def black_video_path(width, height, refresh, ffmpeg_path=None):
+    """1 s looping black clip so the encoder keeps sending frames (PNG cannot)."""
+    width = int(width or 1920)
+    height = int(height or 1080)
+    rate = fps_arg(refresh)
+    path = os.path.join(
+        tempfile.gettempdir(),
+        f"cinema-player-decklink-black-{width}x{height}-{rate.replace('/', '-')}.mp4",
+    )
+    if os.path.isfile(path) and os.path.getsize(path) > 1000:
+        return path
+    ffmpeg_path = find_host_ffmpeg(ffmpeg_path)
+    if not ffmpeg_path:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffmpeg_path, "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "lavfi",
+                "-i", f"color=c=black:s={width}x{height}:r={rate}",
+                "-t", "1", "-pix_fmt", "yuv420p", "-c:v", "mpeg4", "-q:v", "8",
+                path,
+            ],
+            capture_output=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0 or not os.path.isfile(path):
+        return None
+    return path
 
 
 def silence_wav_path():
@@ -914,38 +1078,44 @@ def silence_wav_path():
 
 def mpv_arguments(mode, backend, audio_file=None):
     """mpv encoding args that write a live stream to stdout for the DeckLink sink."""
-    vf = video_filter(mode.width, mode.height, mode.refresh)
-    silence = audio_file or silence_wav_path()
+    vf = video_filter(
+        mode.width, mode.height, mode.refresh,
+        pixel_format="uyvy422" if backend == "gstreamer" else "yuv422p",
+    )
+    tb = encoder_time_base(mode.refresh)
     common = [
         "--force-window=no",
         "--keepaspect=yes",
-        "--hwdec=auto-copy",
+        "--hwdec=no",
         "--osd-level=0",
         "--osc=no",
         "--sid=no",
         "--sub-auto=no",
         "--image-display-duration=inf",
-        "--video-sync=audio",
-        "--untimed=no",
+        # Encoding has no display to wait for; untimed keeps raw frames flowing.
+        "--untimed=yes",
         f"--vf={vf}",
+        "--o=-",
+        f"--ovcopts=time_base={tb}",
+    ]
+    if backend == "gstreamer":
+        # Raw UYVY, no Y4M header — gst y4mdec aborts if the first stdin chunk is short.
+        return common + [
+            "--of=rawvideo",
+            "--ovc=rawvideo",
+            "--ovcopts-append=pixel_format=uyvy422",
+            "--no-audio",
+        ]
+    silence = audio_file or silence_wav_path()
+    return common + [
         f"--audio-file={silence}",
         "--audio-samplerate=48000",
         "--audio-channels=stereo",
-        "--o=-",
-        "--oautofps",
-        "--oneverdrop",
-    ]
-    if backend == "gstreamer":
-        return common + [
-            "--of=yuv4mpegpipe",
-            "--ovc=rawvideo",
-            "--no-audio",
-        ]
-    return common + [
+        "--video-sync=audio",
         "--of=nut",
         "--ovc=rawvideo",
         "--oac=pcm_s16le",
-        "--ovcopts=pixel_format=uyvy422",
+        "--ovcopts-append=pixel_format=uyvy422",
     ]
 
 
@@ -982,25 +1152,33 @@ def _ffmpeg_command(ffmpeg_path, device, mode):
 
 
 def _gst_command(gst_launch, device, mode):
-    width, height = mode.width, mode.height
+    width, height = int(mode.width), int(mode.height)
     frac = fps_fraction(mode.refresh)
     gst_mode = mode.gst_mode or gst_mode_name(width, height, mode.refresh)
     caps = (
         f"video/x-raw,format=UYVY,width={width},height={height},"
         f"framerate={frac.numerator}/{frac.denominator}"
     )
-    # Live black keeps SDI locked; y4m from mpv is overlaid when frames arrive.
-    pipeline = (
-        f"videotestsrc pattern=black is-live=true ! {caps} ! compositor name=c sink_1::zorder=1 "
-        f"fdsrc fd=0 do-timestamp=true ! queue max-size-buffers=4 leaky=downstream ! "
-        f"y4mdec ! videoconvert ! videoscale ! videorate ! {caps} ! c.sink_1 "
-        f"c. ! videoconvert ! {caps} ! "
-        f"decklinkvideosink device-number={device.index} mode={gst_mode} sync=true "
-        f"audiotestsrc wave=silence is-live=true ! audio/x-raw,rate=48000,channels=2 ! "
-        f"audioconvert ! audioresample ! "
-        f"decklinkaudiosink device-number={device.index} sync=true"
+    sink_id = (
+        f"persistent-id={device.persistent_id}"
+        if device.persistent_id not in (None, -1)
+        else f"device-number={device.index}"
     )
-    return [gst_launch, "-q", *pipeline.split()]
+    # One live video path: compositor+empty fdsrc never pushes to the card, so
+    # EnableVideoOutput never runs (no picture, no frequency switch). mpv's
+    # looping black clip keeps the raster up until the program clip arrives.
+    frame_bytes = max(width * height * 2, 4096)
+    return [
+        gst_launch, "-q",
+        "fdsrc", "fd=0", "is-live=true", "do-timestamp=true",
+        f"blocksize={frame_bytes}",
+        "!", "queue", "max-size-buffers=8", "leaky=downstream",
+        "!", "rawvideoparse", "use-sink-caps=false", "format=UYVY",
+        f"width={width}", f"height={height}",
+        f"framerate={frac.numerator}/{frac.denominator}",
+        "!", "videoconvert", "!", caps,
+        "!", "decklinkvideosink", sink_id, f"mode={gst_mode}", "sync=true",
+    ]
 
 
 def start_sink(output_id, mode, ffmpeg_path=None, log_path=None):
@@ -1025,18 +1203,29 @@ def start_sink(output_id, mode, ffmpeg_path=None, log_path=None):
         command = _gst_command(tool, device, mode)
     log_handle = open(log_path, "ab")
     try:
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+    except (ValueError, OSError):
+        pass
+    env = os.environ.copy()
+    env.setdefault("GST_DEBUG", "0")
+    try:
         process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=env,
         )
     except OSError as exc:
         log_handle.close()
         raise RuntimeError(f"DeckLink-Ausgabe konnte nicht gestartet werden: {exc}") from exc
 
     # Detect an immediate failure (missing plugin, busy card) before mpv attaches.
-    time.sleep(0.15)
+    for _ in range(2):
+        time.sleep(0.05)
+        if process.poll() is not None:
+            break
     if process.poll() is not None:
         log_handle.close()
         detail = ""
@@ -1080,11 +1269,11 @@ def stop_sink(sink):
     if process.poll() is None:
         process.terminate()
         try:
-            process.wait(timeout=2)
+            process.wait(timeout=0.4)
         except subprocess.TimeoutExpired:
             process.kill()
             try:
-                process.wait(timeout=1)
+                process.wait(timeout=0.4)
             except subprocess.TimeoutExpired:
                 pass
 
