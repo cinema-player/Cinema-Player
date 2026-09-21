@@ -17,7 +17,8 @@ from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, ttk
 
 from language import LANGUAGES, t, set_language, current_language
-from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_times
+from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_times, connect_url
+import qr_code
 from cinema_player import (
     APP_VERSION,
     FONT_FAMILY,
@@ -3856,14 +3857,22 @@ class VideoPlayerGUI:
         self._start_remote_api()
         self._fill_remote_urls()
 
+    def _remote_connect_urls(self):
+        if not self.remote_api.running:
+            return []
+        lang = current_language()
+        return self.remote_api.connect_urls(lang) or [
+            connect_url("127.0.0.1", self.remote_api.port, self.remote_api.token, lang)
+        ]
+
     def _fill_remote_urls(self):
         widget = getattr(self, "remote_url_box", None)
         if widget is None:
             return
         widget.configure(state="normal")
         widget.delete("1.0", "end")
-        if self.remote_api.running:
-            urls = self.remote_api.urls() or [f"http://127.0.0.1:{self.remote_api.port}/"]
+        urls = self._remote_connect_urls()
+        if urls:
             widget.insert("end", "\n".join(urls))
         elif self.remote_api.error:
             widget.insert("end", self.remote_api.error)
@@ -3872,6 +3881,25 @@ class VideoPlayerGUI:
         else:
             widget.insert("end", t("remote_control_off"))
         widget.configure(state="disabled")
+        self._draw_remote_qr()
+
+    def _draw_remote_qr(self):
+        canvas = getattr(self, "remote_qr_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        urls = self._remote_connect_urls()
+        if urls and qr_code.draw_on_canvas(canvas, urls[0], size=196):
+            return
+        canvas.configure(width=196, height=196, bg=COLOR_FIELD, highlightthickness=0)
+        canvas.create_text(
+            98, 98,
+            text=t("remote_control_qr_off"),
+            fill=COLOR_MUTED,
+            font=FONT_SMALL,
+            width=180,
+            justify="center",
+        )
 
     def show_remote_control(self):
         window = getattr(self, "remote_window", None)
@@ -3888,7 +3916,7 @@ class VideoPlayerGUI:
         window = tk.Toplevel(self.root)
         window.title(t("remote_control"))
         window.configure(bg=COLOR_BG)
-        window.minsize(480, 320)
+        window.minsize(560, 380)
         if self.icon_image is not None:
             try:
                 window.iconphoto(True, self.icon_image)
@@ -3898,7 +3926,7 @@ class VideoPlayerGUI:
         window.protocol("WM_DELETE_WINDOW", self._close_remote_window)
         tk.Label(
             window, text=t("remote_control_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
-            font=FONT_SMALL, wraplength=560, justify="left",
+            font=FONT_SMALL, wraplength=620, justify="left",
         ).pack(fill="x", padx=10, pady=(10, 6))
         holder = tk.Frame(window, bg=COLOR_PANEL)
         holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -3916,14 +3944,27 @@ class VideoPlayerGUI:
         tk.Entry(token_row, textvariable=self.remote_api_token, font=FONT_UI, show="•").pack(
             side="left", fill="x", expand=True, padx=(8, 0),
         )
+        pair = tk.Frame(holder, bg=COLOR_PANEL)
+        pair.pack(fill="both", expand=True, padx=8, pady=(8, 8))
+        qr_col = tk.Frame(pair, bg=COLOR_PANEL)
+        qr_col.pack(side="left", anchor="n", padx=(0, 12))
         tk.Label(
-            holder, text=t("remote_control_urls"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
-        ).pack(anchor="w", padx=8, pady=(8, 2))
+            qr_col, text=t("remote_control_qr"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(anchor="w", pady=(0, 4))
+        self.remote_qr_canvas = tk.Canvas(
+            qr_col, width=196, height=196, bg="white", highlightthickness=0,
+        )
+        self.remote_qr_canvas.pack()
+        urls_col = tk.Frame(pair, bg=COLOR_PANEL)
+        urls_col.pack(side="left", fill="both", expand=True)
+        tk.Label(
+            urls_col, text=t("remote_control_urls"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(anchor="w", pady=(0, 4))
         urls = tk.Text(
-            holder, height=4, font=FONT_SMALL, bg=COLOR_FIELD, fg=COLOR_TEXT,
+            urls_col, height=8, font=FONT_SMALL, bg=COLOR_FIELD, fg=COLOR_TEXT,
             relief="flat", wrap="word",
         )
-        urls.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        urls.pack(fill="both", expand=True)
         self.remote_url_box = urls
         buttons = tk.Frame(window, bg=COLOR_BG)
         buttons.pack(fill="x", padx=10, pady=(0, 10))
@@ -3935,12 +3976,13 @@ class VideoPlayerGUI:
         ).pack(side="right", padx=(0, 8))
         self.remote_window = window
         self._fill_remote_urls()
-        self._place_on_control_monitor(window, 520, 360)
+        self._place_on_control_monitor(window, 640, 420)
 
     def _close_remote_window(self):
         window = getattr(self, "remote_window", None)
         self.remote_window = None
         self.remote_url_box = None
+        self.remote_qr_canvas = None
         if window is not None:
             try:
                 window.destroy()

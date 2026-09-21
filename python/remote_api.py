@@ -8,7 +8,7 @@ import socket
 import threading
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from cinema_player import APP_VERSION, ROOT_DIR, format_clock
 
@@ -44,6 +44,21 @@ def lan_urls(port):
     return [f"http://{ip}:{port}/" for ip in lan_addresses()]
 
 
+def connect_url(ip, port, token="", language=""):
+    """Phone URL that carries the token so a QR scan can log in."""
+    query = {}
+    if token:
+        query["token"] = token
+    if language in ("en", "de"):
+        query["lang"] = language
+    suffix = f"?{urlencode(query)}" if query else ""
+    return f"http://{ip}:{int(port)}/{suffix}"
+
+
+def connect_urls(port, token="", language=""):
+    return [connect_url(ip, port, token, language) for ip in lan_addresses()]
+
+
 class RemoteAPIServer:
     """Background HTTP server. All player calls run on the Tk thread."""
 
@@ -64,6 +79,11 @@ class RemoteAPIServer:
         if not self.running:
             return []
         return lan_urls(self.port)
+
+    def connect_urls(self, language=""):
+        if not self.running:
+            return []
+        return connect_urls(self.port, self.token, language)
 
     def start(self, port=DEFAULT_PORT, token=""):
         self.stop()
@@ -132,17 +152,24 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+    protocol_version = "HTTP/1.0"
+
     def _send(self, status, body, content_type="application/json; charset=utf-8"):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Connection", "close")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Cinema-Token")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
         self.end_headers()
         self.wfile.write(data)
+        try:
+            self.wfile.flush()
+        except OSError:
+            pass
 
     def _send_json(self, payload, status=200):
         self._send(status, json.dumps(payload, ensure_ascii=False, default=str))
@@ -151,29 +178,36 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
         self._send(204, b"")
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/") or "/"
-        if path in ("/", "/remote"):
-            self._serve_remote_page()
-            return
-        if not self._authorized():
-            return
-        if path == "/api":
-            self._send_json(self._info())
-            return
-        if path == "/api/status":
-            self._send_json(self.server.api.invoke("remote_status"))
-            return
-        if path == "/api/playlist":
-            payload = self.server.api.invoke("remote_status")
-            self._send_json({
-                "ok": payload.get("ok", False),
-                "playlist": payload.get("playlist", []),
-                "playlist_name": payload.get("playlist_name", ""),
-                "program_index": payload.get("program_index", 0),
-            })
-            return
-        self._send_json({"ok": False, "error": "not_found"}, 404)
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/") or "/"
+            if path in ("/", "/remote") or not path.startswith("/api"):
+                self._serve_remote_page()
+                return
+            if not self._authorized():
+                return
+            if path == "/api":
+                self._send_json(self._info())
+                return
+            if path == "/api/status":
+                self._send_json(self.server.api.invoke("remote_status"))
+                return
+            if path == "/api/playlist":
+                payload = self.server.api.invoke("remote_status")
+                self._send_json({
+                    "ok": payload.get("ok", False),
+                    "playlist": payload.get("playlist", []),
+                    "playlist_name": payload.get("playlist_name", ""),
+                    "program_index": payload.get("program_index", 0),
+                })
+                return
+            self._send_json({"ok": False, "error": "not_found"}, 404)
+        except Exception as exc:
+            print(f"Remote API GET {self.path}: {exc}")
+            try:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+            except Exception:
+                pass
 
     def do_POST(self):
         self._dispatch_command()

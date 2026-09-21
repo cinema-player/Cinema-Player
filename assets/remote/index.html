@@ -204,11 +204,24 @@
             program_message: "Programmzeiger auf {name} setzen?" }
     };
     const tokenInput = document.getElementById("token");
-    tokenInput.value = sessionStorage.getItem("cinema-token") || "";
     const colors = { OFF: "var(--off)", PROGRAM: "var(--program)", PLAYING: "var(--playing)" };
     let lastVolume = 100;
     let dragging = false;
     let uiLang = "en";
+    const params = new URLSearchParams(location.search);
+    const qToken = (params.get("token") || "").trim();
+    const qLang = params.get("lang");
+    if (qLang === "de" || qLang === "en") uiLang = qLang;
+    if (qToken) {
+      tokenInput.value = qToken;
+      sessionStorage.setItem("cinema-token", qToken);
+      document.getElementById("token-box").hidden = true;
+      params.delete("token");
+      const qs = params.toString();
+      history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+    } else {
+      tokenInput.value = sessionStorage.getItem("cinema-token") || "";
+    }
 
     function headers() {
       const token = tokenInput.value.trim();
@@ -246,6 +259,7 @@
       document.getElementById("confirm-yes").textContent = table.yes;
       document.getElementById("confirm-no").textContent = table.no;
     }
+    applyLang(uiLang);
 
     function render(data) {
       const err = document.getElementById("err");

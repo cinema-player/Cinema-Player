@@ -88,7 +88,7 @@ These settings control the behavior of the playlist.
 
 ### Remote control
 
-Cinema Player listens on the LAN (default port **8765**) so a smartphone can run the show. Settings → **Remote control** lists the URL, can switch the API off, and requires a token (`X-Cinema-Token` or `Authorization: Bearer`). A radio icon appears in the header while the API is running. Opening the URL in a phone browser loads a remote page. A native app can use the same JSON API:
+Cinema Player listens on the LAN (default port **8765**) so a smartphone can run the show. Settings → **Remote control** shows a QR code (IP, port, and token) and the matching URL. Scan the code or open the URL in a phone browser. A token is required (`X-Cinema-Token` or `Authorization: Bearer`). A radio icon appears in the header while the API is running. A native app can use the same JSON API:
 
 - `GET /api/status` — state, playlist, progress, clocks, volume, and which actions are available
 - `GET /api/playlist` — playlist only

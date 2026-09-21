@@ -21,14 +21,17 @@ STRINGS = {
         "media_directories": "Media directories",
         "remote_control": "Remote control",
         "remote_control_hint": (
-            "Open one of these addresses in a smartphone browser to control Resume, Pause, Still, Stop, volume, "
-            "and the program pointer, and to watch the playlist and clocks. A token is required and sent as X-Cinema-Token."
+            "Scan the QR code with a smartphone camera, or open one of the addresses. "
+            "The link includes the token. Resume, Pause, Still, Stop, volume, "
+            "and the program pointer are on the phone page."
         ),
         "remote_control_enable": "Enable network API",
         "remote_control_port": "Port",
         "remote_control_token": "Token *",
         "remote_control_token_required": "A token is required before remote control can be switched on.",
         "remote_control_urls": "Phone URL",
+        "remote_control_qr": "QR code",
+        "remote_control_qr_off": "No QR code while the API is off.",
         "remote_control_apply": "Apply",
         "remote_control_close": "Close",
         "remote_control_off": "The network API is switched off.",
@@ -236,14 +239,17 @@ STRINGS = {
         "media_directories": "Medienverzeichnisse",
         "remote_control": "Fernsteuerung",
         "remote_control_hint": (
-            "Öffnen Sie eine dieser Adressen im Smartphone-Browser, um Weiter, Pause, Standbild, Stop, Lautstärke "
-            "und den Programmzeiger zu steuern und Playlist sowie Zeiten zu sehen. Ein Token ist Pflicht und wird als X-Cinema-Token gesendet."
+            "Scannen Sie den QR-Code mit der Smartphone-Kamera, oder öffnen Sie eine der Adressen. "
+            "Der Link enthält das Token. Weiter, Pause, Standbild, Stop, Lautstärke "
+            "und der Programmzeiger sind auf der Telefonseite."
         ),
         "remote_control_enable": "Netzwerk-API einschalten",
         "remote_control_port": "Port",
         "remote_control_token": "Token *",
         "remote_control_token_required": "Ein Token ist nötig, bevor die Fernsteuerung eingeschaltet werden kann.",
         "remote_control_urls": "Telefon-URL",
+        "remote_control_qr": "QR-Code",
+        "remote_control_qr_off": "Kein QR-Code, solange die API aus ist.",
         "remote_control_apply": "Übernehmen",
         "remote_control_close": "Schließen",
         "remote_control_off": "Die Netzwerk-API ist ausgeschaltet.",
