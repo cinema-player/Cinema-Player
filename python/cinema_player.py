@@ -1834,6 +1834,15 @@ class VideoOutputManager:
         return VideoInfo(filename, width, height, float(fps_fraction), fps_fraction)
 
     @staticmethod
+    def half_refresh_rate(fps):
+        """25 Hz for 50 fps and 30 Hz for 60 fps when the projector has no 50/60 mode."""
+        if not fps or fps <= 0:
+            return None
+        if abs(fps - 50) < 1.0 or abs(fps - 60) < 1.0:
+            return fps / 2.0
+        return None
+
+    @staticmethod
     def refresh_matches(fps, refresh):
         if fps <= 0 or refresh <= 0:
             return False
@@ -1842,6 +1851,9 @@ class VideoOutputManager:
         for multiplier in range(1, 5):
             if abs(refresh - fps * multiplier) / fps < 0.01:
                 return True
+        half = VideoOutputManager.half_refresh_rate(fps)
+        if half and abs(refresh - half) / fps < 0.01:
+            return True
         return False
 
     @staticmethod
@@ -1853,6 +1865,7 @@ class VideoOutputManager:
         """Rates that give judder-free playback, best first.
 
         For 24/25 fps prefer 48/50 Hz over 24/25 Hz (less flicker).
+        For 50/60 fps prefer 50/60 Hz, then 100/120 Hz, then 25/30 Hz.
         """
         candidates = []
         for multiplier in range(1, 5):
@@ -1866,6 +1879,9 @@ class VideoOutputManager:
             else:
                 rank = multiplier + 1
             candidates.append((rank, multiplier, rate))
+        half = VideoOutputManager.half_refresh_rate(fps)
+        if half and 20 <= half <= 120:
+            candidates.append((10, 0.5, half))
         candidates.sort()
         return [(rate, multiplier) for rank, multiplier, rate in candidates]
 
@@ -1884,6 +1900,11 @@ class VideoOutputManager:
 
         if best != float("inf"):
             return best
+        half = VideoOutputManager.half_refresh_rate(fps)
+        if half:
+            relative_error = abs(half - refresh) / fps
+            if relative_error < 0.01:
+                return 1.0 + relative_error
         return 10 + abs(refresh - fps) / fps
 
     def native_resolution(self, output_name):
@@ -2317,6 +2338,8 @@ class MPVController:
         self.observe("duration", 2)
         self.observe("pause", 3)
         self.observe("eof-reached", 4)
+        self.observe("video-bitrate", 6)
+        self.observe("audio-bitrate", 7)
 
     def set_vid(self, enabled):
         self.command("set_property", "vid", "auto" if enabled else "no")

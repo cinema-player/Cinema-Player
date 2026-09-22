@@ -39,6 +39,7 @@ from cinema_player import (
     clamp_volume,
     find_mpv,
     find_ffmpeg,
+    format_bitrate,
     format_clock,
     format_codec_rate,
     format_fps_label,
@@ -47,6 +48,7 @@ from cinema_player import (
     gpu_context_for_mpv,
     mark_missing_media,
     media_file_available,
+    parse_bitrate_bps,
     probe_loudness,
     probe_media,
     refresh_entry_aspect,
@@ -1025,6 +1027,10 @@ class VideoPlayerGUI:
         self.program_levels_at = 0.0
         self._program_meter_shown = [METER_FLOOR_DB, METER_FLOOR_DB]
         self._meter_after_id = None
+        self.program_video_bps = 0
+        self.program_audio_bps = 0
+        self.preview_video_bps = 0
+        self.preview_audio_bps = 0
         self.main_pause = False
         self.blackout = False
         self.idle_media_path = ""
@@ -1533,11 +1539,15 @@ class VideoPlayerGUI:
             height=32, bg=COLOR_PANEL,
         )
         self.main_progress.grid(row=0, column=0, sticky="ew")
+        self.program_video_bitrate = self._bitrate_readout(progress, "video_bitrate")
+        self.program_video_bitrate.grid(row=0, column=1, sticky="e", padx=(8, 8))
 
         volume = self._build_volume_row(
             progress, self.program_volume, self._on_program_volume, COLOR_PANEL,
         )
         volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
+        self.program_audio_bitrate = self._bitrate_readout(progress, "audio_bitrate")
+        self.program_audio_bitrate.grid(row=1, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
 
         self.audiosync_frame = tk.Frame(progress, bg=COLOR_PANEL)
         delay_row = tk.Frame(self.audiosync_frame, bg=COLOR_PANEL)
@@ -1573,7 +1583,7 @@ class VideoPlayerGUI:
         ).pack(side="left", padx=(8, 0))
 
         marks = tk.Frame(progress, bg=COLOR_PANEL)
-        marks.grid(row=3, column=0, sticky="ew", padx=8)
+        marks.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8)
         for col in range(3):
             marks.columnconfigure(col, weight=1)
         self.main_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
@@ -1607,6 +1617,19 @@ class VideoPlayerGUI:
         value = tk.Label(box, text="--:--", font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT)
         value.pack()
         return value
+
+    def _bitrate_readout(self, parent, tooltip_key):
+        label = tk.Label(
+            parent,
+            text="--",
+            width=10,
+            anchor="e",
+            bg=COLOR_PANEL,
+            fg=COLOR_MUTED,
+            font=FONT_SMALL,
+        )
+        label.tooltip = IconTooltip(label, t(tooltip_key))
+        return label
 
     def _build_volume_row(self, parent, variable, on_change, bg, save=False):
         row = tk.Frame(parent, bg=bg)
@@ -2374,16 +2397,20 @@ class VideoPlayerGUI:
         self.preview_progress = RangeProgressBar(
             controls, on_seek=self._on_preview_seek, height=32,
         )
-        self.preview_progress.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 0))
+        self.preview_progress.grid(row=0, column=0, sticky="ew", padx=(8, 0), pady=(6, 0))
+        self.preview_video_bitrate = self._bitrate_readout(controls, "video_bitrate")
+        self.preview_video_bitrate.grid(row=0, column=1, sticky="e", padx=(8, 8), pady=(6, 0))
 
         self.preview_volume_row = self._build_volume_row(
             controls, self.preview_volume, self._on_preview_volume, COLOR_PANEL,
             save=True,
         )
         self.preview_volume_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
+        self.preview_audio_bitrate = self._bitrate_readout(controls, "audio_bitrate")
+        self.preview_audio_bitrate.grid(row=1, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
 
         marks = tk.Frame(controls, bg=COLOR_PANEL)
-        marks.grid(row=2, column=0, sticky="ew", padx=8, pady=(2, 4))
+        marks.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 4))
         self.preview_marks = marks
         for col in range(3):
             marks.columnconfigure(col, weight=1)
@@ -2395,7 +2422,7 @@ class VideoPlayerGUI:
         self.preview_out.grid(row=0, column=2, sticky="e")
 
         buttons = tk.Frame(controls, bg=COLOR_PANEL)
-        buttons.grid(row=3, column=0, sticky="w", padx=8, pady=(0, 8))
+        buttons.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
 
         transport = tk.Frame(buttons, bg=COLOR_PANEL)
         self.preview_transport = transport
@@ -2937,13 +2964,21 @@ class VideoPlayerGUI:
         return any(self.output_manager.refresh_matches(fps, rate) for rate in rates)
 
     def _matching_rate_labels(self, fps, rates):
-        """Beamer rates that can play this fps (native or 2x)."""
+        """Beamer rates that can play this fps (native, 2x, or 50/60→25/30)."""
         labels = []
         seen = set()
+        half = self.output_manager.half_refresh_rate(fps)
+        has_native = any(self.output_manager.refresh_close(rate, fps) for rate in rates)
+        has_double = bool(fps) and any(
+            self.output_manager.refresh_close(rate, fps * 2) for rate in rates
+        )
+        use_half = bool(half) and not has_native and not has_double
         for rate in rates:
             matches = self.output_manager.refresh_close(rate, fps)
             if not matches and fps and fps < 48:
                 matches = self.output_manager.refresh_close(rate, fps * 2)
+            if not matches and use_half:
+                matches = self.output_manager.refresh_close(rate, half)
             if not matches:
                 continue
             label = format_fps_label(rate)
@@ -4684,7 +4719,7 @@ class VideoPlayerGUI:
         if frame is None:
             return
         if visible:
-            frame.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
+            frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
         else:
             frame.grid_forget()
         readout = getattr(self, "program_delay_readout", None)
@@ -5816,6 +5851,8 @@ class VideoPlayerGUI:
         event = message.get("event")
         if event == "file-loaded":
             mpv.apply_pending_range()
+            self.program_video_bps = 0
+            self.program_audio_bps = 0
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
@@ -5887,11 +5924,17 @@ class VideoPlayerGUI:
         elif name == "af-metadata/meter":
             self.program_levels = parse_preview_levels(value)[:2]
             self.program_levels_at = time.monotonic()
+        elif name == "video-bitrate":
+            self.program_video_bps = parse_bitrate_bps(value)
+        elif name == "audio-bitrate":
+            self.program_audio_bps = parse_bitrate_bps(value)
 
     def preview_mpv_event(self, mpv, message):
         event = message.get("event")
         if event == "file-loaded":
             mpv.apply_pending_range()
+            self.preview_video_bps = 0
+            self.preview_audio_bps = 0
             entry = self.selected_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
@@ -5921,11 +5964,18 @@ class VideoPlayerGUI:
         elif name == "af-metadata/meter":
             self.preview_levels = parse_preview_levels(value)[:2]
             self.preview_levels_at = time.monotonic()
+        elif name == "video-bitrate":
+            self.preview_video_bps = parse_bitrate_bps(value)
+        elif name == "audio-bitrate":
+            self.preview_audio_bps = parse_bitrate_bps(value)
 
     def _reset_preview_meter(self):
         self.preview_levels = []
         self.preview_levels_at = 0.0
         self._meter_shown = [METER_FLOOR_DB, METER_FLOOR_DB]
+        self.preview_video_bps = 0
+        self.preview_audio_bps = 0
+        self._refresh_live_bitrates()
         try:
             self.preview_meter.reset()
         except (tk.TclError, AttributeError):
@@ -5935,10 +5985,65 @@ class VideoPlayerGUI:
         self.program_levels = []
         self.program_levels_at = 0.0
         self._program_meter_shown = [METER_FLOOR_DB, METER_FLOOR_DB]
+        self.program_video_bps = 0
+        self.program_audio_bps = 0
+        self._refresh_live_bitrates()
         try:
             self.program_meter.reset()
         except (tk.TclError, AttributeError):
             pass
+
+    def _program_bitrate_active(self):
+        return (
+            self.program_state == "PLAYING"
+            and bool(self.main_mpv.loaded_path)
+            and not self.idle_showing
+            and not self.beamer_test_active
+        )
+
+    def _preview_bitrate_active(self):
+        return (
+            bool(self.preview_mpv.process)
+            and bool(self.preview_mpv.loaded_path)
+            and not self.preview_stopped
+        )
+
+    @staticmethod
+    def _live_bitrate_text(bps, active):
+        if not active:
+            return "--"
+        return format_bitrate(bps) or "--"
+
+    def _apply_bitrate_text(self, label, text):
+        if label is None:
+            return
+        if getattr(label, "_shown_bitrate", None) == text:
+            return
+        label._shown_bitrate = text
+        try:
+            label.config(text=text)
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _refresh_live_bitrates(self):
+        program_on = self._program_bitrate_active()
+        preview_on = self._preview_bitrate_active()
+        self._apply_bitrate_text(
+            getattr(self, "program_video_bitrate", None),
+            self._live_bitrate_text(self.program_video_bps, program_on),
+        )
+        self._apply_bitrate_text(
+            getattr(self, "program_audio_bitrate", None),
+            self._live_bitrate_text(self.program_audio_bps, program_on),
+        )
+        self._apply_bitrate_text(
+            getattr(self, "preview_video_bitrate", None),
+            self._live_bitrate_text(self.preview_video_bps, preview_on),
+        )
+        self._apply_bitrate_text(
+            getattr(self, "preview_audio_bitrate", None),
+            self._live_bitrate_text(self.preview_audio_bps, preview_on),
+        )
 
     @staticmethod
     def _meter_target(playing, levels, levels_at):
@@ -6018,6 +6123,7 @@ class VideoPlayerGUI:
                 self._update_main_bar()
             if not self.preview_progress.dragging:
                 self._update_preview_bar()
+            self._refresh_live_bitrates()
             self.preview_time.config(text=t("time_value", value=format_clock(self.preview_position)))
             self.sync_live_preview()
             self.refresh_status()

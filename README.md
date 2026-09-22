@@ -17,17 +17,17 @@ The header shows the Cinema Player logo, the version, and whether the session is
 **Left**
 
 - A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, and the playlist position.
-- The program block: progress bar, volume, In/Out times, transport buttons, the four clocks, and a VU meter.
+- The program block: progress bar with live video bitrate, volume with live audio bitrate, In/Out times, transport buttons, the four clocks, and a VU meter.
 - Playlist tools (name, import/new/load/save, global settings).
 - The playlist itself.
 
 **Right**
 
-- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode is larger; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed).
+- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode is larger; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing).
 - Preview header with the Live/Preview badge and clip metadata.
 - Clip settings (autoplay, loop, audio, subtitles, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
-- Preview transport, volume, and In/Out marks.
+- Preview transport, volume, live bitrates, and In/Out marks.
 
 In **OFF**, the status title reads as program not started and the program clocks show `--:--`. Transport buttons that cannot be used in the current state are shown disabled.
 
@@ -202,7 +202,7 @@ The preview displays a video in a window within the control panel. The source ca
 
 When a playlist entry is selected, the playback position can be selected using a progress bar. A start point and an end point can be defined (buttons or **I** / **O**) to determine where the video starts and ends when it goes on air. This option is disabled while the video is on air. Preview In/Out/Clear sit beside the preview transport.
 
-The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row.
+The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row. During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview).
 
 # Technique
 
@@ -220,10 +220,10 @@ To achieve smooth, flicker-free playback, the graphics card’s refresh rate is 
 
 1. The video’s metadata is read.
 2. The refresh rates supported by the projector are checked (shown as **Rates** / **Frequenzen** in the beamer panel).
-3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**.
+3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**. For 50 and 60 fps, if the projector has no 50/60 Hz mode, Cinema Player uses 25/30 Hz instead.
 4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME Wayland is limited to EDID modes).
 
-If a listed rate can show the clip without dropping frames (native or 2× refresh), the projector status shows **OK** (green). 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz.
+If a listed rate can show the clip (native, 2× refresh, or the 25/30 Hz fallback for 50/60 fps), the projector status shows **OK** (green). 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz. 50 fps is **OK** when 25 Hz is listed and 50 Hz is not.
 
 If no matching refresh rate is found, the status changes to **Mismatch** (red). The clip’s unsupported rate or resolution is then added to the list in blue (program) or yellow (preview). The video can still be displayed, but frame-dropping artifacts may occur.
 
@@ -231,7 +231,7 @@ This check is performed when videos are added to the playlist and when a playlis
 
 ## Audio
 
-The audio track of the program is streamed via the HDMI output of the selected projector connector, not the desktop default. Preview audio can be listened to on a separate device. Each clip has its own volume; program and preview each have a VU meter.
+The audio track of the program is streamed via the HDMI output of the selected projector connector, not the desktop default. Preview audio can be listened to on a separate device. Each clip has its own volume; program and preview each have a VU meter. Live video and audio bitrates come from mpv (`video-bitrate` / `audio-bitrate`) and show the rate of the last few seconds, not the file average.
 
 ## Run
 

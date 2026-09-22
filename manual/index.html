@@ -85,8 +85,8 @@
     <ul>
       <li data-lang="en"><strong>Status bar</strong> — program state, clip name, playlist position.</li>
       <li data-lang="de"><strong>Statuszeile</strong> — Programmzustand, Clipname, Position in der Playlist.</li>
-      <li data-lang="en"><strong>Program block</strong> — progress, volume (and stored A/V delay if one exists), In/Out, transport, four clocks, VU meter.</li>
-      <li data-lang="de"><strong>Programmblock</strong> — Verlauf, Lautstärke (und gespeicherter A/V-Versatz, falls vorhanden), In/Out, Transport, vier Uhren, VU-Meter.</li>
+      <li data-lang="en"><strong>Program block</strong> — progress with live video bitrate, volume with live audio bitrate (and stored A/V delay if one exists), In/Out, transport, four clocks, VU meter.</li>
+      <li data-lang="de"><strong>Programmblock</strong> — Verlauf mit aktueller Videobitrate, Lautstärke mit aktueller Audiobitrate (und gespeicherter A/V-Versatz, falls vorhanden), In/Out, Transport, vier Uhren, VU-Meter.</li>
       <li data-lang="en"><strong>Playlist tools</strong> — name, import / new / load / save, beamer change, autoplay delay, idle media.</li>
       <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Beamerwechsel, Autoplay-Pause, Pausenmedium.</li>
       <li data-lang="en"><strong>Playlist</strong> — the running order.</li>
@@ -366,8 +366,8 @@
     <figure>
       <img data-lang="en" src="images/preview-controls-en.png" alt="Preview transport and In/Out">
       <img data-lang="de" src="images/preview-controls-de.png" alt="Vorschau-Transport und In/Out">
-      <figcaption data-lang="en">Scrub, volume (Save volume writes it onto the clip), In/Out times, transport, Set In / Set Out / Clear. Keys <kbd>I</kbd> and <kbd>O</kbd> set marks at the current preview time.</figcaption>
-      <figcaption data-lang="de">Scrub, Lautstärke (Lautstärke speichern schreibt sie in den Clip), In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
+      <figcaption data-lang="en">Scrub, volume (Save volume writes it onto the clip), live bitrates, In/Out times, transport, Set In / Set Out / Clear. Keys <kbd>I</kbd> and <kbd>O</kbd> set marks at the current preview time.</figcaption>
+      <figcaption data-lang="de">Scrub, Lautstärke (Lautstärke speichern schreibt sie in den Clip), aktuelle Bitraten, In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
     </figure>
     <p data-lang="en">
       Per clip you can set autoplay, loop (videos; ended with <strong>Resume</strong>), played, audio track, and subtitle track (off unless you pick one). Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
@@ -387,16 +387,16 @@
       <figcaption data-lang="de">Gerätename aus der Beamer-EDID, danach Seitenverhältnis, Frequenzen und Auflösungen. Der aktive Modus steht größer. Programmwerte sind blau, Vorschauwerte gelb. Grün <strong>OK</strong>, wenn eine gelistete Frequenz den Clip zeigen kann; rot <strong>Abweichung</strong> nur, wenn keine passt.</figcaption>
     </figure>
     <p data-lang="en">
-      The first line is the projector’s name from its EDID (the same identity as under Settings → Beamer output → EDID). Then the panel lists every refresh rate and every resolution the projector currently advertises. The mode that is <strong>on the projector now</strong> is drawn larger and bolder in that list. Values that belong to the <strong>program pointer</strong> are blue; values that belong to a clip selected for <strong>preview</strong> are yellow (the preview yellow of the playlist). A 30&nbsp;fps clip marks <strong>60p</strong> when 60&nbsp;Hz is in the list (twice the frame rate). Extra entries appear in blue or yellow only when the clip’s frame rate or resolution is not among the advertised modes.
+      The first line is the projector’s name from its EDID (the same identity as under Settings → Beamer output → EDID). Then the panel lists every refresh rate and every resolution the projector currently advertises. The mode that is <strong>on the projector now</strong> is drawn larger and bolder in that list. Values that belong to the <strong>program pointer</strong> are blue; values that belong to a clip selected for <strong>preview</strong> are yellow (the preview yellow of the playlist). A 30&nbsp;fps clip marks <strong>60p</strong> when 60&nbsp;Hz is in the list (twice the frame rate). A 50 or 60&nbsp;fps clip marks <strong>25p</strong> / <strong>30p</strong> when those half rates are listed and 50/60&nbsp;Hz are not. Extra entries appear in blue or yellow only when the clip’s frame rate or resolution is not among the advertised modes.
     </p>
     <p data-lang="de">
-      Die erste Zeile ist der Gerätename aus der EDID des Beamers (dieselbe Identität wie unter Einstellungen → Beamerausgang → EDID). Danach listet das Feld jede Frequenz und jede Auflösung, die der Beamer derzeit meldet. Der Modus, der <strong>gerade auf dem Beamer liegt</strong>, steht in dieser Liste größer und fett. Werte des <strong>Programmzeigers</strong> sind blau; Werte eines für die <strong>Vorschau</strong> gewählten Clips sind gelb (das Gelb der Playlist). Ein 30-fps-Clip markiert <strong>60p</strong>, wenn 60&nbsp;Hz in der Liste steht (zweifache Bildrate). Zusätzliche Einträge erscheinen nur blau oder gelb, wenn Bildrate oder Auflösung des Clips nicht unter den gemeldeten Modi sind.
+      Die erste Zeile ist der Gerätename aus der EDID des Beamers (dieselbe Identität wie unter Einstellungen → Beamerausgang → EDID). Danach listet das Feld jede Frequenz und jede Auflösung, die der Beamer derzeit meldet. Der Modus, der <strong>gerade auf dem Beamer liegt</strong>, steht in dieser Liste größer und fett. Werte des <strong>Programmzeigers</strong> sind blau; Werte eines für die <strong>Vorschau</strong> gewählten Clips sind gelb (das Gelb der Playlist). Ein 30-fps-Clip markiert <strong>60p</strong>, wenn 60&nbsp;Hz in der Liste steht (zweifache Bildrate). Ein 50- oder 60-fps-Clip markiert <strong>25p</strong> / <strong>30p</strong>, wenn diese halbe Frequenz gelistet ist und 50/60&nbsp;Hz fehlen. Zusätzliche Einträge erscheinen nur blau oder gelb, wenn Bildrate oder Auflösung des Clips nicht unter den gemeldeten Modi sind.
     </p>
     <p data-lang="en">
-      <strong>OK</strong> / <strong>Mismatch</strong> compares the clip with the <em>capability list</em>, not with the rate that happens to be active. If 60&nbsp;Hz is listed, 30&nbsp;fps is OK even while the projector is still at 50&nbsp;Hz. Before a clip rolls, Cinema Player switches to a mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple. If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes.
+      <strong>OK</strong> / <strong>Mismatch</strong> compares the clip with the <em>capability list</em>, not with the rate that happens to be active. If 60&nbsp;Hz is listed, 30&nbsp;fps is OK even while the projector is still at 50&nbsp;Hz. If 50 or 60&nbsp;fps is not advertised, 25 or 30&nbsp;Hz is treated as a match. Before a clip rolls, Cinema Player switches to a mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple (or 25/30&nbsp;Hz for 50/60&nbsp;fps when those rates are missing). If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes.
     </p>
     <p data-lang="de">
-      <strong>OK</strong> / <strong>Abweichung</strong> vergleicht den Clip mit der <em>Fähigkeitsliste</em>, nicht mit der gerade aktiven Frequenz. Steht 60&nbsp;Hz in der Liste, ist 30&nbsp;fps OK, auch wenn der Beamer noch auf 50&nbsp;Hz liegt. Bevor ein Clip läuft, schaltet Cinema Player auf einen Modus in der <strong>Videoauflösung</strong>, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt. Fehlt ein solcher Modus, kann unter X11 zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Unter GNOME Wayland stehen nur die vom Gerät gemeldeten Modi zur Verfügung. Import und Analyse erzeugen keine Modi.
+      <strong>OK</strong> / <strong>Abweichung</strong> vergleicht den Clip mit der <em>Fähigkeitsliste</em>, nicht mit der gerade aktiven Frequenz. Steht 60&nbsp;Hz in der Liste, ist 30&nbsp;fps OK, auch wenn der Beamer noch auf 50&nbsp;Hz liegt. Fehlen 50 oder 60&nbsp;fps in der Liste, gelten 25 bzw. 30&nbsp;Hz als Treffer. Bevor ein Clip läuft, schaltet Cinema Player auf einen Modus in der <strong>Videoauflösung</strong>, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt (bei 50/60&nbsp;fps auf 25/30&nbsp;Hz, wenn diese Frequenzen fehlen). Fehlt ein solcher Modus, kann unter X11 zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Unter GNOME Wayland stehen nur die vom Gerät gemeldeten Modi zur Verfügung. Import und Analyse erzeugen keine Modi.
     </p>
 
     <h2 id="audio">
@@ -404,10 +404,10 @@
       <span data-lang="de">8. Lautstärke und Lautheit</span>
     </h2>
     <p data-lang="en">
-      Each clip has its own volume. Adjust it in preview and press <strong>Save volume</strong>. The program fader follows the clip that is on air. Program and preview each have a VU meter (separate audio filters).
+      Each clip has its own volume. Adjust it in preview and press <strong>Save volume</strong>. The program fader follows the clip that is on air. Program and preview each have a VU meter (separate audio filters). Next to the progress bar the current video bitrate is shown; next to the volume slider the current audio bitrate. Both are live values from the last few seconds of playback.
     </p>
     <p data-lang="de">
-      Jeder Clip hat eine eigene Lautstärke. Stellen Sie sie in der Vorschau und drücken Sie <strong>Lautstärke speichern</strong>. Der Programmregler folgt dem Clip auf Sendung. Programm und Vorschau haben je ein VU-Meter (getrennte Audiofilter).
+      Jeder Clip hat eine eigene Lautstärke. Stellen Sie sie in der Vorschau und drücken Sie <strong>Lautstärke speichern</strong>. Der Programmregler folgt dem Clip auf Sendung. Programm und Vorschau haben je ein VU-Meter (getrennte Audiofilter). Neben dem Fortschrittsbalken steht die aktuelle Videobitrate, neben dem Lautstärkeregler die aktuelle Audiobitrate. Beides sind Live-Werte der letzten Sekunden der Wiedergabe.
     </p>
     <p data-lang="en">
       <strong>Analyze loudness</strong> (playlist menu, only in OFF) runs ffmpeg EBU R128 on every video. Integrated LUFS is stored on the entry and shown in the playlist row and above the preview meter. This can take a while.
