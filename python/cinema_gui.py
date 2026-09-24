@@ -5216,9 +5216,21 @@ class VideoPlayerGUI:
         if self.preview_live:
             self.preview_index = None
             self.live_parked = None
+            self.preview_stopped = False
             entry = self.current_entry()
+            rolling = (
+                self.program_state == "PLAYING"
+                and not self.main_pause
+                and not self.blackout
+            )
+            self.preview_paused = not rolling
             if entry and self.program_state == "PLAYING":
-                self.show_preview_clip(entry, follow_live=True, start=self.position)
+                self.show_preview_clip(
+                    entry,
+                    follow_live=True,
+                    start=self.position,
+                    play=rolling,
+                )
             self.sync_live_preview()
         else:
             entry = self.selected_entry()
@@ -5377,6 +5389,8 @@ class VideoPlayerGUI:
             start = entry.in_point
         if not follow_live and not play and self.preview_mpv.has_file(entry.path):
             return
+        self.preview_stopped = False
+        self.preview_paused = not play
         end = entry.out_point if follow_live and not (entry.loop and not entry.is_image) else None
         self.preview_mpv.load_file(
             entry.path,
@@ -5384,10 +5398,6 @@ class VideoPlayerGUI:
             end=end,
             play=play,
         )
-        if follow_live:
-            self._apply_program_loop(entry, self.preview_mpv)
-        else:
-            self._apply_program_loop(None, self.preview_mpv)
 
     def start_or_resume(self):
         if not self.playlist:
@@ -5833,9 +5843,21 @@ class VideoPlayerGUI:
             return
         if self.program_state == "PLAYING":
             self.live_parked = None
-            self.preview_mpv.set_pause(self.main_pause or self.blackout)
-            frozen = self.main_pause and not self.blackout
-            if frozen and abs(self.preview_position - self.position) > 0.5:
+            rolling = not self.main_pause and not self.blackout
+            if not self.preview_mpv.has_file(entry.path):
+                self.show_preview_clip(
+                    entry,
+                    follow_live=True,
+                    start=self.position,
+                    play=rolling,
+                )
+                return
+            want_pause = not rolling
+            if self.preview_paused != want_pause:
+                self.preview_mpv.set_pause(want_pause)
+                self.preview_paused = want_pause
+            self.preview_stopped = False
+            if want_pause and abs(self.preview_position - self.position) > 0.5:
                 self.preview_mpv.set_position(self.position)
             return
         # Nothing on air yet: park the preview on the frame the program will start with.
@@ -5954,6 +5976,8 @@ class VideoPlayerGUI:
                 self.apply_tracks(entry, mpv)
                 if self.preview_live and self.program_state == "PLAYING":
                     self._apply_program_loop(entry, mpv)
+                else:
+                    self._apply_program_loop(None, mpv)
             return
         if event != "property-change":
             return
