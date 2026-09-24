@@ -852,13 +852,13 @@ def settings_path():
 
 
 class BeamerChoiceLine(tk.Frame):
-    """Wraps beamer rates/resolutions; the active value stays fully visible."""
+    """Wraps beamer rates/resolutions; the active value has a border."""
 
     def __init__(self, master, **kwargs):
         kwargs.setdefault("bg", COLOR_PANEL)
         super().__init__(master, **kwargs)
         self.pack_propagate(False)
-        self.configure(height=FONT_BEAMER_PICK[1] + 10)
+        self.configure(height=FONT_BEAMER_PICK[1] + 14)
         self._labels = []
         self._signature = None
         self._laid_width = 0
@@ -907,18 +907,23 @@ class BeamerChoiceLine(tk.Frame):
             fg = COLOR_TEXT
         else:
             fg = COLOR_MUTED
-        font = FONT_BEAMER_PICK if (picked or program or preview) else FONT_SMALL
-        label = tk.Label(
+        font = FONT_BEAMER_PICK if (program or preview) else FONT_SMALL
+        ring = COLOR_PANEL
+        if picked:
+            ring = COLOR_WHITE if THEME == "dark" else COLOR_TEXT
+        return tk.Label(
             self,
             text=text,
             font=font,
             fg=fg,
             bg=COLOR_PANEL,
-            padx=0,
-            pady=0,
+            padx=3,
+            pady=1,
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=ring,
+            highlightcolor=ring,
         )
-        label.configure(fg=fg, font=font)
-        return label
 
     def _reflow(self, _event=None):
         if self._reflowing or not self._labels:
@@ -928,22 +933,31 @@ class BeamerChoiceLine(tk.Frame):
             return
         self._reflowing = True
         try:
+            gap = 8
+            rows = []
+            row = []
             x = 0
-            y = 0
-            row_h = 0
-            gap = 10
-            for index, label in enumerate(self._labels):
-                needed = label.winfo_reqwidth()
-                extra = 0 if index == 0 else gap
-                if x and x + extra + needed > width:
+            for widget in self._labels:
+                needed = widget.winfo_reqwidth()
+                extra = 0 if not row else gap
+                if row and x + extra + needed > width:
+                    rows.append(row)
+                    row = []
                     x = 0
-                    y += row_h
-                    row_h = 0
                     extra = 0
-                label.place(x=x + extra, y=y)
+                row.append((widget, extra, needed, widget.winfo_reqheight()))
                 x += extra + needed
-                row_h = max(row_h, label.winfo_reqheight())
-            height = max(y + row_h, FONT_BEAMER_PICK[1] + 8)
+            if row:
+                rows.append(row)
+            y = 0
+            for row in rows:
+                row_h = max(item[3] for item in row)
+                x = 0
+                for widget, extra, needed, height in row:
+                    widget.place(x=x + extra, y=y + max(0, row_h - height) // 2)
+                    x += extra + needed
+                y += row_h
+            height = max(y + 2, FONT_BEAMER_PICK[1] + 14)
             self._laid_width = width
             if abs(int(self.cget("height") or 0) - height) > 1:
                 self.configure(height=height)

@@ -23,7 +23,7 @@ The header shows the Cinema Player logo, the version, and whether the session is
 
 **Right**
 
-- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode is larger; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing).
+- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing).
 - Preview header with the Live/Preview badge and clip metadata.
 - Clip settings (autoplay, loop, audio, subtitles, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
