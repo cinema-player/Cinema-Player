@@ -79,16 +79,16 @@
     <figure>
       <img data-lang="en" src="images/overview-en.png" alt="Cinema Player control window in English, program off">
       <img data-lang="de" src="images/overview-de.png" alt="Cinema-Player-Kontrollfenster auf Deutsch, Programm aus">
-      <figcaption data-lang="en">Control window in <strong>OFF</strong>. A clip is selected for preview (yellow). The projector is dark.</figcaption>
-      <figcaption data-lang="de">Kontrollfenster in <strong>AUS</strong>. Ein Clip ist für die Vorschau gewählt (gelb). Der Beamer bleibt dunkel.</figcaption>
+      <figcaption data-lang="en">Control window in <strong>OFF</strong>. A clip is selected for preview (yellow border). The projector is dark.</figcaption>
+      <figcaption data-lang="de">Kontrollfenster in <strong>AUS</strong>. Ein Clip ist für die Vorschau gewählt (gelber Rahmen). Der Beamer bleibt dunkel.</figcaption>
     </figure>
     <ul>
       <li data-lang="en"><strong>Status bar</strong> — program state, clip name, playlist position.</li>
       <li data-lang="de"><strong>Statuszeile</strong> — Programmzustand, Clipname, Position in der Playlist.</li>
       <li data-lang="en"><strong>Program block</strong> — progress with live video bitrate, volume with live audio bitrate (and stored A/V delay if one exists), In/Out, transport, four clocks, VU meter.</li>
       <li data-lang="de"><strong>Programmblock</strong> — Verlauf mit aktueller Videobitrate, Lautstärke mit aktueller Audiobitrate (und gespeicherter A/V-Versatz, falls vorhanden), In/Out, Transport, vier Uhren, VU-Meter.</li>
-      <li data-lang="en"><strong>Playlist tools</strong> — name, import / new / load / save, beamer change, autoplay delay, idle media.</li>
-      <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Beamerwechsel, Autoplay-Pause, Pausenmedium.</li>
+      <li data-lang="en"><strong>Playlist tools</strong> — name, import / new / load / save, house lights (Dark / Medium / Bright). The idle-file name appears only when one is set.</li>
+      <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Lichtsteuerung (Dunkel / Mittel / Hell). Der Name des Pausenmediums erscheint nur, wenn eines gewählt ist.</li>
       <li data-lang="en"><strong>Playlist</strong> — the running order.</li>
       <li data-lang="de"><strong>Playlist</strong> — die Spielfolge.</li>
       <li data-lang="en"><strong>Beamer status</strong> — aspect ratio, available rates and resolutions, OK or Mismatch.</li>
@@ -112,14 +112,16 @@
     <figure>
       <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
       <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
-      <figcaption data-lang="en">Settings: media directories, fullscreen, design, language, beamer output, default idle media, calibration, quit.</figcaption>
-      <figcaption data-lang="de">Einstellungen: Medienverzeichnisse, Vollbild, Design, Sprache, Beamerausgang, Standard-Pausenmedium, Kalibrierung, Beenden.</figcaption>
+      <figcaption data-lang="en">Settings: fullscreen, media directories, Program, Playlist, System settings (beamer output, design, language, remote control, light control), Calibration, quit.</figcaption>
+      <figcaption data-lang="de">Einstellungen: Vollbild, Medienverzeichnisse, Programm, Playlist, Systemeinstellungen (Beamerausgang, Design, Sprache, Fernsteuerung, Lichtsteuerung), Kalibrierung, Beenden.</figcaption>
     </figure>
     <ul>
       <li data-lang="en"><strong>Media directories</strong> — add one or more folders. They are saved and offered when media is imported into the playlist. The import dialog can also <strong>Copy files</strong> into a chosen folder and link those copies. A popup shows the copy progress.</li>
       <li data-lang="de"><strong>Medienverzeichnisse</strong> — einen oder mehrere Ordner hinzufügen. Sie werden gespeichert und beim Laden von Medien in die Playlist angeboten. Im Import-Dialog können Dateien mit <strong>Files kopieren</strong> in einen gewählten Ordner kopiert und von dort verlinkt werden. Ein Popup zeigt den Kopierfortschritt.</li>
-      <li data-lang="en"><strong>Remote control</strong> — LAN API for a smartphone (default port 8765). A token is required. Settings show a QR code with the IP, port, and token; scanning it opens the phone page already signed in. A radio icon in the header shows when it is running. Resume, Pause, Still, Stop (clip only, not the program), volume, playlist, progress, and clocks. Tap a playlist row to set the program pointer. Pause, Still, Stop, and the program pointer must be confirmed on the phone.</li>
-      <li data-lang="de"><strong>Fernsteuerung</strong> — LAN-API fürs Smartphone (Standardport 8765). Ein Token ist Pflicht. In den Einstellungen erscheint ein QR-Code mit IP, Port und Token; nach dem Scannen ist die Telefonseite angemeldet. Ein Funk-Icon in der Kopfzeile zeigt, wenn sie läuft. Weiter, Pause, Standbild, Stop (nur Clip, nicht das Programm), Lautstärke, Playlist, Fortschritt und Zeiten. Antippen einer Playlistzeile setzt den Programmzeiger. Pause, Standbild, Stop und der Programmzeiger müssen am Telefon bestätigt werden.</li>
+      <li data-lang="en"><strong>Remote control</strong> — LAN API for a smartphone (default port 8765). A token is required. Settings show a QR code with the IP, port, and token; scanning it opens the phone page already signed in. A radio icon in the header is coloured while it is running and grey while off; a bulb next to it is coloured while light control is on and grey while off. Click either icon to open its settings. Resume, Pause, Still, Stop (clip only, not the program), volume, playlist, progress, clocks, and house lights (Dark / Medium / Bright plus a switch that turns Shelly control off). Tap a playlist row to set the program pointer. Pause, Still, Stop, and the program pointer must be confirmed on the phone.</li>
+      <li data-lang="de"><strong>Fernsteuerung</strong> — LAN-API fürs Smartphone (Standardport 8765). Ein Token ist Pflicht. In den Einstellungen erscheint ein QR-Code mit IP, Port und Token; nach dem Scannen ist die Telefonseite angemeldet. Das Funk-Icon in der Kopfzeile ist farbig, wenn sie läuft, und grau, wenn sie aus ist; die Glühbirne daneben ist farbig bei eingeschalteter Lichtsteuerung und grau, wenn sie aus ist. Ein Klick öffnet die jeweilige Einstellung. Weiter, Pause, Standbild, Stop (nur Clip, nicht das Programm), Lautstärke, Playlist, Fortschritt, Zeiten und Saallicht (Dunkel / Mittel / Hell sowie ein Schalter, der die Shelly-Steuerung ausmacht). Antippen einer Playlistzeile setzt den Programmzeiger. Pause, Standbild, Stop und der Programmzeiger müssen am Telefon bestätigt werden.</li>
+      <li data-lang="en"><strong>Light control</strong> (System settings) — Shelly switches and dimmers on the WLAN. Scan the LAN or add an IP. Enter the Shelly <strong>user</strong> and <strong>password</strong> (Gen2 is <code>admin</code>); each device can have its own login. Tick the devices that should follow house-light cues. Presets <strong>Bright</strong>, <strong>Medium</strong>, and <strong>Dark</strong> are dimmer levels (defaults 100 / 40 / 0); a switch turns on above 0%. Fade is the dimmer transition. The matching Dark / Medium / Bright button blinks while that fade runs. <strong>Start film</strong> is how many seconds before the dim-down ends the clip starts (0 waits for the fade). <strong>Lights up</strong> is how many seconds before the clip ends the house lights come up. Test buttons send the preset immediately. <strong>House lights</strong> (here and on the phone) turns all Shelly control off: no manual dimming and no film-start or film-end cues. Off (and locked) until at least one Shelly is ticked. Launching Cinema Player sends Bright to every selected device.</li>
+      <li data-lang="de"><strong>Lichtsteuerung</strong> (Systemeinstellungen) — Shelly-Schalter und -Dimmer im WLAN. Netz suchen oder eine IP eintragen. <strong>Benutzer</strong> und <strong>Passwort</strong> der Shelly-Anmeldung eintragen (bei Gen2 ist der Benutzer <code>admin</code>); jedes Gerät kann eigene Zugangsdaten haben. Dann die Geräte markieren, die den Lichtbefehlen folgen. Die Vorgaben <strong>Hell</strong>, <strong>Mittel</strong> und <strong>Dunkel</strong> sind Dimmerwerte (Standard 100 / 40 / 0); ein Schalter geht über 0 % an. Überblendung ist die Dimmerzeit. Die passende Taste Dunkel / Mittel / Hell blinkt, solange gedimmt wird. <strong>Filmstart</strong> ist, wie viele Sekunden vor Ende der Überblendung der Clip anläuft (0 wartet die Überblendung ab). <strong>Licht an</strong> ist, wie viele Sekunden vor Clipende das Saallicht hochgeht. Die Testtasten senden die Vorgabe sofort. Der Schalter <strong>Lichtsteuerung</strong> (hier und am Telefon) schaltet die Shelly-Steuerung ganz aus: kein manuelles Dimmen und keine Befehle bei Filmstart oder Filmende. Aus (und gesperrt), bis mindestens ein Shelly markiert ist. Beim Start von Cinema Player gehen alle gewählten Geräte auf Hell.</li>
       <li data-lang="en"><strong>Fullscreen</strong> — control monitor only (<kbd>F11</kbd>).</li>
       <li data-lang="de"><strong>Vollbildmodus</strong> — nur Kontrollmonitor (<kbd>F11</kbd>).</li>
       <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
@@ -255,10 +257,10 @@
     <p data-lang="en">The four clocks are <strong>Total</strong>, <strong>Elapsed</strong>, <strong>Remaining</strong>, and <strong>End</strong> (wall-clock time when the clip will finish).</p>
     <p data-lang="de">Die vier Uhren sind <strong>Gesamt</strong>, <strong>Gelaufen</strong>, <strong>Rest</strong> und <strong>Ende</strong> (Uhrzeit, zu der der Clip endet).</p>
     <p class="note" data-lang="en">
-      Autoplay on a clip starts the next file after the autoplay delay (black). Idle media is not shown in that gap. After the last clip the program stays in PROGRAM until you Stop.
+      Autoplay on a clip starts the next file after the autoplay delay (black). Idle media is not shown in that gap. House lights stay dark between those clips and come up after the last clip. After the last clip the program stays in PROGRAM until you Stop.
     </p>
     <p class="note" data-lang="de">
-      Autoplay an einem Clip startet die nächste Datei nach der Autoplay-Pause (schwarz). In dieser Lücke erscheint kein Pausenmedium. Nach dem letzten Clip bleibt das Programm auf PROGRAMM, bis Sie Stoppen.
+      Autoplay an einem Clip startet die nächste Datei nach der Autoplay-Pause (schwarz). In dieser Lücke erscheint kein Pausenmedium. Das Saallicht bleibt zwischen diesen Clips aus und geht nach dem letzten Clip wieder an. Nach dem letzten Clip bleibt das Programm auf PROGRAMM, bis Sie Stoppen.
     </p>
 
     <h2 id="playlist">
@@ -268,8 +270,8 @@
     <figure>
       <img data-lang="en" src="images/playlist-tools-en.png" alt="Playlist toolbar">
       <img data-lang="de" src="images/playlist-tools-de.png" alt="Playlist-Werkzeugleiste">
-      <figcaption data-lang="en">Name, import, new, load, save, playlist menu. Global options: beamer change, autoplay delay, idle media.</figcaption>
-      <figcaption data-lang="de">Name, Import, Neu, Laden, Speichern, Playlist-Menü. Globale Optionen: Beamerwechsel, Autoplay-Pause, Pausenmedium.</figcaption>
+      <figcaption data-lang="en">Name, import, new, load, save. House lights (Dark / Medium / Bright). The idle-file name is shown only when one is set. Red Settings warning on appears beside it while that option is enabled.</figcaption>
+      <figcaption data-lang="de">Name, Import, Neu, Laden, Speichern. Lichtsteuerung (Dunkel / Mittel / Hell). Der Name des Pausenmediums erscheint nur, wenn eines gewählt ist. Daneben steht rot Einstellungswarnung an, solange die Option eingeschaltet ist.</figcaption>
     </figure>
     <table class="icon-table">
       <thead>
@@ -303,16 +305,16 @@
       </tbody>
     </table>
     <p data-lang="en">
-      Drag a row to reorder. A left cursor marks the program pointer. Played clips go grey. Missing files stay in the list, show a missing badge, and are skipped during the show. Red metadata (frame rate, aspect, PAR, colorspace) means a beamer change or refresh mismatch — confirm the popup before Resume.
+      Drag a row to reorder. A left cursor marks the program pointer. Played clips go grey. Missing files stay in the list, show a missing badge, and are skipped during the show. Red metadata (frame rate, aspect, PAR, colorspace) means a beamer change or refresh mismatch — confirm the popup before Resume. With Settings warning on, those clips also show red <strong>setting!</strong> in the right-hand column.
     </p>
     <p data-lang="de">
-      Ziehen Sie eine Zeile, um die Reihenfolge zu ändern. Ein Cursor links markiert den Programmzeiger. Gespielte Clips werden grau. Fehlende Dateien bleiben in der Liste, tragen ein FEHLT-Zeichen und werden in der Vorstellung übersprungen. Rote Metadaten (Bildrate, Bildformat, PAR, Farbraum) bedeuten Beamerwechsel oder Frequenzabweichung — den Dialog bestätigen, bevor Sie Weiter drücken.
+      Ziehen Sie eine Zeile, um die Reihenfolge zu ändern. Ein Cursor links markiert den Programmzeiger. Gespielte Clips werden grau. Fehlende Dateien bleiben in der Liste, tragen ein FEHLT-Zeichen und werden in der Vorstellung übersprungen. Rote Metadaten (Bildrate, Bildformat, PAR, Farbraum) bedeuten Beamerwechsel oder Frequenzabweichung — den Dialog bestätigen, bevor Sie Weiter drücken. Bei eingeschalteter Einstellungswarnung steht dort rechts zusätzlich rot <strong>setting!</strong>.
     </p>
     <figure>
       <img data-lang="en" src="images/playlist-en.png" alt="Playlist rows">
       <img data-lang="de" src="images/playlist-de.png" alt="Playlist-Zeilen">
-      <figcaption data-lang="en">Yellow row = selected for preview. Red fps values show a refresh mismatch against the current beamer mode. Colorspace and range (for example Rec.2020 limited) appear when the file records them.</figcaption>
-      <figcaption data-lang="de">Gelbe Zeile = für die Vorschau gewählt. Rote Bildraten zeigen eine Abweichung zur aktuellen Beamerfrequenz. Farbraum und Range (z. B. Rec.2020 limited) erscheinen, wenn die Datei sie enthält.</figcaption>
+      <figcaption data-lang="en">Yellow border = selected for preview. If that clip is the program pointer, the fill follows the program state. Red fps values show a refresh mismatch against the current beamer mode. Colorspace and range (for example Rec.2020 limited) appear when the file records them.</figcaption>
+      <figcaption data-lang="de">Gelber Rahmen = für die Vorschau gewählt. Ist das der Programmzeiger, folgt die Füllung dem Programmzustand. Rote Bildraten zeigen eine Abweichung zur aktuellen Beamerfrequenz. Farbraum und Range (z. B. Rec.2020 limited) erscheinen, wenn die Datei sie enthält.</figcaption>
     </figure>
     <p data-lang="en">Right-click a row:</p>
     <p data-lang="de">Rechtsklick auf eine Zeile:</p>
@@ -329,16 +331,16 @@
     <figure>
       <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist menu">
       <img data-lang="de" src="images/menu-playlist-de.png" alt="Playlist-Menü">
-      <figcaption data-lang="en">Check files, reset playlist (confirm: played flags and pointer to first entry), autosave when the pointer moves, load last playlist at start, analyze loudness (OFF only).</figcaption>
-      <figcaption data-lang="de">Dateien prüfen, Playlist zurücksetzen (Nachfrage: gespielt und Zeiger auf den ersten Eintrag), Autosave bei Programmwechsel, letzte Playlist beim Start laden, Lautheit analysieren (nur bei AUS).</figcaption>
+      <figcaption data-lang="en">Check files, reset playlist (confirm: played flags and pointer to first entry), settings warning, autosave when the pointer moves, load last playlist at start, idle media (file and black pause), analyze loudness (OFF only).</figcaption>
+      <figcaption data-lang="de">Dateien prüfen, Playlist zurücksetzen (Nachfrage: gespielt und Zeiger auf den ersten Eintrag), Einstellungswarnung, Autosave bei Programmwechsel, letzte Playlist beim Start laden, Pausenmedium (Datei und Schwarzpause), Lautheit analysieren (nur bei AUS).</figcaption>
     </figure>
     <ul>
-      <li data-lang="en"><strong>Beamer change</strong> — popup when aspect, PAR, or colorspace needs a projector zoom/lens change. 16:9 in 21:9 zoom is letterboxed to height.</li>
-      <li data-lang="de"><strong>Beamerwechsel</strong> — Dialog, wenn Bildformat, PAR oder Farbraum eine Zoom-/Objektivänderung brauchen. 16:9 im 21:9-Zoom wird auf die Höhe eingepasst.</li>
-      <li data-lang="en"><strong>Autoplay delay</strong> — seconds of black before the next autoplay clip, and before idle media appears after a clip.</li>
-      <li data-lang="de"><strong>Autoplay-Pause</strong> — Sekunden Schwarz vor dem nächsten Autoplay-Clip und bevor das Pausenmedium erscheint.</li>
-      <li data-lang="en"><strong>Idle media</strong> — loop on the projector only while PROGRAM is armed. The button turns green while that media is on screen. Settings → <strong>Use default Idle Media</strong> loads the file in <code>idle</code> at startup.</li>
-      <li data-lang="de"><strong>Pausenmedium</strong> — Schleife auf dem Beamer nur bei scharfem PROGRAMM. Die Taste wird grün, solange das Medium auf der Leinwand ist. Einstellungen → <strong>Standard-Pausenmedium verwenden</strong> lädt die Datei in <code>idle</code> beim Start.</li>
+      <li data-lang="en"><strong>Settings warning</strong> (playlist menu) — popup when aspect, PAR, or colorspace needs a projector zoom/lens change. 16:9 in 21:9 zoom is letterboxed to height. Those clips show red <strong>setting!</strong> in the right-hand column. While this is on, the same checkbox in preview forces the warning on a clip even when the format does not change.</li>
+      <li data-lang="de"><strong>Einstellungswarnung</strong> (Playlist-Menü) — Dialog, wenn Bildformat, PAR oder Farbraum eine Zoom-/Objektivänderung brauchen. 16:9 im 21:9-Zoom wird auf die Höhe eingepasst. Diese Clips tragen rechts rot <strong>setting!</strong>. Solange das eingeschaltet ist, erzwingt dieselbe Option in der Vorschau die Warnung auch ohne Formatwechsel.</li>
+      <li data-lang="en"><strong>Dark / Medium / Bright</strong> — manual house-light presets. Disabled until at least one Shelly is ticked and House lights is on in Settings → System settings → Light control (or on the phone).</li>
+      <li data-lang="de"><strong>Dunkel / Mittel / Hell</strong> — manuelle Saallicht-Vorgaben. Gesperrt, bis mindestens ein Shelly markiert ist und die Lichtsteuerung in Einstellungen → Systemeinstellungen → Lichtsteuerung (oder am Telefon) eingeschaltet ist.</li>
+      <li data-lang="en"><strong>Idle media</strong> (playlist menu) — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). The file name is shown on the tools row only when one is set; it turns green while that media is on screen. Settings → <strong>Use default Idle Media</strong> loads the file in <code>idle</code> at startup.</li>
+      <li data-lang="de"><strong>Pausenmedium</strong> (Playlist-Menü) — Datei und Schwarzpause wählen (Sekunden Schwarz vor dem nächsten Autoplay-Clip und bevor das Pausenmedium erscheint). Der Dateiname steht in der Werkzeugleiste nur, wenn eines gewählt ist; er wird grün, solange das Medium auf der Leinwand ist. Einstellungen → <strong>Standard-Pausenmedium verwenden</strong> lädt die Datei in <code>idle</code> beim Start.</li>
     </ul>
 
     <h2 id="preview">
@@ -346,10 +348,10 @@
       <span data-lang="de">6. Vorschau und In/Out</span>
     </h2>
     <p data-lang="en">
-      Click a playlist row to load it in preview (yellow <span class="badge preview">Preview</span>). Click the badge to follow the program output (<span class="badge playing">Live</span>) when a clip is on air. In/Out cannot be edited while that clip is on air.
+      Click a playlist row to load it in preview (yellow border; yellow <span class="badge preview">Preview</span>). If it is also the program pointer, the row stays filled with the program colour. Click the badge to follow the program output (<span class="badge playing">Live</span>) when a clip is on air. In/Out cannot be edited while that clip is on air.
     </p>
     <p data-lang="de">
-      Ein Klick auf eine Playlist-Zeile lädt sie in die Vorschau (gelb <span class="badge preview">Vorschau</span>). Ein Klick auf das Abzeichen folgt der Programmausgabe (<span class="badge playing">Live</span>), wenn ein Clip läuft. In/Out lassen sich nicht ändern, solange dieser Clip auf Sendung ist.
+      Ein Klick auf eine Playlist-Zeile lädt sie in die Vorschau (gelber Rahmen; gelb <span class="badge preview">Vorschau</span>). Ist sie zugleich der Programmzeiger, bleibt die Zeile in der Programmfarbe gefüllt. Ein Klick auf das Abzeichen folgt der Programmausgabe (<span class="badge playing">Live</span>), wenn ein Clip läuft. In/Out lassen sich nicht ändern, solange dieser Clip auf Sendung ist.
     </p>
     <figure>
       <img data-lang="en" src="images/preview-header-en.png" alt="Preview header">
@@ -370,10 +372,10 @@
       <figcaption data-lang="de">Scrub, Lautstärke (Lautstärke speichern schreibt sie in den Clip), aktuelle Bitraten, In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
     </figure>
     <p data-lang="en">
-      Per clip you can set autoplay, loop (videos; ended with <strong>Resume</strong>), played, audio track, and subtitle track (off unless you pick one). Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
+      Per clip you can set autoplay, <strong>Settings warning</strong> (only while that option is on in the playlist menu; beamer confirmation and red <strong>setting!</strong> even when the format does not change), loop (videos; ended with <strong>Resume</strong>), played, audio track, subtitle track (off unless you pick one), and the dimmer while the film plays (<strong>Dark</strong> by default, or <strong>Medium</strong> / <strong>Bright</strong>). That dimmer runs when the clip <strong>starts</strong> (fade, blinking buttons, then the picture), not at the end. After the film, house lights come up automatically; with Autoplay they stay dark until the last clip. The playlist shows <strong>MEDIUM</strong> / <strong>BRIGHT</strong> when the play dimmer is not Dark. Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
     </p>
     <p data-lang="de">
-      Pro Clip lassen sich Autoplay, Loop (Videos; endet mit <strong>Weiter</strong>), Gespielt, Tonspur und Untertitel (aus, bis eine Spur gewählt wird) setzen. Die Programmwiedergabe nutzt die In- und Out-Marken. Verlauf und Uhren im Programm folgen immer diesen Marken, auch wenn auf dem Beamer ein Pausenmedium läuft.
+      Pro Clip lassen sich Autoplay, <strong>Einstellungswarnung</strong> (nur wenn sie im Playlist-Menü eingeschaltet ist; Bestätigung am Beamer und rotes <strong>setting!</strong>, auch ohne Formatwechsel), Loop (Videos; endet mit <strong>Weiter</strong>), Gespielt, Tonspur, Untertitel (aus, bis eine Spur gewählt wird) und der Dimmer während des Films setzen (<strong>Dunkel</strong> als Vorgabe, oder <strong>Mittel</strong> / <strong>Hell</strong>). Dieser Dimmer greift beim <strong>Start</strong> des Clips (Überblendung, blinkende Tasten, dann das Bild), nicht am Ende. Nach dem Film geht das Saallicht automatisch an; bei Autoplay bleibt es bis zum letzten Clip aus. Die Playlist zeigt <strong>MITTEL</strong> / <strong>HELL</strong>, wenn der Dimmer nicht Dunkel ist. Die Programmwiedergabe nutzt die In- und Out-Marken. Verlauf und Uhren im Programm folgen immer diesen Marken, auch wenn auf dem Beamer ein Pausenmedium läuft.
     </p>
 
     <h2 id="beamer">

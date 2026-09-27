@@ -300,6 +300,9 @@ class PlaylistEntry:
     colorspace: str = "--"
     color_range: str = ""
     loudness_lufs: float | None = None
+    light_start: str = ""
+    light_end: str = ""
+    force_settings_warning: bool = False
 
     def __post_init__(self):
         if not self.filename:
@@ -307,6 +310,9 @@ class PlaylistEntry:
         self.volume = clamp_volume(self.volume)
         if self.is_image:
             self.loop = False
+        self.light_start = str(self.light_start or "")
+        self.light_end = str(self.light_end or "")
+        self.force_settings_warning = bool(self.force_settings_warning)
 
     @classmethod
     def from_dict(cls, data):
@@ -480,6 +486,19 @@ def apply_playlist_warnings(entries, projection_zoom):
             previous_par = entry.pixel_aspect
         if colorspace_ok:
             previous_colorspace = entry.colorspace
+
+
+def clip_needs_settings_warning(entry, enabled=True):
+    """True when this clip should show setting! and the beamer confirmation."""
+    if not enabled or not entry or getattr(entry, "missing", False):
+        return False
+    if getattr(entry, "force_settings_warning", False):
+        return True
+    return bool(
+        getattr(entry, "aspect_warning", False)
+        or getattr(entry, "par_warning", False)
+        or getattr(entry, "colorspace_warning", False)
+    )
 
 
 def refresh_entry_aspect(entry):

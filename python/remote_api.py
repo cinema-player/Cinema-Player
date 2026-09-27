@@ -248,6 +248,14 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(self.server.api.invoke("remote_set_program", value))
             return
+        if path == "/api/lights":
+            preset = body.get("preset", (query.get("preset") or [None])[0])
+            enabled = body.get("enabled", (query.get("enabled") or [None])[0])
+            if enabled is None and (preset is None or str(preset).strip() == ""):
+                self._send_json({"ok": False, "error": "lights_required"}, 400)
+                return
+            self._send_json(self.server.api.invoke("remote_set_lights", preset, enabled))
+            return
         self._send_json({"ok": False, "error": "not_found"}, 404)
 
     def _authorized(self):
@@ -280,6 +288,7 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
                 "stop": "POST /api/stop",
                 "volume": "PUT /api/volume",
                 "program": "POST /api/program",
+                "lights": "POST /api/lights",
             },
         }
 
@@ -306,26 +315,73 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
         return data if isinstance(data, dict) else {}
 
 
-def clip_times(state, duration, position):
-    """Seconds and clock labels for the four program clocks."""
-    duration = float(duration or 0)
-    position = float(position or 0) if state == "PLAYING" else 0.0
-    remaining = None
-    if state != "OFF" and duration > 0:
-        remaining = max(0.0, duration - position)
-    progress = 0.0
-    if duration > 0 and state == "PLAYING":
-        progress = max(0.0, min(1.0, position / duration))
-    end_clock = "--:--"
-    if remaining is not None:
-        end_clock = (datetime.now() + timedelta(seconds=remaining)).strftime("%H:%M:%S")
+def clip_span(duration, position, in_point=None, out_point=None, playing=False):
+    """In/Out window on the file timeline: start, end, total, elapsed, remaining."""
+    try:
+        duration = float(duration or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration < 0:
+        duration = 0.0
+    start = 0.0
+    if in_point is not None:
+        try:
+            start = max(0.0, float(in_point))
+        except (TypeError, ValueError):
+            start = 0.0
+    end = duration
+    if out_point is not None:
+        try:
+            end = float(out_point)
+        except (TypeError, ValueError):
+            end = duration
+        if duration > 0:
+            end = min(end, duration)
+        end = max(0.0, end)
+    if end < start:
+        end = start
+    total = max(0.0, end - start)
+    try:
+        pos = float(position or 0)
+    except (TypeError, ValueError):
+        pos = 0.0
+    if playing:
+        elapsed = max(0.0, min(total, pos - start))
+        remaining = max(0.0, end - pos)
+    else:
+        elapsed = 0.0
+        remaining = total
+    return start, end, total, elapsed, remaining
+
+
+def clip_times(state, duration, position, in_point=None, out_point=None):
+    """Seconds and clock labels for the four program clocks (In to Out)."""
+    playing = state == "PLAYING"
+    _start, _end, total, elapsed, remaining = clip_span(
+        duration, position, in_point, out_point, playing=playing,
+    )
+    if state == "OFF":
+        remaining = None
+        total_s = None
+        elapsed_s = None
+        progress = 0.0
+        end_clock = "--:--"
+    else:
+        total_s = total
+        elapsed_s = elapsed if playing else 0.0
+        progress = 0.0
+        if total > 0 and playing:
+            progress = max(0.0, min(1.0, elapsed / total))
+        end_clock = "--:--"
+        if remaining is not None:
+            end_clock = (datetime.now() + timedelta(seconds=remaining)).strftime("%H:%M:%S")
     return {
-        "total_s": duration if state != "OFF" else None,
-        "elapsed_s": position if state == "PLAYING" else (0.0 if state == "PROGRAM" else None),
+        "total_s": total_s,
+        "elapsed_s": elapsed_s,
         "remaining_s": remaining,
         "progress": progress,
-        "total": format_clock(duration if state != "OFF" else None),
-        "elapsed": format_clock(position if state == "PLAYING" else (0 if state != "OFF" else None)),
+        "total": format_clock(total_s),
+        "elapsed": format_clock(elapsed_s),
         "remaining": format_clock(remaining),
         "end": end_clock if state != "OFF" else "--:--",
     }

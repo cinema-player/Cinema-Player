@@ -14,6 +14,8 @@ STRINGS = {
         "window_fullscreen": "Fullscreen",
         "language": "Language",
         "app_menu": "Settings",
+        "program_menu": "Program",
+        "system_settings": "System settings",
         "calibration": "Calibration",
         "calibration_video": "Video",
         "calibration_audio": "Audio",
@@ -23,7 +25,7 @@ STRINGS = {
         "remote_control_hint": (
             "Scan the QR code with a smartphone camera, or open one of the addresses. "
             "The link includes the token. Resume, Pause, Still, Stop, volume, "
-            "and the program pointer are on the phone page."
+            "house lights, and the program pointer are on the phone page."
         ),
         "remote_control_enable": "Enable network API",
         "remote_control_port": "Port",
@@ -35,6 +37,41 @@ STRINGS = {
         "remote_control_apply": "Apply",
         "remote_control_close": "Close",
         "remote_control_off": "The network API is switched off.",
+        "lights": "Light control",
+        "lights_hint": (
+            "Scan the LAN for Shelly switches and dimmers, or type an IP address. "
+            "Username and password are required when the Shelly login is enabled "
+            "(Gen2 uses admin). Tick the devices that should follow house-light cues. "
+            "Bright, Medium, and Dark are dimmer levels in percent; switches turn on above 0%."
+        ),
+        "lights_scan": "Scan",
+        "lights_add": "Add",
+        "lights_username": "User",
+        "lights_password": "Password",
+        "lights_close": "Close",
+        "lights_empty": "No Shelly devices yet. Scan the LAN or add an address.",
+        "lights_scanning": "Looking for Shelly devices on the LAN…",
+        "lights_found": "{count} device(s) found.",
+        "lights_none": "No Shelly devices were found. Enter an IP address.",
+        "lights_probe_failed": "No Shelly answered at {host}.",
+        "lights_none_enabled": "Tick at least one Shelly in the list.",
+        "lights_control": "House lights",
+        "lights_control_off": "House lights are switched off.",
+        "lights_transition": "Fade",
+        "lights_start_lead": "Start film",
+        "lights_start_lead_hint": "s before fade ends",
+        "lights_end_lead": "Lights up",
+        "lights_end_lead_hint": "s before clip ends",
+        "light_play": "Dimmer",
+        "light_start": "Lights at start",
+        "light_end": "Lights at end",
+        "light_auto": "Auto",
+        "light_bright": "Bright",
+        "light_medium": "Medium",
+        "light_dark": "Dark",
+        "light_badge": "LIGHT",
+        "light_medium_badge": "MEDIUM",
+        "light_bright_badge": "BRIGHT",
         "media_directories_hint": "These folders are offered when media is imported into the playlist.",
         "media_directories_add": "Add",
         "media_directories_remove": "Remove",
@@ -56,10 +93,13 @@ STRINGS = {
         "quit": "Quit",
         "quit_busy": "Stop the program before quitting Cinema Player.",
         "playlist": "Playlist",
-        "projection_zoom": "Beamer settingschange",
+        "projection_zoom": "Settings warning",
+        "clip_settings_warning": "Settings warning",
         "autoplay_delay": "Black-Pause:",
         "seconds_short": "s",
         "idle_media": "Idle media:",
+        "idle_media_menu": "Idle media",
+        "idle_media_choose": "Choose file…",
         "idle_none": "none",
         "default_idle_media": "Use default Idle Media",
         "default_idle_media_missing": "The idle folder was not found.",
@@ -202,7 +242,7 @@ STRINGS = {
         "missing_playback": "No playable files remain in the playlist.",
         "save_playlist": "Save playlist",
         "idle_screen_media": "Idle screen media",
-        "projection_zoom_title": "Beamer settingschange",
+        "projection_zoom_title": "Settings warning",
         "projection_zoom_message": (
             "{filename} needs a beamer settings change\n(Aspect {aspect}, Pixel Aspect Ratio {pixel_aspect}, Colorspace {colorspace}).\n"
             "Confirm after the beamer has been set."
@@ -227,6 +267,8 @@ STRINGS = {
         "until_resume": "resume",
         "auto_badge": "AUTO",
         "loop_badge": "LOOP",
+        "setting_badge": "setting!",
+        "settings_warning_active": "Settings warning on",
     },
     "de": {
         "theme_to_light": "helles Design",
@@ -234,6 +276,8 @@ STRINGS = {
         "window_fullscreen": "Vollbildmodus",
         "language": "Sprache",
         "app_menu": "Einstellungen",
+        "program_menu": "Programm",
+        "system_settings": "Systemeinstellungen",
         "calibration": "Kalibrierung",
         "calibration_video": "Video",
         "calibration_audio": "Audio",
@@ -242,8 +286,8 @@ STRINGS = {
         "remote_control": "Fernsteuerung",
         "remote_control_hint": (
             "Scannen Sie den QR-Code mit der Smartphone-Kamera, oder öffnen Sie eine der Adressen. "
-            "Der Link enthält das Token. Weiter, Pause, Standbild, Stop, Lautstärke "
-            "und der Programmzeiger sind auf der Telefonseite."
+            "Der Link enthält das Token. Weiter, Pause, Standbild, Stop, Lautstärke, "
+            "Saallicht und der Programmzeiger sind auf der Telefonseite."
         ),
         "remote_control_enable": "Netzwerk-API einschalten",
         "remote_control_port": "Port",
@@ -255,6 +299,41 @@ STRINGS = {
         "remote_control_apply": "Übernehmen",
         "remote_control_close": "Schließen",
         "remote_control_off": "Die Netzwerk-API ist ausgeschaltet.",
+        "lights": "Lichtsteuerung",
+        "lights_hint": (
+            "Suchen Sie im WLAN nach Shelly-Schaltern und -Dimmern, oder geben Sie eine IP-Adresse ein. "
+            "Benutzername und Passwort sind nötig, wenn die Shelly-Anmeldung aktiv ist "
+            "(bei Gen2 ist der Benutzer admin). Markieren Sie die Geräte, die den Lichtbefehlen folgen sollen. "
+            "Hell, Mittel und Dunkel sind Dimmerwerte in Prozent; Schalter gehen über 0 % an."
+        ),
+        "lights_scan": "Suchen",
+        "lights_add": "Hinzufügen",
+        "lights_username": "Benutzer",
+        "lights_password": "Passwort",
+        "lights_close": "Schließen",
+        "lights_empty": "Noch keine Shelly-Geräte. WLAN durchsuchen oder eine Adresse eintragen.",
+        "lights_scanning": "Suche Shelly-Geräte im WLAN…",
+        "lights_found": "{count} Gerät(e) gefunden.",
+        "lights_none": "Keine Shelly-Geräte gefunden. IP-Adresse eingeben.",
+        "lights_probe_failed": "Unter {host} hat kein Shelly geantwortet.",
+        "lights_none_enabled": "Mindestens ein Shelly in der Liste markieren.",
+        "lights_control": "Lichtsteuerung",
+        "lights_control_off": "Die Lichtsteuerung ist ausgeschaltet.",
+        "lights_transition": "Überblendung",
+        "lights_start_lead": "Filmstart",
+        "lights_start_lead_hint": "s vor Ende der Überblendung",
+        "lights_end_lead": "Licht an",
+        "lights_end_lead_hint": "s vor Clipende",
+        "light_play": "Dimmer",
+        "light_start": "Licht Start",
+        "light_end": "Licht Ende",
+        "light_auto": "Automatisch",
+        "light_bright": "Hell",
+        "light_medium": "Mittel",
+        "light_dark": "Dunkel",
+        "light_badge": "LICHT",
+        "light_medium_badge": "MITTEL",
+        "light_bright_badge": "HELL",
         "media_directories_hint": "Diese Ordner stehen beim Laden von Medien in die Playlist zur Verfügung.",
         "media_directories_add": "Hinzufügen",
         "media_directories_remove": "Entfernen",
@@ -276,10 +355,13 @@ STRINGS = {
         "quit": "Beenden",
         "quit_busy": "Das Programm muss gestoppt sein, bevor Cinema Player beendet wird.",
         "playlist": "Playlist",
-        "projection_zoom": "Einstellungswechsel",
+        "projection_zoom": "Einstellungswarnung",
+        "clip_settings_warning": "Einstellungswarnung",
         "autoplay_delay": "Schwarzpause:",
         "seconds_short": "s",
         "idle_media": "Pausenmedium:",
+        "idle_media_menu": "Pausenmedium",
+        "idle_media_choose": "Datei wählen…",
         "idle_none": "keins",
         "default_idle_media": "Standard-Pausenmedium verwenden",
         "default_idle_media_missing": "Der Ordner idle wurde nicht gefunden.",
@@ -422,7 +504,7 @@ STRINGS = {
         "missing_playback": "In der Playlist sind keine abspielbaren Dateien mehr.",
         "save_playlist": "Playlist speichern",
         "idle_screen_media": "Pausenmedium",
-        "projection_zoom_title": "Beamereinstellungswechsel",
+        "projection_zoom_title": "Einstellungswarnung",
         "projection_zoom_message": (
             "{filename} erfordert eine Änderung der Einstellungen am Beamer\n(Seitenverhältnis {aspect}, Pixelseitenverhältnis {pixel_aspect}, Farbraum {colorspace}).\n"
             "Bestätigen, nachdem der Beamer eingestellt wurde."
@@ -447,6 +529,8 @@ STRINGS = {
         "until_resume": "weiter",
         "auto_badge": "AUTO",
         "loop_badge": "LOOP",
+        "setting_badge": "setting!",
+        "settings_warning_active": "Einstellungswarnung an",
     },
 }
 
