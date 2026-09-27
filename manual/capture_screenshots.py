@@ -216,6 +216,33 @@ def grab_widget(widget, path, pad=10):
             pass
 
 
+def grab_union(widgets, path, pad=8):
+    widgets = [item for item in widgets if item is not None]
+    if not widgets:
+        return
+    for item in widgets:
+        item.update_idletasks()
+    top = widgets[0].winfo_toplevel()
+    top.update_idletasks()
+    tmp = path + ".full.png"
+    capture_x11_window(top.winfo_id(), tmp)
+    x0 = min(item.winfo_rootx() for item in widgets) - pad
+    y0 = min(item.winfo_rooty() for item in widgets) - pad
+    x1 = max(item.winfo_rootx() + item.winfo_width() for item in widgets) + pad
+    y1 = max(item.winfo_rooty() + item.winfo_height() for item in widgets) + pad
+    x = max(0, x0 - top.winfo_rootx())
+    y = max(0, y0 - top.winfo_rooty())
+    width = min(x1 - x0, top.winfo_width() - x)
+    height = min(y1 - y0, top.winfo_height() - y)
+    try:
+        crop_png(tmp, path, x, y, width, height)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def grab_root(gui, path):
     sync(gui, 0.35)
     capture_x11_window(gui.root.winfo_id(), path)
@@ -258,6 +285,54 @@ def load_testdata(gui):
         gui.program_index = 0
         gui.on_row_click(1 if len(gui.playlist) > 1 else 0)
     gui.refresh_all()
+    gui.root.update()
+
+
+def demo_envelope():
+    """Varied peak shape so the manual figure reads as a waveform, not a second bar."""
+    import math
+    from cinema_player import ENVELOPE_BINS, normalize_envelope
+
+    peaks = []
+    count = max(2, ENVELOPE_BINS)
+    for index in range(count):
+        t = index / (count - 1)
+        burst = abs(math.sin(math.pi * (6.4 * t + 0.18 * math.sin(18 * t)))) ** 0.55
+        swell = 0.22 + 0.78 * (0.5 + 0.5 * math.sin(math.pi * 2.4 * t))
+        if 0.18 < t < 0.24 or 0.47 < t < 0.55 or 0.78 < t < 0.84:
+            swell *= 0.08
+        peaks.append(min(1.0, burst * swell))
+    return normalize_envelope(peaks)
+
+
+def fill_envelopes(gui):
+    """Store LUFS from testdata plus a readable envelope for screenshots."""
+    from cinema_player import find_ffmpeg, probe_audio
+
+    try:
+        ffmpeg = find_ffmpeg()
+    except RuntimeError:
+        ffmpeg = None
+    shape = demo_envelope()
+    for entry in gui.playlist:
+        if entry.missing or entry.is_image:
+            continue
+        if ffmpeg is not None:
+            try:
+                lufs, _envelope = probe_audio(entry.path, ffmpeg)
+                entry.loudness_lufs = lufs
+            except OSError:
+                pass
+        entry.audio_envelope = list(shape)
+    show_envelope_playhead(gui)
+
+
+def show_envelope_playhead(gui):
+    duration = gui._clip_duration()
+    if duration > 0:
+        gui.preview_position = duration * 0.38
+    gui.refresh_preview_meta()
+    gui._update_preview_bar()
     gui.root.update()
 
 
@@ -407,6 +482,12 @@ def capture_language(gui, lang):
     sync(gui, 0.25)
     grab_widget(gui.autoplay_check.master, os.path.join(IMAGES, f"preview-clip-settings-{suffix}.png"), pad=6)
     grab_widget(gui.preview_video.master.master, os.path.join(IMAGES, f"preview-video-{suffix}.png"))
+    show_envelope_playhead(gui)
+    grab_union(
+        [gui.preview_progress, gui.preview_envelope],
+        os.path.join(IMAGES, f"preview-envelope-{suffix}.png"),
+        pad=2,
+    )
     grab_widget(gui.preview_controls, os.path.join(IMAGES, f"preview-controls-{suffix}.png"))
 
     set_state(gui, "PROGRAM")
@@ -468,7 +549,8 @@ def main():
     root.update()
     wait_preview(0.8)
     load_testdata(gui)
-    wait_preview(1.4)
+    fill_envelopes(gui)
+    wait_preview(0.6)
     capture_language(gui, "en")
 
     set_language("de")
@@ -483,8 +565,9 @@ def main():
     if gui.playlist:
         gui.on_row_click(1 if len(gui.playlist) > 1 else 0)
     gui.refresh_all()
+    show_envelope_playhead(gui)
     root.update()
-    wait_preview(1.8)
+    wait_preview(1.2)
     capture_language(gui, "de")
 
     root.attributes("-topmost", False)
