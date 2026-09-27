@@ -216,6 +216,33 @@ def grab_widget(widget, path, pad=10):
             pass
 
 
+def grab_union(widgets, path, pad=8):
+    widgets = [item for item in widgets if item is not None]
+    if not widgets:
+        return
+    for item in widgets:
+        item.update_idletasks()
+    top = widgets[0].winfo_toplevel()
+    top.update_idletasks()
+    tmp = path + ".full.png"
+    capture_x11_window(top.winfo_id(), tmp)
+    x0 = min(item.winfo_rootx() for item in widgets) - pad
+    y0 = min(item.winfo_rooty() for item in widgets) - pad
+    x1 = max(item.winfo_rootx() + item.winfo_width() for item in widgets) + pad
+    y1 = max(item.winfo_rooty() + item.winfo_height() for item in widgets) + pad
+    x = max(0, x0 - top.winfo_rootx())
+    y = max(0, y0 - top.winfo_rooty())
+    width = min(x1 - x0, top.winfo_width() - x)
+    height = min(y1 - y0, top.winfo_height() - y)
+    try:
+        crop_png(tmp, path, x, y, width, height)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def grab_root(gui, path):
     sync(gui, 0.35)
     capture_x11_window(gui.root.winfo_id(), path)
@@ -258,6 +285,54 @@ def load_testdata(gui):
         gui.program_index = 0
         gui.on_row_click(1 if len(gui.playlist) > 1 else 0)
     gui.refresh_all()
+    gui.root.update()
+
+
+def demo_envelope():
+    """Varied peak shape so the manual figure reads as a waveform, not a second bar."""
+    import math
+    from cinema_player import ENVELOPE_BINS, normalize_envelope
+
+    peaks = []
+    count = max(2, ENVELOPE_BINS)
+    for index in range(count):
+        t = index / (count - 1)
+        burst = abs(math.sin(math.pi * (6.4 * t + 0.18 * math.sin(18 * t)))) ** 0.55
+        swell = 0.22 + 0.78 * (0.5 + 0.5 * math.sin(math.pi * 2.4 * t))
+        if 0.18 < t < 0.24 or 0.47 < t < 0.55 or 0.78 < t < 0.84:
+            swell *= 0.08
+        peaks.append(min(1.0, burst * swell))
+    return normalize_envelope(peaks)
+
+
+def fill_envelopes(gui):
+    """Store LUFS from testdata plus a readable envelope for screenshots."""
+    from cinema_player import find_ffmpeg, probe_audio
+
+    try:
+        ffmpeg = find_ffmpeg()
+    except RuntimeError:
+        ffmpeg = None
+    shape = demo_envelope()
+    for entry in gui.playlist:
+        if entry.missing or entry.is_image:
+            continue
+        if ffmpeg is not None:
+            try:
+                lufs, _envelope = probe_audio(entry.path, ffmpeg)
+                entry.loudness_lufs = lufs
+            except OSError:
+                pass
+        entry.audio_envelope = list(shape)
+    show_envelope_playhead(gui)
+
+
+def show_envelope_playhead(gui):
+    duration = gui._clip_duration()
+    if duration > 0:
+        gui.preview_position = duration * 0.38
+    gui.refresh_preview_meta()
+    gui._update_preview_bar()
     gui.root.update()
 
 
@@ -311,6 +386,80 @@ def grab_menu(canvas, menu, path):
             pass
 
 
+def find_menu_row(menu, needle):
+    for child in menu.winfo_children():
+        try:
+            text = child.cget("text")
+        except Exception:
+            continue
+        if needle in str(text):
+            return child
+    return None
+
+
+def post_app_menu(gui):
+    canvas = gui.app_menu
+    gui._close_menus()
+    menu = canvas.menu
+    menu.delete(0, "end")
+    gui._fill_app_menu(menu)
+    gui._posted_menu = menu
+    gui._menu_ignore_press = True
+    menu.post_below(canvas, side="right")
+    gui.root.update()
+    wait_preview(0.4)
+    gui._allow_menu_dismiss()
+    return menu
+
+
+def open_cascade(gui, menu, needle):
+    rows = []
+    for child in menu.winfo_children():
+        try:
+            text = str(child.cget("text"))
+        except Exception:
+            continue
+        if "▸" in text:
+            rows.append((text, child))
+    for (text, row), sub in zip(rows, menu._cascades):
+        if needle not in text or sub is None:
+            continue
+        gui._menu_ignore_press = True
+        menu._show_cascade(row, sub)
+        gui.root.update()
+        wait_preview(0.45)
+        return sub
+    return None
+
+
+def grab_dropdown(widget, path):
+    """Crop a dropdown from the control window using its requested size."""
+    widget.update_idletasks()
+    widget.update()
+    top = widget.winfo_toplevel()
+    top.update_idletasks()
+    tmp = path + ".full.png"
+    capture_x11_window(top.winfo_id(), tmp)
+    pad = 0
+    x = widget.winfo_rootx() - top.winfo_rootx() - pad
+    y = widget.winfo_rooty() - top.winfo_rooty() - pad
+    width = max(widget.winfo_width(), widget.winfo_reqwidth()) + pad * 2
+    height = max(widget.winfo_height(), widget.winfo_reqheight()) + pad * 2
+    max_w = top.winfo_width()
+    max_h = top.winfo_height()
+    x = max(0, x)
+    y = max(0, y)
+    width = min(width, max_w - x)
+    height = min(height, max_h - y)
+    try:
+        crop_png(tmp, path, x, y, width, height)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def set_state(gui, state):
     gui.program_state = state
     gui.refresh_all()
@@ -327,7 +476,18 @@ def capture_language(gui, lang):
     grab_widget(gui.playlist_canvas.master, os.path.join(IMAGES, f"playlist-{suffix}.png"), pad=6)
     grab_widget(gui.beamer_ok.master.master, os.path.join(IMAGES, f"beamer-{suffix}.png"))
     grab_widget(gui.preview_title.master.master, os.path.join(IMAGES, f"preview-header-{suffix}.png"))
+    gui.projection_zoom.set(True)
+    gui._sync_clip_settings_warning_option()
+    gui.refresh_all()
+    sync(gui, 0.25)
+    grab_widget(gui.autoplay_check.master, os.path.join(IMAGES, f"preview-clip-settings-{suffix}.png"), pad=6)
     grab_widget(gui.preview_video.master.master, os.path.join(IMAGES, f"preview-video-{suffix}.png"))
+    show_envelope_playhead(gui)
+    grab_union(
+        [gui.preview_progress, gui.preview_envelope],
+        os.path.join(IMAGES, f"preview-envelope-{suffix}.png"),
+        pad=2,
+    )
     grab_widget(gui.preview_controls, os.path.join(IMAGES, f"preview-controls-{suffix}.png"))
 
     set_state(gui, "PROGRAM")
@@ -342,25 +502,18 @@ def capture_language(gui, lang):
 
     set_state(gui, "OFF")
 
-    post_menu(gui, gui.app_menu, gui._fill_app_menu)
-    menu = gui._posted_menu
-    try:
-        grab_window(menu, os.path.join(IMAGES, f"menu-settings-{suffix}.png"))
-    except Exception:
-        grab_menu(gui.app_menu, menu, os.path.join(IMAGES, f"menu-settings-{suffix}.png"))
+    from language import t
+
+    menu = post_app_menu(gui)
+    grab_dropdown(menu, os.path.join(IMAGES, f"menu-settings-{suffix}.png"))
+    playlist_menu = open_cascade(gui, menu, t("playlist"))
+    if playlist_menu is not None:
+        playlist_menu.update_idletasks()
+        gui.root.update()
+        wait_preview(0.35)
+        grab_dropdown(playlist_menu, os.path.join(IMAGES, f"menu-playlist-{suffix}.png"))
     gui._close_menus()
     sync(gui, 0.2)
-
-    burger = find_canvas(gui.playlist_header)
-    if burger is not None:
-        post_menu(gui, burger, gui._fill_playlist_menu)
-        menu = gui._posted_menu
-        try:
-            grab_window(menu, os.path.join(IMAGES, f"menu-playlist-{suffix}.png"))
-        except Exception:
-            grab_menu(burger, menu, os.path.join(IMAGES, f"menu-playlist-{suffix}.png"))
-        gui._close_menus()
-        sync(gui, 0.2)
 
     class FakeEvent:
         def __init__(self, widget):
@@ -371,11 +524,9 @@ def capture_language(gui, lang):
         row = gui.row_widgets[0]["row"]
         gui.on_row_menu(0, FakeEvent(row))
         wait_preview(0.5)
-        menu = gui.row_menu
-        try:
-            grab_window(menu, os.path.join(IMAGES, f"menu-entry-{suffix}.png"))
-        except Exception:
-            grab_menu(row, menu, os.path.join(IMAGES, f"menu-entry-{suffix}.png"))
+        menu = gui.row_menu or gui._posted_menu
+        if menu is not None:
+            grab_dropdown(menu, os.path.join(IMAGES, f"menu-entry-{suffix}.png"))
         gui._close_menus()
         sync(gui, 0.2)
 
@@ -398,7 +549,8 @@ def main():
     root.update()
     wait_preview(0.8)
     load_testdata(gui)
-    wait_preview(1.4)
+    fill_envelopes(gui)
+    wait_preview(0.6)
     capture_language(gui, "en")
 
     set_language("de")
@@ -413,8 +565,9 @@ def main():
     if gui.playlist:
         gui.on_row_click(1 if len(gui.playlist) > 1 else 0)
     gui.refresh_all()
+    show_envelope_playhead(gui)
     root.update()
-    wait_preview(1.8)
+    wait_preview(1.2)
     capture_language(gui, "de")
 
     root.attributes("-topmost", False)

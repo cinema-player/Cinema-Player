@@ -12,6 +12,7 @@ Display control uses XRandR on X11 and GNOME gdctl on Wayland.
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
 
 import tkinter as tk
+import array
 import subprocess
 import socket
 import json
@@ -184,6 +185,9 @@ _EBUR_INTEGRATED = re.compile(
     r"Integrated loudness:.*?I:\s*([+-]?\d+(?:\.\d+)?)\s*LUFS",
     re.IGNORECASE | re.DOTALL,
 )
+ENVELOPE_BINS = 400
+ENVELOPE_RATE = 8000
+ENVELOPE_WINDOW_HZ = 50
 
 
 def format_loudness(lufs):
@@ -198,20 +202,8 @@ def format_loudness(lufs):
     return f"{value:.1f} LUFS"
 
 
-def probe_loudness(path, ffmpeg_path=None):
-    """Return integrated EBU R128 loudness in LUFS, or None if it cannot be measured."""
-    ffmpeg = ffmpeg_path or find_ffmpeg()
-    command = [
-        ffmpeg, "-hide_banner", "-nostats",
-        "-i", path,
-        "-vn", "-sn", "-dn",
-        "-map", "0:a:0",
-        "-af", "ebur128",
-        "-f", "null", "-",
-    ]
-    result = subprocess.run(command, capture_output=True, text=True)
-    text = f"{result.stderr or ''}\n{result.stdout or ''}"
-    match = _EBUR_INTEGRATED.search(text)
+def parse_integrated_lufs(text):
+    match = _EBUR_INTEGRATED.search(text or "")
     if not match:
         return None
     try:
@@ -221,6 +213,120 @@ def probe_loudness(path, ffmpeg_path=None):
     if not math.isfinite(value):
         return None
     return value
+
+
+def resample_peak_envelope(values, bins=ENVELOPE_BINS):
+    """Downsample or stretch peak samples to a fixed-length 0..1 envelope."""
+    if not values or bins <= 0:
+        return None
+    peaks = []
+    for item in values:
+        try:
+            value = float(item)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            peaks.append(max(0.0, min(1.0, value)))
+    if not peaks:
+        return None
+    count = len(peaks)
+    out = []
+    for index in range(bins):
+        start = index * count / bins
+        end = (index + 1) * count / bins
+        first = int(start)
+        last = max(first + 1, int(math.ceil(end)))
+        chunk = peaks[first:last]
+        peak = max(chunk) if chunk else 0.0
+        out.append(round(peak, 4))
+    return out
+
+
+def normalize_envelope(values, bins=ENVELOPE_BINS):
+    if values is None:
+        return None
+    return resample_peak_envelope(values, bins)
+
+
+def envelope_from_pcm(stream, rate=ENVELOPE_RATE, window_hz=ENVELOPE_WINDOW_HZ, bins=ENVELOPE_BINS):
+    """Build a peak envelope from little-endian float32 mono PCM."""
+    window = max(1, int(rate / max(1, window_hz)))
+    windows = []
+    peak = 0.0
+    counted = 0
+    leftover = b""
+    while True:
+        chunk = stream.read(65536)
+        if not chunk:
+            break
+        leftover += chunk
+        usable = (len(leftover) // 4) * 4
+        if not usable:
+            continue
+        samples = array.array("f")
+        samples.frombytes(leftover[:usable])
+        leftover = leftover[usable:]
+        for sample in samples:
+            level = abs(sample)
+            if not math.isfinite(level):
+                continue
+            if level > peak:
+                peak = level
+            counted += 1
+            if counted >= window:
+                windows.append(min(1.0, peak))
+                peak = 0.0
+                counted = 0
+    if counted:
+        windows.append(min(1.0, peak))
+    return resample_peak_envelope(windows, bins)
+
+
+def probe_audio(path, ffmpeg_path=None):
+    """One ffmpeg decode: integrated LUFS plus a stored peak envelope."""
+    ffmpeg = ffmpeg_path or find_ffmpeg()
+    command = [
+        ffmpeg, "-hide_banner", "-nostats",
+        "-i", path,
+        "-vn", "-sn", "-dn",
+        "-map", "0:a:0",
+        "-af", "ebur128=video=0,aformat=sample_fmts=flt:channel_layouts=mono,aresample=%d" % ENVELOPE_RATE,
+        "-f", "f32le", "-",
+    ]
+    proc = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    err_chunks = []
+
+    def _read_stderr():
+        try:
+            err_chunks.append(proc.stderr.read())
+        except OSError:
+            pass
+
+    reader = threading.Thread(target=_read_stderr, daemon=True)
+    reader.start()
+    envelope = None
+    try:
+        envelope = envelope_from_pcm(proc.stdout)
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        proc.wait()
+        reader.join()
+        if proc.stderr is not None:
+            proc.stderr.close()
+    err_bytes = err_chunks[0] if err_chunks else b""
+    text = err_bytes.decode("utf-8", errors="replace") if isinstance(err_bytes, bytes) else str(err_bytes)
+    return parse_integrated_lufs(text), envelope
+
+
+def probe_loudness(path, ffmpeg_path=None):
+    """Return integrated EBU R128 loudness in LUFS, or None if it cannot be measured."""
+    lufs, _envelope = probe_audio(path, ffmpeg_path=ffmpeg_path)
+    return lufs
 
 
 @dataclass
@@ -300,6 +406,10 @@ class PlaylistEntry:
     colorspace: str = "--"
     color_range: str = ""
     loudness_lufs: float | None = None
+    audio_envelope: list | None = None
+    light_start: str = ""
+    light_end: str = ""
+    force_settings_warning: bool = False
 
     def __post_init__(self):
         if not self.filename:
@@ -307,6 +417,10 @@ class PlaylistEntry:
         self.volume = clamp_volume(self.volume)
         if self.is_image:
             self.loop = False
+        self.light_start = str(self.light_start or "")
+        self.light_end = str(self.light_end or "")
+        self.force_settings_warning = bool(self.force_settings_warning)
+        self.audio_envelope = normalize_envelope(self.audio_envelope)
 
     @classmethod
     def from_dict(cls, data):
@@ -480,6 +594,19 @@ def apply_playlist_warnings(entries, projection_zoom):
             previous_par = entry.pixel_aspect
         if colorspace_ok:
             previous_colorspace = entry.colorspace
+
+
+def clip_needs_settings_warning(entry, enabled=True):
+    """True when this clip should show setting! and the beamer confirmation."""
+    if not enabled or not entry or getattr(entry, "missing", False):
+        return False
+    if getattr(entry, "force_settings_warning", False):
+        return True
+    return bool(
+        getattr(entry, "aspect_warning", False)
+        or getattr(entry, "par_warning", False)
+        or getattr(entry, "colorspace_warning", False)
+    )
 
 
 def refresh_entry_aspect(entry):

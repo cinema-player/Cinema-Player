@@ -18,16 +18,16 @@ The header shows the Cinema Player logo, the version, and whether the session is
 
 - A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, and the playlist position.
 - The program block: progress bar with live video bitrate, volume with live audio bitrate, In/Out times, transport buttons, the four clocks, and a VU meter.
-- Playlist tools (name, import/new/load/save, global settings).
+- Playlist tools (name, import/new/load/save, house lights).
 - The playlist itself.
 
 **Right**
 
 - Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing).
 - Preview header with the Live/Preview badge and clip metadata.
-- Clip settings (autoplay, loop, audio, subtitles, or still display time).
+- Clip settings (autoplay, settings warning, loop, dimmer, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
-- Preview transport, volume, live bitrates, and In/Out marks.
+- Preview transport, volume, live bitrates, In/Out marks, audio track and subtitles.
 
 In **OFF**, the status title reads as program not started and the program clocks show `--:--`. Transport buttons that cannot be used in the current state are shown disabled.
 
@@ -37,14 +37,17 @@ The window can be switched to fullscreen on the control monitor (**F11** or Sett
 
 The burger menu in the header covers booth setup:
 
-- Media directories (saved folders offered when importing into the playlist)
-- Remote control (LAN HTTP API and smartphone page; port and required token)
 - Fullscreen on the control monitor (`F11`)
-- Light or dark design
-- Language (English / Deutsch)
-- Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
-- Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
-- Calibration (in **OFF** and while already calibrating)
+- Media directories (saved folders offered when importing into the playlist)
+- **Program** — Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
+- **Playlist** — check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness
+- **System settings**
+  - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
+  - Light or dark design
+  - Language (English / Deutsch)
+  - Remote control (LAN HTTP API and smartphone page; port and required token)
+  - Light control (Shelly switches and dimmers on the LAN; house-light presets Bright / Medium / Dark)
+- **Calibration** (in **OFF** and while already calibrating)
   - Beamer test image (Cinema Player logo on the projector; only in **OFF**)
   - Video / Audio
     - Load all files (clips from `testdata/videotestdata` or `testdata/audiosyncdata`, loop on)
@@ -63,18 +66,18 @@ The playlist menu offers:
 
 - Check video files
 - Reset playlist (clears played flags and moves the program pointer to the first entry)
+- **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show red **setting!** in the right-hand playlist column. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
-- Analyze loudness (ffmpeg EBU R128; only while **OFF**)
+- **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `idle` at startup.
+- Analyze loudness (ffmpeg EBU R128 and audio envelope; only while **OFF**)
 
 ### Global Settings
 
 These settings control the behavior of the playlist.
 
-- **Beamer change** – When the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, this checkbox is selected. When the zoom needs to be changed, a popup window informs the projectionist when to do so. Playback starts once the successful zoom change has been confirmed.  
-  When 16:9 images are displayed in 21:9 zoom mode, they are scaled to fit the vertical resolution. The same popup is used when resolution, pixel aspect, or colorspace needs attention.
-- **Autoplay delay** – The number of seconds of black to wait before the next video is started automatically, and before idle media appears after a clip.
-- **Idle media** – An image or video loop shown instead of a black screen **while the program is armed** (**PROGRAM**). It is never shown in **OFF**. The idle button turns green while that media is on the projector. Enable **Use default Idle Media** in Settings to load the file from `idle` automatically at startup.
+- **Dark / Medium / Bright** – Manual house-light presets. They are disabled until at least one Shelly is ticked and **House lights** is on in Settings → System settings → Light control (or on the phone).
+- **Idle media name** – If an idle file is set, its name is shown here. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Playlist. When **Settings warning** is on, red **Settings warning on** appears beside it.
 
 ### Playback Controls
 
@@ -88,7 +91,7 @@ These settings control the behavior of the playlist.
 
 ### Remote control
 
-Cinema Player listens on the LAN (default port **8765**) so a smartphone can run the show. Settings → **Remote control** shows a QR code (IP, port, and token) and the matching URL. Scan the code or open the URL in a phone browser. A token is required (`X-Cinema-Token` or `Authorization: Bearer`). A radio icon appears in the header while the API is running. A native app can use the same JSON API:
+Cinema Player listens on the LAN (default port **8765**) so a smartphone can run the show. Settings → **Remote control** shows a QR code (IP, port, and token) and the matching URL. Scan the code or open the URL in a phone browser. A token is required (`X-Cinema-Token` or `Authorization: Bearer`). A radio icon and a bulb sit in the header. They are coloured while remote control or house-light control is on, and grey while off. Click either icon to open its settings. A native app can use the same JSON API:
 
 - `GET /api/status` — state, playlist, progress, clocks, volume, and which actions are available
 - `GET /api/playlist` — playlist only
@@ -98,8 +101,19 @@ Cinema Player listens on the LAN (default port **8765**) so a smartphone can run
 - `POST /api/stop` — end the clip on air and return to **PROGRAM** (does not end the program)
 - `PUT /api/volume` — body `{"volume": 0…100}`
 - `POST /api/program` — body `{"index": 0…}` sets the program pointer (not while **PLAYING**)
+- `POST /api/lights` — body `{"preset": "dark"|"medium"|"bright"}` and/or `{"enabled": true|false}`
 
-The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC.
+The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. Dark / Medium / Bright sit on the playlist tools row and above the progress bar on the phone.
+
+### Lights
+
+Cinema Player talks to Shelly switches and dimmers on the LAN (HTTP, no extra packages). Settings → System settings → **Light control** scans the network (mDNS when `avahi-browse` is installed, otherwise a `/24` probe) or accepts an IP address. Enter the Shelly **user** and **password** (Gen2 is `admin`); they are stored per device and used for HTTP Basic and Gen2 RPC digest. Tick the devices that should follow house-light cues. **Bright**, **Medium**, and **Dark** are dimmer percentages (defaults 100 / 40 / 0); a switch turns on above 0%. Fade is the dimmer transition in seconds.
+
+**Dark**, **Medium**, and **Bright** sit on the playlist tools row and on the smartphone remote so the house lights can be set by hand. The chosen button blinks while the fade runs. **House lights** in Settings → System settings → Light control (and on the phone) switches the whole Shelly control off: no manual buttons, no playlist cues, no film-start or film-end fades. The choice is saved. It cannot be switched on until at least one Shelly is ticked. Launching Cinema Player sends **Bright** to every selected Shelly.
+
+In Settings → System settings → **Light control**, **Start film** is how many seconds before the dim-down finishes the clip starts (0 waits until the fade is done). **Lights up** is how many seconds before the clip ends the house lights come up. With Autoplay to the next clip the lights stay dark.
+
+Each playlist entry has a **Dimmer** (`Dark` default, `Medium`, `Bright`). It runs when the clip **starts** (fade and blinking buttons, then the picture). It is not used at the end: house lights come up automatically unless Autoplay continues (then they stay dark). Stop clip, the last clip, or Stop program brings the lights up. The playlist shows **MEDIUM** / **BRIGHT** when the play dimmer is not Dark. The cue is stored in the playlist file.
 
 ### Calibration
 
@@ -136,7 +150,7 @@ A cursor on the left side of the list shows the current position in the program.
 
 Already played videos are grayed out.
 
-If a video requires attention, such as a change in aspect ratio (when beamer change is enabled), a change in resolution, a different pixel aspect ratio, or a different colorspace compared with the previous video, a popup window reminds the projectionist of the necessary actions. The affected data in the playlist entries are marked in red. The program can only be resumed after this information has been confirmed.
+If a video requires attention, such as a change in aspect ratio (when **Settings warning** is enabled), a change in resolution, a different pixel aspect ratio, or a different colorspace compared with the previous video, a popup window reminds the projectionist of the necessary actions. The affected data in the playlist entries are marked in red. The program can only be resumed after this information has been confirmed.
 
 ### Media Entries
 
@@ -144,7 +158,7 @@ An entry in the playlist displays the filename, folder, codecs, volume, optional
 
 If no entry is selected by the projectionist, the preview window shows the data of the current entry. The preview status is set to **Live** (program color).
 
-When an entry is selected by clicking it in the playlist, it is highlighted in dark yellow, its data is displayed in the preview, and the preview status changes to **Preview** (dark yellow).
+When an entry is selected by clicking it in the playlist, it gets a yellow border (not a yellow fill), its data is displayed in the preview, and the preview status changes to **Preview** (dark yellow). If that clip is also the program pointer, the row fill follows the program state (blue **PROGRAM**, green **PLAYING**) and the border stays yellow.
 
 The displayed metadata are:
 
@@ -162,7 +176,9 @@ The displayed metadata are:
 **Settings (all media)**
 
 - Autoplay checkbox
+- Settings warning (forces the beamer confirmation and red **setting!** even when aspect, PAR, and colorspace do not change; only while **Settings warning** is on in the playlist menu)
 - Volume (saved per entry from the preview)
+- Dimmer while playing (Dark default, Medium, Bright; saved on the playlist entry; applied when the clip starts)
 
 **Settings (video only)**
 
@@ -184,7 +200,8 @@ Different options can be selected for each entry in the playlist.
 - If subtitles are embedded, the desired subtitle track can be selected.
 - A checkbox overrides the automatic stop behavior and automatically starts playback of the next entry.
 - **Loop** repeats a video (In/Out if set) until **Resume** ends it.
-- Volume is adjusted in preview and stored on the entry with **Save volume**.
+- **Dimmer** (`Dark`, `Medium`, `Bright`) is applied when the clip starts, not at the end. House lights come up automatically after the film unless Autoplay continues.
+- Volume is adjusted in preview and stored on the entry with **Save volume**. After **Analyze loudness**, a peak envelope for the clip is stored in the playlist and drawn under the preview progress bar, with a white line at the current time.
 
 ### Images
 
@@ -202,13 +219,13 @@ The preview displays a video in a window within the control panel. The source ca
 
 When a playlist entry is selected, the playback position can be selected using a progress bar. A start point and an end point can be defined (buttons or **I** / **O**) to determine where the video starts and ends when it goes on air. This option is disabled while the video is on air. Preview In/Out/Clear sit beside the preview transport.
 
-The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row. During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview).
+The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row, and a peak envelope is drawn under the preview progress bar (white line = current time). During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview).
 
 # Technique
 
 ## Architecture
 
-The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used only for optional loudness analysis.
+The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used only for optional loudness and envelope analysis.
 
 For good performance, the graphics card must support hardware decoding of both the H.264 and H.265 codecs.
 

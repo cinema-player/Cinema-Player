@@ -67,6 +67,14 @@ a { color: var(--accent); }
   flex: 1;
 }
 
+.top .ver {
+  display: block;
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
 .lang-switch {
   display: flex;
   gap: 6px;
@@ -151,6 +159,16 @@ figure img {
   display: block;
   width: 100%;
   background: #000;
+}
+
+figure.snip {
+  width: fit-content;
+  max-width: min(100%, 22rem);
+}
+
+figure.snip img {
+  width: auto;
+  max-width: 100%;
 }
 
 html[lang="en"] figure img[data-lang="en"],

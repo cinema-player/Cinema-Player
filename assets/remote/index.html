@@ -51,6 +51,19 @@
     }
     .clock span { display: block; color: var(--muted); font-size: .75rem; }
     .clock b { font-size: 1.15rem; }
+    .lights {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr auto;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .lights button { min-height: 48px; padding: 12px 6px; font-size: .92rem; }
+    #light-control { background: #2e9d3a; color: #fff; min-width: 7.5rem; }
+    #light-control.off { background: #555; color: #ddd; }
+    @media (max-width: 420px) {
+      .lights { grid-template-columns: 1fr 1fr 1fr; }
+      #light-control { grid-column: 1 / -1; }
+    }
     .bar {
       height: 8px;
       background: #333;
@@ -84,6 +97,14 @@
     }
     button:disabled { opacity: .35; }
     button.active { outline: 3px solid #fff; }
+    @keyframes light-blink {
+      0%, 100% { outline-color: #fff; background: #3b6ea8; }
+      50% { outline-color: transparent; background: var(--btn); }
+    }
+    .lights button.fading {
+      outline: 3px solid #fff;
+      animation: light-blink .6s ease-in-out infinite;
+    }
     .vol { margin-bottom: 16px; }
     .vol label { display: flex; justify-content: space-between; font-size: .9rem; margin-bottom: 6px; }
     input[type=range] { width: 100%; }
@@ -150,6 +171,12 @@
     <div class="name" id="state">…</div>
     <div class="meta" id="clip"></div>
   </div>
+  <div class="lights" id="lights">
+    <button id="light-dark" type="button">Dark</button>
+    <button id="light-medium" type="button">Medium</button>
+    <button id="light-bright" type="button">Bright</button>
+    <button id="light-control" type="button">Lights</button>
+  </div>
   <div class="bar"><i id="progress"></i></div>
   <div class="clocks">
     <div class="clock"><span data-i="total">Total</span><b id="t-total">--:--</b></div>
@@ -182,6 +209,8 @@
     const I18N = {
       en: { resume: "Resume", pause: "Pause", still: "Still", stop: "Stop", volume: "Volume",
             total: "Total", elapsed: "Elapsed", remaining: "Remaining", end: "End",
+            light_dark: "Dark", light_medium: "Medium", light_bright: "Bright",
+            lights_control: "House lights",
             token: "Token", yes: "Yes", no: "No",
             pause_title: "Pause",
             pause_message: "Pause playback? The projector output will go black.",
@@ -193,6 +222,8 @@
             program_message: "Set the program pointer to {name}?" },
       de: { resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
             total: "Gesamt", elapsed: "Gelaufen", remaining: "Rest", end: "Ende",
+            light_dark: "Dunkel", light_medium: "Mittel", light_bright: "Hell",
+            lights_control: "Lichtsteuerung",
             token: "Token", yes: "Ja", no: "Nein",
             pause_title: "Pause",
             pause_message: "Wiedergabe pausieren? Die Beamerausgabe wird schwarz.",
@@ -250,6 +281,10 @@
       document.getElementById("pause").textContent = table.pause;
       document.getElementById("still").textContent = table.still;
       document.getElementById("stop").textContent = table.stop;
+      document.getElementById("light-dark").textContent = table.light_dark;
+      document.getElementById("light-medium").textContent = table.light_medium;
+      document.getElementById("light-bright").textContent = table.light_bright;
+      document.getElementById("light-control").textContent = table.lights_control;
       document.querySelector('[data-i="volume"]').textContent = table.volume;
       document.querySelector('[data-i="total"]').textContent = table.total;
       document.querySelector('[data-i="elapsed"]').textContent = table.elapsed;
@@ -287,6 +322,17 @@
       document.getElementById("stop").disabled = !actions.stop;
       document.getElementById("pause").classList.toggle("active", !!data.paused);
       document.getElementById("still").classList.toggle("active", !!data.still);
+      const lights = data.lights || {};
+      const lightsOn = lights.enabled !== false;
+      const preset = lights.preset || "";
+      document.getElementById("light-control").classList.toggle("off", !lightsOn);
+      document.getElementById("light-control").classList.toggle("active", lightsOn);
+      ["dark", "medium", "bright"].forEach((key) => {
+        const button = document.getElementById("light-" + key);
+        button.disabled = !lightsOn;
+        button.classList.toggle("fading", lightsOn && !!lights.fading && preset === key);
+        button.classList.toggle("active", lightsOn && preset === key && !lights.fading);
+      });
       if (!dragging && typeof data.volume === "number") {
         lastVolume = data.volume;
         document.getElementById("volume").value = data.volume;
@@ -359,6 +405,13 @@
     }
 
     document.getElementById("resume").onclick = () => command("/api/resume", "POST");
+    document.getElementById("light-dark").onclick = () => command("/api/lights", "POST", { preset: "dark" });
+    document.getElementById("light-medium").onclick = () => command("/api/lights", "POST", { preset: "medium" });
+    document.getElementById("light-bright").onclick = () => command("/api/lights", "POST", { preset: "bright" });
+    document.getElementById("light-control").onclick = () => {
+      const on = !document.getElementById("light-control").classList.contains("off");
+      command("/api/lights", "POST", { enabled: !on });
+    };
     document.getElementById("pause").onclick = () => askConfirm("pause", "/api/pause");
     document.getElementById("still").onclick = () => askConfirm("still", "/api/still");
     document.getElementById("stop").onclick = () => askConfirm("stop", "/api/stop");
