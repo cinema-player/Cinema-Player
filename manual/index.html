@@ -13,6 +13,7 @@
     <div class="title">
       <span data-lang="en">Operator manual</span>
       <span data-lang="de">Bedienungsanleitung</span>
+      <span class="ver">1.0.3</span>
     </div>
     <div class="lang-switch">
       <button type="button" data-set-lang="en">English</button>
@@ -93,8 +94,8 @@
       <li data-lang="de"><strong>Playlist</strong> — die Spielfolge.</li>
       <li data-lang="en"><strong>Beamer status</strong> — aspect ratio, available rates and resolutions, OK or Mismatch.</li>
       <li data-lang="de"><strong>Beamer-Status</strong> — Seitenverhältnis, verfügbare Frequenzen und Auflösungen, OK oder Abweichung.</li>
-      <li data-lang="en"><strong>Preview</strong> — Live/Preview badge, metadata, clip settings, picture, meters, transport, In/Out.</li>
-      <li data-lang="de"><strong>Vorschau</strong> — Live/Vorschau, Metadaten, Clip-Einstellungen, Bild, Meter, Transport, In/Out.</li>
+      <li data-lang="en"><strong>Preview</strong> — Live/Preview badge, metadata, clip settings (including dimmer), picture, meters, envelope, transport, In/Out, audio and subtitles.</li>
+      <li data-lang="de"><strong>Vorschau</strong> — Live/Vorschau, Metadaten, Clip-Einstellungen (inkl. Dimmer), Bild, Meter, Hüllkurve, Transport, In/Out, Tonspur und Untertitel.</li>
     </ul>
     <p data-lang="en">
       Fullscreen on the control monitor: <kbd>F11</kbd> or Settings → Fullscreen. It never covers the projector output.
@@ -109,7 +110,7 @@
     </h2>
     <p data-lang="en">Open the burger menu at the top right of the header.</p>
     <p data-lang="de">Öffnen Sie das Burger-Menü oben rechts in der Kopfzeile.</p>
-    <figure>
+    <figure class="snip">
       <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
       <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
       <figcaption data-lang="en">Settings: fullscreen, media directories, Program, Playlist, System settings (beamer output, design, language, remote control, light control), Calibration, quit.</figcaption>
@@ -318,7 +319,7 @@
     </figure>
     <p data-lang="en">Right-click a row:</p>
     <p data-lang="de">Rechtsklick auf eine Zeile:</p>
-    <figure>
+    <figure class="snip">
       <img data-lang="en" src="images/menu-entry-en.png" alt="Clip context menu">
       <img data-lang="de" src="images/menu-entry-de.png" alt="Kontextmenü eines Clips">
       <figcaption data-lang="en">Set program pointer (not during PLAYING), toggle autoplay, toggle loop (videos), relink a missing file, delete the entry.</figcaption>
@@ -326,13 +327,13 @@
     </figure>
     <p data-lang="en">Changing the program pointer while not playing must be confirmed, so the running order cannot jump by accident.</p>
     <p data-lang="de">Ein Wechsel des Programmzeigers außerhalb der Wiedergabe muss bestätigt werden, damit die Reihenfolge nicht versehentlich springt.</p>
-    <p data-lang="en">The playlist burger menu:</p>
-    <p data-lang="de">Das Playlist-Burger-Menü:</p>
-    <figure>
+    <p data-lang="en">Settings → <strong>Playlist</strong>:</p>
+    <p data-lang="de">Einstellungen → <strong>Playlist</strong>:</p>
+    <figure class="snip">
       <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist menu">
       <img data-lang="de" src="images/menu-playlist-de.png" alt="Playlist-Menü">
-      <figcaption data-lang="en">Check files, reset playlist (confirm: played flags and pointer to first entry), settings warning, autosave when the pointer moves, load last playlist at start, idle media (file and black pause), analyze loudness (OFF only).</figcaption>
-      <figcaption data-lang="de">Dateien prüfen, Playlist zurücksetzen (Nachfrage: gespielt und Zeiger auf den ersten Eintrag), Einstellungswarnung, Autosave bei Programmwechsel, letzte Playlist beim Start laden, Pausenmedium (Datei und Schwarzpause), Lautheit analysieren (nur bei AUS).</figcaption>
+      <figcaption data-lang="en">Check files, reset playlist (confirm: played flags and pointer to first entry), settings warning, autosave when the pointer moves, load last playlist at start, idle media (file and black pause), analyze loudness and envelope (OFF only).</figcaption>
+      <figcaption data-lang="de">Dateien prüfen, Playlist zurücksetzen (Nachfrage: gespielt und Zeiger auf den ersten Eintrag), Einstellungswarnung, Autosave bei Programmwechsel, letzte Playlist beim Start laden, Pausenmedium (Datei und Schwarzpause), Lautheit und Hüllkurve analysieren (nur bei AUS).</figcaption>
     </figure>
     <ul>
       <li data-lang="en"><strong>Settings warning</strong> (playlist menu) — popup when aspect, PAR, or colorspace needs a projector zoom/lens change. 16:9 in 21:9 zoom is letterboxed to height. Those clips show red <strong>setting!</strong> in the right-hand column. While this is on, the same checkbox in preview forces the warning on a clip even when the format does not change.</li>
@@ -360,22 +361,28 @@
       <figcaption data-lang="de">Clipname, Live/Vorschau, Länge, Container, Codecs, Bildformat, PAR, Farbraum.</figcaption>
     </figure>
     <figure>
+      <img data-lang="en" src="images/preview-clip-settings-en.png" alt="Preview clip settings">
+      <img data-lang="de" src="images/preview-clip-settings-de.png" alt="Vorschau-Clip-Einstellungen">
+      <figcaption data-lang="en">Autoplay, Settings warning, Loop, played, and the play dimmer on one row (✔ marks like the settings menu).</figcaption>
+      <figcaption data-lang="de">Autoplay, Einstellungswarnung, Loop, Gespielt und der Dimmer in einer Zeile (✔ wie im Einstellungsmenü).</figcaption>
+    </figure>
+    <figure>
       <img data-lang="en" src="images/preview-video-en.png" alt="Preview picture and meter">
       <img data-lang="de" src="images/preview-video-de.png" alt="Vorschaubild und Meter">
-      <figcaption data-lang="en">Embedded preview player and VU meter. LUFS appears after Analyze loudness.</figcaption>
-      <figcaption data-lang="de">Eingebetteter Vorschauplayer und VU-Meter. LUFS erscheint nach Lautheit analysieren.</figcaption>
+      <figcaption data-lang="en">Embedded preview player and VU meter. LUFS appears after Analyze loudness; the envelope sits under the progress bar.</figcaption>
+      <figcaption data-lang="de">Eingebetteter Vorschauplayer und VU-Meter. LUFS erscheint nach Lautheit analysieren; die Hüllkurve sitzt unter dem Fortschrittsbalken.</figcaption>
     </figure>
     <figure>
       <img data-lang="en" src="images/preview-controls-en.png" alt="Preview transport and In/Out">
       <img data-lang="de" src="images/preview-controls-de.png" alt="Vorschau-Transport und In/Out">
-      <figcaption data-lang="en">Scrub, volume (Save volume writes it onto the clip), live bitrates, In/Out times, transport, Set In / Set Out / Clear. Keys <kbd>I</kbd> and <kbd>O</kbd> set marks at the current preview time.</figcaption>
-      <figcaption data-lang="de">Scrub, Lautstärke (Lautstärke speichern schreibt sie in den Clip), aktuelle Bitraten, In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
+      <figcaption data-lang="en">Scrub, stored audio envelope under the progress bar (white line = current time), volume (Save volume writes the fader onto the clip), live bitrates, In/Out times, transport, Set In / Set Out / Clear, audio track and subtitles. Keys <kbd>I</kbd> and <kbd>O</kbd> set marks at the current preview time.</figcaption>
+      <figcaption data-lang="de">Scrub, gespeicherte Audiohüllkurve unter dem Fortschrittsbalken (weiße Linie = aktuelle Position), Lautstärke (Lautstärke speichern schreibt den Regler in den Clip), aktuelle Bitraten, In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen, Tonspur und Untertitel. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
     </figure>
     <p data-lang="en">
-      Per clip you can set autoplay, <strong>Settings warning</strong> (only while that option is on in the playlist menu; beamer confirmation and red <strong>setting!</strong> even when the format does not change), loop (videos; ended with <strong>Resume</strong>), played, audio track, subtitle track (off unless you pick one), and the dimmer while the film plays (<strong>Dark</strong> by default, or <strong>Medium</strong> / <strong>Bright</strong>). That dimmer runs when the clip <strong>starts</strong> (fade, blinking buttons, then the picture), not at the end. After the film, house lights come up automatically; with Autoplay they stay dark until the last clip. The playlist shows <strong>MEDIUM</strong> / <strong>BRIGHT</strong> when the play dimmer is not Dark. Program playback uses the In and Out marks. The program progress bar and clocks always follow those marks, even if idle media is looping on the projector.
+      Per clip you can set autoplay, <strong>Settings warning</strong> (only while that option is on in Settings → Playlist; beamer confirmation and red <strong>setting!</strong> even when the format does not change), loop (videos; ended with <strong>Resume</strong>), played, and the dimmer while the film plays (<strong>Dark</strong> by default, or <strong>Medium</strong> / <strong>Bright</strong>). Audio track and subtitle sit beside Set In / Set Out / Clear. Preview playback continues after Out so you can place a new mark; program playback still stops at Out. That dimmer runs when the clip <strong>starts</strong> (fade, blinking buttons, then the picture), not at the end. After the film, house lights come up automatically; with Autoplay they stay dark until the last clip. The playlist shows <strong>MEDIUM</strong> / <strong>BRIGHT</strong> when the play dimmer is not Dark. The program progress bar and clocks always follow In/Out, even if idle media is looping on the projector.
     </p>
     <p data-lang="de">
-      Pro Clip lassen sich Autoplay, <strong>Einstellungswarnung</strong> (nur wenn sie im Playlist-Menü eingeschaltet ist; Bestätigung am Beamer und rotes <strong>setting!</strong>, auch ohne Formatwechsel), Loop (Videos; endet mit <strong>Weiter</strong>), Gespielt, Tonspur, Untertitel (aus, bis eine Spur gewählt wird) und der Dimmer während des Films setzen (<strong>Dunkel</strong> als Vorgabe, oder <strong>Mittel</strong> / <strong>Hell</strong>). Dieser Dimmer greift beim <strong>Start</strong> des Clips (Überblendung, blinkende Tasten, dann das Bild), nicht am Ende. Nach dem Film geht das Saallicht automatisch an; bei Autoplay bleibt es bis zum letzten Clip aus. Die Playlist zeigt <strong>MITTEL</strong> / <strong>HELL</strong>, wenn der Dimmer nicht Dunkel ist. Die Programmwiedergabe nutzt die In- und Out-Marken. Verlauf und Uhren im Programm folgen immer diesen Marken, auch wenn auf dem Beamer ein Pausenmedium läuft.
+      Pro Clip lassen sich Autoplay, <strong>Einstellungswarnung</strong> (nur wenn sie unter Einstellungen → Playlist eingeschaltet ist; Bestätigung am Beamer und rotes <strong>setting!</strong>, auch ohne Formatwechsel), Loop (Videos; endet mit <strong>Weiter</strong>), Gespielt und der Dimmer während des Films setzen (<strong>Dunkel</strong> als Vorgabe, oder <strong>Mittel</strong> / <strong>Hell</strong>). Tonspur und Untertitel stehen neben In setzen / Out setzen / Löschen. Die Vorschau spielt nach Out weiter, damit Sie eine neue Marke setzen können; das Programm stoppt weiterhin am Out. Dieser Dimmer greift beim <strong>Start</strong> des Clips (Überblendung, blinkende Tasten, dann das Bild), nicht am Ende. Nach dem Film geht das Saallicht automatisch an; bei Autoplay bleibt es bis zum letzten Clip aus. Die Playlist zeigt <strong>MITTEL</strong> / <strong>HELL</strong>, wenn der Dimmer nicht Dunkel ist. Verlauf und Uhren im Programm folgen immer In/Out, auch wenn auf dem Beamer ein Pausenmedium läuft.
     </p>
 
     <h2 id="beamer">
@@ -412,10 +419,10 @@
       Jeder Clip hat eine eigene Lautstärke. Stellen Sie sie in der Vorschau und drücken Sie <strong>Lautstärke speichern</strong>. Der Programmregler folgt dem Clip auf Sendung. Programm und Vorschau haben je ein VU-Meter (getrennte Audiofilter). Neben dem Fortschrittsbalken steht die aktuelle Videobitrate, neben dem Lautstärkeregler die aktuelle Audiobitrate. Beides sind Live-Werte der letzten Sekunden der Wiedergabe.
     </p>
     <p data-lang="en">
-      <strong>Analyze loudness</strong> (playlist menu, only in OFF) runs ffmpeg EBU R128 on every video. Integrated LUFS is stored on the entry and shown in the playlist row and above the preview meter. This can take a while.
+      <strong>Analyze loudness</strong> (playlist menu, only in OFF) runs ffmpeg EBU R128 on every video. Integrated LUFS is stored on the entry and shown in the playlist row and above the preview meter. The same pass stores a peak envelope under the preview progress bar. This can take a while.
     </p>
     <p data-lang="de">
-      <strong>Lautheit analysieren</strong> (Playlist-Menü, nur bei AUS) misst mit ffmpeg EBU R128 jedes Video. Die integrierte LUFS-Zahl steht in der Playlist-Zeile und über dem Vorschaumeter. Das kann dauern.
+      <strong>Lautheit analysieren</strong> (Playlist-Menü, nur bei AUS) misst mit ffmpeg EBU R128 jedes Video. Die integrierte LUFS-Zahl steht in der Playlist-Zeile und über dem Vorschaumeter. Derselbe Lauf speichert eine Peak-Hüllkurve unter dem Vorschaubalken. Das kann dauern.
     </p>
 
     <h2 id="stills">

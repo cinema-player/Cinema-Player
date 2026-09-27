@@ -167,7 +167,8 @@ STRINGS = {
         "analyze_loudness": "Analyze loudness",
         "analyze_loudness_title": "Analyze loudness",
         "analyze_loudness_message": (
-            "ffmpeg will measure the loudness of every video in the playlist.\n"
+            "ffmpeg will measure the loudness of every video in the playlist "
+            "and store an audio envelope for the preview.\n"
             "This can take a while. Continue?"
         ),
         "analyze_loudness_busy": "Stop the program before analyzing loudness.",
@@ -429,7 +430,8 @@ STRINGS = {
         "analyze_loudness": "Lautheit analysieren",
         "analyze_loudness_title": "Lautheit analysieren",
         "analyze_loudness_message": (
-            "ffmpeg misst die Lautheit aller Videos in der Playlist.\n"
+            "ffmpeg misst die Lautheit aller Videos in der Playlist "
+            "und speichert eine Audiohüllkurve für die Vorschau.\n"
             "Das kann eine Weile dauern. Fortfahren?"
         ),
         "analyze_loudness_busy": "Das Programm muss gestoppt sein, bevor die Lautheit analysiert wird.",

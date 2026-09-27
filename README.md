@@ -18,16 +18,16 @@ The header shows the Cinema Player logo, the version, and whether the session is
 
 - A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, and the playlist position.
 - The program block: progress bar with live video bitrate, volume with live audio bitrate, In/Out times, transport buttons, the four clocks, and a VU meter.
-- Playlist tools (name, import/new/load/save, global settings).
+- Playlist tools (name, import/new/load/save, house lights).
 - The playlist itself.
 
 **Right**
 
 - Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing).
 - Preview header with the Live/Preview badge and clip metadata.
-- Clip settings (autoplay, settings warning, loop, audio, subtitles, or still display time).
+- Clip settings (autoplay, settings warning, loop, dimmer, or still display time).
 - Preview video with a VU meter and optional integrated LUFS readout.
-- Preview transport, volume, live bitrates, and In/Out marks.
+- Preview transport, volume, live bitrates, In/Out marks, audio track and subtitles.
 
 In **OFF**, the status title reads as program not started and the program clocks show `--:--`. Transport buttons that cannot be used in the current state are shown disabled.
 
@@ -70,7 +70,7 @@ The playlist menu offers:
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
 - **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `idle` at startup.
-- Analyze loudness (ffmpeg EBU R128; only while **OFF**)
+- Analyze loudness (ffmpeg EBU R128 and audio envelope; only while **OFF**)
 
 ### Global Settings
 
@@ -201,7 +201,7 @@ Different options can be selected for each entry in the playlist.
 - A checkbox overrides the automatic stop behavior and automatically starts playback of the next entry.
 - **Loop** repeats a video (In/Out if set) until **Resume** ends it.
 - **Dimmer** (`Dark`, `Medium`, `Bright`) is applied when the clip starts, not at the end. House lights come up automatically after the film unless Autoplay continues.
-- Volume is adjusted in preview and stored on the entry with **Save volume**.
+- Volume is adjusted in preview and stored on the entry with **Save volume**. After **Analyze loudness**, a peak envelope for the clip is stored in the playlist and drawn under the preview progress bar, with a white line at the current time.
 
 ### Images
 
@@ -219,13 +219,13 @@ The preview displays a video in a window within the control panel. The source ca
 
 When a playlist entry is selected, the playback position can be selected using a progress bar. A start point and an end point can be defined (buttons or **I** / **O**) to determine where the video starts and ends when it goes on air. This option is disabled while the video is on air. Preview In/Out/Clear sit beside the preview transport.
 
-The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row. During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview).
+The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row, and a peak envelope is drawn under the preview progress bar (white line = current time). During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview).
 
 # Technique
 
 ## Architecture
 
-The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used only for optional loudness analysis.
+The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used only for optional loudness and envelope analysis.
 
 For good performance, the graphics card must support hardware decoding of both the H.264 and H.265 codecs.
 

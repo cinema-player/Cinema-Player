@@ -51,7 +51,7 @@ from cinema_player import (
     mark_missing_media,
     media_file_available,
     parse_bitrate_bps,
-    probe_loudness,
+    probe_audio,
     probe_media,
     refresh_entry_aspect,
     same_aspect_ratio,
@@ -389,6 +389,76 @@ class VolumeBar(tk.Canvas):
             return
         self.dragging = False
         self._set_at(event, dragging=False)
+
+
+class EnvelopeCanvas(tk.Canvas):
+    """Stored peak envelope under the preview progress bar, with a playhead."""
+
+    def __init__(self, master, **kwargs):
+        kwargs.setdefault("height", 36)
+        kwargs.setdefault("highlightthickness", 0)
+        kwargs.setdefault("bd", 0)
+        kwargs.setdefault("bg", COLOR_PANEL)
+        super().__init__(master, **kwargs)
+        self.peaks = []
+        self.duration = 0.0
+        self.position = 0.0
+        self.bind("<Configure>", lambda e: self.redraw())
+
+    def set_envelope(self, peaks):
+        self.peaks = list(peaks or [])
+        self.redraw()
+
+    def set_playhead(self, duration, position):
+        try:
+            self.duration = max(0.0, float(duration or 0.0))
+        except (TypeError, ValueError):
+            self.duration = 0.0
+        try:
+            self.position = max(0.0, float(position or 0.0))
+        except (TypeError, ValueError):
+            self.position = 0.0
+        if not math.isfinite(self.duration):
+            self.duration = 0.0
+        if not math.isfinite(self.position):
+            self.position = 0.0
+        self.redraw()
+
+    def _track_box(self):
+        left, right = 8, 8
+        top, bottom = 2, 2
+        width = max(1, self.winfo_width() - left - right)
+        height = max(12, self.winfo_height() - top - bottom)
+        return left, top, left + width, top + height
+
+    def redraw(self):
+        self.delete("all")
+        x0, y0, x1, y1 = self._track_box()
+        self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
+        mid = (y0 + y1) / 2.0
+        self.create_line(x0 + 1, mid, x1 - 1, mid, fill=TRACK_EDGE)
+        if len(self.peaks) >= 2:
+            amp = max(1.0, (y1 - y0) / 2.0 - 1.5)
+            width = x1 - x0
+            count = len(self.peaks)
+            top = []
+            bottom = []
+            for index, peak in enumerate(self.peaks):
+                try:
+                    level = max(0.0, min(1.0, float(peak)))
+                except (TypeError, ValueError):
+                    level = 0.0
+                x = x0 + (index + 0.5) * width / count
+                height = level * amp
+                top.append((x, mid - height))
+                bottom.append((x, mid + height))
+            points = [coord for pair in top for coord in pair]
+            points.extend(coord for pair in reversed(bottom) for coord in pair)
+            self.create_polygon(points, fill=COLOR_VOLUME, outline="", smooth=False)
+        if self.duration > 0:
+            ratio = max(0.0, min(1.0, self.position / self.duration))
+            px = x0 + ratio * (x1 - x0)
+            self.create_line(px, y0, px, y1, fill=COLOR_WHITE, width=2)
 
 
 def format_delay_ms(ms):
@@ -859,6 +929,71 @@ class DropdownMenu(tk.Frame):
         self.lift()
 
 
+class CheckLabel(tk.Label):
+    """Clickable ✔ toggle matching the in-window burger menu, without native Checkbutton."""
+
+    def __init__(self, master, text, variable, command=None, bg=None, **kwargs):
+        bg = bg or COLOR_PANEL
+        kwargs.setdefault("font", FONT_UI)
+        kwargs.setdefault("bg", bg)
+        kwargs.setdefault("fg", COLOR_TEXT)
+        kwargs.setdefault("anchor", "w")
+        kwargs.setdefault("cursor", "hand2")
+        kwargs.setdefault("padx", 8)
+        kwargs.setdefault("pady", 4)
+        super().__init__(master, **kwargs)
+        self.variable = variable
+        self.command = command
+        self.label_text = text
+        self._idle_bg = bg
+        self._hover = False
+        self._trace = variable.trace_add("write", lambda *_args: self._paint())
+        self.bind("<Destroy>", self._on_destroy)
+        self.bind("<Button-1>", self._toggle)
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self._paint()
+
+    def _on_destroy(self, _event=None):
+        token = getattr(self, "_trace", None)
+        if token:
+            try:
+                self.variable.trace_remove("write", token)
+            except (tk.TclError, ValueError):
+                pass
+            self._trace = None
+
+    def _toggle(self, _event=None):
+        self.variable.set(not bool(self.variable.get()))
+        if self.command:
+            self.command()
+
+    def _on_enter(self, _event=None):
+        self._hover = True
+        self._paint()
+
+    def _on_leave(self, _event=None):
+        self._hover = False
+        self._paint()
+
+    def _paint(self):
+        checked = bool(self.variable.get())
+        mark = "✔  " if checked else "    "
+        if self._hover:
+            self.config(
+                text=f"{mark}{self.label_text}",
+                bg=COLOR_BUTTON_ACTIVE,
+                fg=COLOR_WHITE,
+            )
+            return
+        fg = COLOR_VOLUME if THEME == "dark" else COLOR_PROGRAM
+        self.config(
+            text=f"{mark}{self.label_text}",
+            bg=self._idle_bg,
+            fg=fg if checked else COLOR_TEXT,
+        )
+
+
 def format_seconds(value):
     seconds = max(0.0, float(value or 0))
     return str(int(seconds)) if seconds == int(seconds) else f"{seconds:g}"
@@ -1051,6 +1186,7 @@ class VideoPlayerGUI:
         self.preview_position = 0.0
         self.preview_paused = True
         self.preview_stopped = False
+        self._preview_full_file = False
         self.preview_levels = []
         self.preview_levels_at = 0.0
         self._meter_shown = [METER_FLOOR_DB, METER_FLOOR_DB]
@@ -2078,6 +2214,18 @@ class VideoPlayerGUI:
         self.root.bind_all("<Escape>", self._on_escape_while_menu, add="+")
         self._menu_binds_armed = True
 
+    def _post_dropdown(self, menu, x_root, y_root):
+        """Place an in-window dropdown at a screen position (row context menu)."""
+        self._close_menus()
+        self._posted_menu = menu
+        self._menu_ignore_press = True
+        self.root.update_idletasks()
+        x = int(x_root) - self.root.winfo_rootx()
+        y = int(y_root) - self.root.winfo_rooty()
+        menu.place(x=x, y=y, anchor="nw")
+        menu.lift()
+        self.root.after_idle(self._allow_menu_dismiss)
+
     def _popup_menu(self, menu, x, y):
         """Post a context menu that closes on an outside click."""
         self._close_menus()
@@ -2490,36 +2638,29 @@ class VideoPlayerGUI:
         settings.columnconfigure(0, weight=1)
         footer = tk.Frame(settings, bg=COLOR_PANEL)
         footer.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 6))
-        self.autoplay_check = self._checkbutton(
+        self.autoplay_check = CheckLabel(
             footer, t("autoplay"), self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
         )
         self.autoplay_check.pack(side="left")
-        self.clip_settings_warning_check = self._checkbutton(
-            footer, t("clip_settings_warning"), self.clip_settings_warning_var, self.apply_entry_settings, COLOR_PANEL,
+        self.clip_settings_warning_check = CheckLabel(
+            footer, t("clip_settings_warning"), self.clip_settings_warning_var,
+            self.apply_entry_settings, COLOR_PANEL,
         )
         self._sync_clip_settings_warning_option()
 
         clip_settings = tk.Frame(footer, bg=COLOR_PANEL)
         clip_settings.pack(side="left")
         self.preview_clip_settings = clip_settings
-        self._checkbutton(
+        CheckLabel(
             clip_settings, t("loop"), self.loop_var, self.apply_entry_settings, COLOR_PANEL,
-        ).pack(side="left", padx=(8, 0))
-        self._checkbutton(
+        ).pack(side="left")
+        CheckLabel(
             clip_settings, t("played"), self.played_var, self.apply_entry_settings, COLOR_PANEL,
-        ).pack(side="left", padx=(8, 0))
-        tk.Label(clip_settings, text=t("audio_track"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
-        self.audio_combo = ttk.Combobox(clip_settings, textvariable=self.audio_var, width=16, state="readonly")
-        self.audio_combo.pack(side="left")
-        self.audio_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
-        tk.Label(clip_settings, text=t("subtitle"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
-        self.subtitle_combo = ttk.Combobox(clip_settings, textvariable=self.subtitle_var, width=12, state="readonly")
-        self.subtitle_combo.pack(side="left")
-        self.subtitle_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
+        ).pack(side="left")
 
         image_settings = tk.Frame(footer, bg=COLOR_PANEL)
         self.preview_image_settings = image_settings
-        tk.Label(image_settings, text=t("display_time"), bg=COLOR_PANEL, font=FONT_SMALL).pack(
+        tk.Label(image_settings, text=t("display_time"), bg=COLOR_PANEL, font=FONT_UI).pack(
             side="left", padx=(12, 4)
         )
         entry_box = tk.Entry(image_settings, textvariable=self.display_time, width=5, font=FONT_UI)
@@ -2527,17 +2668,18 @@ class VideoPlayerGUI:
         entry_box.bind("<Return>", lambda e: self.apply_entry_settings())
         entry_box.bind("<FocusOut>", lambda e: self.apply_entry_settings())
         tk.Label(
-            image_settings, text=t("display_time_hint"), bg=COLOR_PANEL, font=FONT_SMALL,
+            image_settings, text=t("display_time_hint"), bg=COLOR_PANEL, font=FONT_UI,
             fg=COLOR_MUTED,
         ).pack(side="left", padx=(4, 0))
 
-        light_row = tk.Frame(settings, bg=COLOR_PANEL)
-        light_row.grid(row=1, column=0, sticky="w", padx=8, pady=(0, 6))
-        tk.Label(light_row, text=t("light_play"), bg=COLOR_PANEL, font=FONT_SMALL).pack(
-            side="left", padx=(0, 4),
+        dimmer = tk.Frame(footer, bg=COLOR_PANEL)
+        self.preview_dimmer = dimmer
+        dimmer.pack(side="left")
+        tk.Label(dimmer, text=t("light_play"), bg=COLOR_PANEL, font=FONT_UI).pack(
+            side="left", padx=(16, 4),
         )
         self.light_start_combo = ttk.Combobox(
-            light_row, textvariable=self.light_start_var, width=10, state="readonly",
+            dimmer, textvariable=self.light_start_var, width=10, state="readonly",
         )
         self.light_start_combo.pack(side="left")
         self.light_start_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
@@ -2588,16 +2730,19 @@ class VideoPlayerGUI:
         self.preview_video_bitrate = self._bitrate_readout(controls, "video_bitrate")
         self.preview_video_bitrate.grid(row=0, column=1, sticky="e", padx=(8, 8), pady=(6, 0))
 
+        self.preview_envelope = EnvelopeCanvas(controls, bg=COLOR_PANEL)
+        self.preview_envelope.grid(row=1, column=0, sticky="ew", padx=(8, 0), pady=(0, 0))
+
         self.preview_volume_row = self._build_volume_row(
             controls, self.preview_volume, self._on_preview_volume, COLOR_PANEL,
             save=True,
         )
-        self.preview_volume_row.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
+        self.preview_volume_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.preview_audio_bitrate = self._bitrate_readout(controls, "audio_bitrate")
-        self.preview_audio_bitrate.grid(row=1, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
+        self.preview_audio_bitrate.grid(row=2, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
 
         marks = tk.Frame(controls, bg=COLOR_PANEL)
-        marks.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 4))
+        marks.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 4))
         self.preview_marks = marks
         for col in range(3):
             marks.columnconfigure(col, weight=1)
@@ -2609,7 +2754,7 @@ class VideoPlayerGUI:
         self.preview_out.grid(row=0, column=2, sticky="e")
 
         buttons = tk.Frame(controls, bg=COLOR_PANEL)
-        buttons.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
+        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
 
         transport = tk.Frame(buttons, bg=COLOR_PANEL)
         self.preview_transport = transport
@@ -2632,6 +2777,18 @@ class VideoPlayerGUI:
             "set_out": self._icon_button(io, "set_out", self.set_out_point, t("set_out")),
             "clear_in_out": self._icon_button(io, "clear_in_out", self.clear_in_out, t("clear_in_out")),
         }
+
+        tracks = tk.Frame(buttons, bg=COLOR_PANEL)
+        self.preview_track_settings = tracks
+        tracks.pack(side="left", padx=(24, 0))
+        tk.Label(tracks, text=t("audio_track"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(0, 4))
+        self.audio_combo = ttk.Combobox(tracks, textvariable=self.audio_var, width=16, state="readonly")
+        self.audio_combo.pack(side="left")
+        self.audio_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
+        tk.Label(tracks, text=t("subtitle"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(12, 4))
+        self.subtitle_combo = ttk.Combobox(tracks, textvariable=self.subtitle_var, width=12, state="readonly")
+        self.subtitle_combo.pack(side="left")
+        self.subtitle_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
 
     def state_color(self):
         if self.calibration_mode:
@@ -2933,11 +3090,11 @@ class VideoPlayerGUI:
         if image:
             self.preview_controls.grid_remove()
             self.preview_clip_settings.pack_forget()
-            self.preview_image_settings.pack(side="left")
+            self.preview_image_settings.pack(side="left", before=self.preview_dimmer)
         else:
             self.preview_controls.grid()
             self.preview_image_settings.pack_forget()
-            self.preview_clip_settings.pack(side="left")
+            self.preview_clip_settings.pack(side="left", before=self.preview_dimmer)
 
     def repaint_playlist(self):
         """Update row colours and marks in place, keeping the widgets alive."""
@@ -2958,6 +3115,16 @@ class VideoPlayerGUI:
             value = f"{value}\nLUFS"
         self.preview_lufs.config(text=value)
 
+    def _set_preview_envelope(self, entry):
+        canvas = getattr(self, "preview_envelope", None)
+        if canvas is None:
+            return
+        peaks = None
+        if entry and not entry.missing and not entry.is_image:
+            peaks = entry.audio_envelope
+        canvas.set_envelope(peaks)
+        canvas.set_playhead(self._clip_duration(), self.preview_position)
+
     def refresh_preview_meta(self):
         entry = self.selected_entry()
         live = self.preview_live or self.preview_index is None
@@ -2973,6 +3140,7 @@ class VideoPlayerGUI:
         self.apply_preview_layout(entry)
         self._load_preview_volume(entry)
         self._set_preview_lufs(entry)
+        self._set_preview_envelope(entry)
         self.refresh_transport()
         if not entry:
             self.preview_meta.config(text=t("length_empty"))
@@ -3458,7 +3626,7 @@ class VideoPlayerGUI:
         self.on_row_click(index)
         playing = self.program_state == "PLAYING"
         missing = bool(self.playlist[index].missing)
-        menu = self._menu(self.root)
+        menu = DropdownMenu(self.root, self)
         menu.add_command(
             label=t("set_program"), command=lambda: self.set_program_point(index),
             state="disabled" if playing or missing else "normal",
@@ -3478,7 +3646,7 @@ class VideoPlayerGUI:
             label=t("delete_entry"), command=lambda: self.delete_entry(index),
             state="disabled" if playing and index == self.program_index else "normal",
         )
-        self._popup_menu(menu, event.x_root, event.y_root)
+        self._post_dropdown(menu, event.x_root, event.y_root)
         self.row_menu = menu
 
     def _move_program_cursor(self, index):
@@ -6019,7 +6187,7 @@ class VideoPlayerGUI:
         self.refresh_all()
 
     def analyze_playlist_loudness(self):
-        """Measure integrated LUFS for every playable video while the program is stopped."""
+        """Measure LUFS and a peak envelope for every playable video while the program is stopped."""
         if self.program_state != "OFF":
             messagebox.showinfo(t("analyze_loudness_title"), t("analyze_loudness_busy"))
             return
@@ -6042,9 +6210,12 @@ class VideoPlayerGUI:
         try:
             for entry in targets:
                 try:
-                    entry.loudness_lufs = probe_loudness(entry.path, ffmpeg_path)
+                    lufs, envelope = probe_audio(entry.path, ffmpeg_path)
+                    entry.loudness_lufs = lufs
+                    entry.audio_envelope = envelope
                 except OSError:
                     entry.loudness_lufs = None
+                    entry.audio_envelope = None
                 self.repaint_playlist()
                 self.refresh_preview_meta()
                 self.root.update()
@@ -6234,10 +6405,13 @@ class VideoPlayerGUI:
         if start is None:
             start = entry.in_point
         if not follow_live and not play and self.preview_mpv.has_file(entry.path):
+            self._release_preview_range()
             return
         self.preview_stopped = False
         self.preview_paused = not play
         end = entry.out_point if follow_live and not (entry.loop and not entry.is_image) else None
+        if end is not None:
+            self._preview_full_file = False
         self.preview_mpv.load_file(
             entry.path,
             start=start,
@@ -6420,6 +6594,8 @@ class VideoPlayerGUI:
         if not controller or not controller.process:
             return
         looping = bool(entry and entry.loop and not entry.is_image)
+        if controller is self.preview_mpv:
+            self._preview_full_file = False
         if looping:
             start = 0.0 if entry.in_point is None else float(entry.in_point)
             controller.set_ab_loop(start, entry.out_point)
@@ -6432,6 +6608,19 @@ class VideoPlayerGUI:
             controller.command("set_property", "end", float(entry.out_point))
         else:
             controller.command("set_property", "end", "no")
+
+    def _release_preview_range(self):
+        """Independent preview plays the whole file, including after Out."""
+        mpv = self.preview_mpv
+        if not mpv or not mpv.process:
+            return
+        if self._preview_full_file:
+            return
+        self._preview_full_file = True
+        mpv.pending_end = None
+        mpv.set_ab_loop(None, None)
+        mpv.set_loop_file(False)
+        mpv.command("set_property", "end", "no")
 
     def start_still_timer(self, entry):
         """A still runs on a timer; without a display time it waits for Resume."""
@@ -6589,6 +6778,7 @@ class VideoPlayerGUI:
         self.live_parked = None
         if entry in self.playlist:
             self.preview_index = self.playlist.index(entry)
+        self._release_preview_range()
         self.refresh_preview_meta()
         self.repaint_playlist()
 
@@ -6600,6 +6790,7 @@ class VideoPlayerGUI:
         if not self.preview_mpv.process:
             self.start_preview_player()
         if self.preview_mpv.has_file(entry.path):
+            self._release_preview_range()
             self.preview_mpv.set_pause(False)
         else:
             start = self.preview_position
@@ -6628,6 +6819,7 @@ class VideoPlayerGUI:
 
     def preview_seek(self, seconds):
         self._detach_live_preview()
+        self._release_preview_range()
         self.preview_mpv.seek(seconds)
         self.refresh_transport()
 
@@ -6683,12 +6875,15 @@ class VideoPlayerGUI:
 
     def _update_preview_bar(self):
         entry = self.selected_entry()
+        duration = self._clip_duration()
         self.preview_progress.set_state(
-            duration=self._clip_duration(),
+            duration=duration,
             position=self.preview_position,
             in_point=entry.in_point if entry else None,
             out_point=entry.out_point if entry else None,
         )
+        if getattr(self, "preview_envelope", None):
+            self.preview_envelope.set_playhead(duration, self.preview_position)
 
     def _update_main_bar(self):
         if self.program_state == "OFF":
@@ -6766,6 +6961,10 @@ class VideoPlayerGUI:
     def _on_preview_seek(self, position, dragging=False):
         self.preview_position = position
         self.preview_time.config(text=t("time_value", value=format_clock(position)))
+        if getattr(self, "preview_envelope", None):
+            self.preview_envelope.set_playhead(self._clip_duration(), position)
+        if not self.preview_live:
+            self._release_preview_range()
         self.preview_mpv.set_position(position)
 
     def main_mpv_event(self, mpv, message):
@@ -6862,7 +7061,7 @@ class VideoPlayerGUI:
                 if self.preview_live and self.program_state == "PLAYING":
                     self._apply_program_loop(entry, mpv)
                 else:
-                    self._apply_program_loop(None, mpv)
+                    self._release_preview_range()
             return
         if event != "property-change":
             return
