@@ -15,9 +15,15 @@
       <span data-lang="de">Bedienungsanleitung</span>
       <span class="ver">1.3.0</span>
     </div>
-    <div class="lang-switch">
-      <button type="button" data-set-lang="en">English</button>
-      <button type="button" data-set-lang="de">Deutsch</button>
+    <div class="page-tools">
+      <div class="lang-switch">
+        <button type="button" data-set-lang="en">English</button>
+        <button type="button" data-set-lang="de">Deutsch</button>
+      </div>
+      <div class="type-size" role="group">
+        <button type="button" class="type-smaller" data-type-delta="-1">A−</button>
+        <button type="button" class="type-larger" data-type-delta="1">A+</button>
+      </div>
     </div>
   </header>
 
@@ -574,9 +580,15 @@
     </h3>
     <figure class="snip">
       <img src="images/guide/menu-system.png" alt="System settings submenu">
-      <figcaption data-lang="en">Beamer output, design, language, remote control, light control.</figcaption>
-      <figcaption data-lang="de">Beamerausgang, Design, Sprache, Fernsteuerung, Lichtsteuerung.</figcaption>
+      <figcaption data-lang="en">Beamer output, design, language, text size, remote control, light control.</figcaption>
+      <figcaption data-lang="de">Beamerausgang, Design, Sprache, Schriftgröße, Fernsteuerung, Lichtsteuerung.</figcaption>
     </figure>
+    <p data-lang="en">
+      <strong>Text size</strong> (under Language) steps the control-window type from A−− to A++. The choice is saved and applied again at the next start.
+    </p>
+    <p data-lang="de">
+      <strong>Schriftgröße</strong> (unter Sprache) stellt die Schrift im Kontrollfenster von A−− bis A++. Die Wahl wird gespeichert und beim nächsten Start wieder angewendet.
+    </p>
 
     <h3>
       <span data-lang="en">Calibration</span>
@@ -644,25 +656,61 @@
 
   <script>
     (function () {
-      var key = "cinema-player-manual-lang";
-      function apply(code) {
+      var langKey = "cinema-player-manual-lang";
+      var sizeKey = "cinema-player-manual-size";
+      var sizes = [15, 17, 19, 21, 24];
+      var sizeIndex = 1;
+      var smaller = document.querySelector(".type-smaller");
+      var larger = document.querySelector(".type-larger");
+
+      function applyLang(code) {
         var lang = code === "de" ? "de" : "en";
         document.documentElement.lang = lang;
-        try { localStorage.setItem(key, lang); } catch (e) {}
+        try { localStorage.setItem(langKey, lang); } catch (e) {}
         document.title = lang === "de"
           ? "Cinema Player — Bedienungsanleitung"
           : "Cinema Player — Operator manual";
+        if (smaller) {
+          smaller.setAttribute("aria-label", lang === "de" ? "Kleinere Schrift" : "Smaller text");
+        }
+        if (larger) {
+          larger.setAttribute("aria-label", lang === "de" ? "Größere Schrift" : "Larger text");
+        }
+        var group = document.querySelector(".type-size");
+        if (group) {
+          group.setAttribute("aria-label", lang === "de" ? "Schriftgröße" : "Text size");
+        }
       }
+
+      function applySize(index) {
+        sizeIndex = Math.max(0, Math.min(sizes.length - 1, index));
+        document.documentElement.style.setProperty("--manual-size", sizes[sizeIndex] + "px");
+        try { localStorage.setItem(sizeKey, String(sizes[sizeIndex])); } catch (e) {}
+        if (smaller) smaller.disabled = sizeIndex === 0;
+        if (larger) larger.disabled = sizeIndex === sizes.length - 1;
+      }
+
       document.querySelectorAll("[data-set-lang]").forEach(function (button) {
-        button.addEventListener("click", function () { apply(button.getAttribute("data-set-lang")); });
+        button.addEventListener("click", function () { applyLang(button.getAttribute("data-set-lang")); });
       });
-      var saved = null;
-      try { saved = localStorage.getItem(key); } catch (e) {}
+      document.querySelectorAll("[data-type-delta]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          applySize(sizeIndex + Number(button.getAttribute("data-type-delta")));
+        });
+      });
+
+      var savedLang = null;
+      try { savedLang = localStorage.getItem(langKey); } catch (e) {}
       var query = null;
       try { query = new URLSearchParams(location.search).get("lang"); } catch (e) {}
-      if (query === "de" || query === "en") apply(query);
-      else if (saved === "de" || saved === "en") apply(saved);
-      else apply((navigator.language || "").toLowerCase().indexOf("de") === 0 ? "de" : "en");
+      if (query === "de" || query === "en") applyLang(query);
+      else if (savedLang === "de" || savedLang === "en") applyLang(savedLang);
+      else applyLang((navigator.language || "").toLowerCase().indexOf("de") === 0 ? "de" : "en");
+
+      var savedSize = null;
+      try { savedSize = parseInt(localStorage.getItem(sizeKey), 10); } catch (e) {}
+      var start = sizes.indexOf(savedSize);
+      applySize(start >= 0 ? start : 1);
     })();
   </script>
 </body>

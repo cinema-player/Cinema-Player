@@ -52,6 +52,17 @@ VIDEO_EXTS = {
 }
 
 FONT_FAMILY = "Inter"
+TEXT_SIZE_DELTAS = (-2, -1, 0, 1, 2)
+TEXT_SIZE_LABELS = {
+    -2: "A−−",
+    -1: "A−",
+    0: "A",
+    1: "A+",
+    2: "A++",
+}
+DEFAULT_TEXT_SIZE = 0
+_TEXT_SIZE = DEFAULT_TEXT_SIZE
+
 FONT_TITLE = (FONT_FAMILY, 18, "bold")
 FONT_STATUS = (FONT_FAMILY, 11, "bold")
 FONT_UI = (FONT_FAMILY, 10)
@@ -59,6 +70,43 @@ FONT_UI_BOLD = (FONT_FAMILY, 10, "bold")
 FONT_SMALL = (FONT_FAMILY, 9)
 FONT_ROW = (FONT_FAMILY, 9)
 FONT_ROW_BOLD = (FONT_FAMILY, 10, "bold")
+
+
+def clamp_text_size(value):
+    try:
+        delta = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TEXT_SIZE
+    if delta in TEXT_SIZE_DELTAS:
+        return delta
+    return min(TEXT_SIZE_DELTAS, key=lambda item: abs(item - delta))
+
+
+def _scaled_font(base, delta, weight=""):
+    size = max(6, int(base) + int(delta))
+    if weight:
+        return (FONT_FAMILY, size, weight)
+    return (FONT_FAMILY, size)
+
+
+def apply_text_size(value=DEFAULT_TEXT_SIZE):
+    """Shift UI fonts by -2…+2 points around the default sizes."""
+    global _TEXT_SIZE, FONT_TITLE, FONT_STATUS, FONT_UI, FONT_UI_BOLD
+    global FONT_SMALL, FONT_ROW, FONT_ROW_BOLD
+    _TEXT_SIZE = clamp_text_size(value)
+    delta = _TEXT_SIZE
+    FONT_TITLE = _scaled_font(18, delta, "bold")
+    FONT_STATUS = _scaled_font(11, delta, "bold")
+    FONT_UI = _scaled_font(10, delta)
+    FONT_UI_BOLD = _scaled_font(10, delta, "bold")
+    FONT_SMALL = _scaled_font(9, delta)
+    FONT_ROW = _scaled_font(9, delta)
+    FONT_ROW_BOLD = _scaled_font(10, delta, "bold")
+    return _TEXT_SIZE
+
+
+def current_text_size():
+    return _TEXT_SIZE
 
 
 def session_is_wayland():

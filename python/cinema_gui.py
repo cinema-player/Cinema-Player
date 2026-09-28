@@ -36,8 +36,12 @@ from cinema_player import (
     VIDEO_EXTS,
     VIDEO_OUTPUT,
     VideoOutputManager,
+    TEXT_SIZE_DELTAS,
+    TEXT_SIZE_LABELS,
     apply_playlist_warnings,
+    apply_text_size,
     clip_needs_settings_warning,
+    current_text_size,
     clamp_volume,
     find_mpv,
     find_ffmpeg,
@@ -66,6 +70,32 @@ FONT_LOGO_LIGHT = (FONT_FAMILY, 17)
 FONT_BEAMER_PICK = (FONT_FAMILY, 13, "bold")
 FONT_TOOLTIP = (FONT_FAMILY, 11)
 FONT_EDID = ("DejaVu Sans Mono", 10)
+FONT_PLACEHOLDER = (FONT_FAMILY, 16)
+
+
+def sync_fonts():
+    """Copy scaled fonts from cinema_player into this module's aliases."""
+    global FONT_FAMILY, FONT_ROW, FONT_ROW_BOLD, FONT_SMALL, FONT_STATUS
+    global FONT_UI, FONT_UI_BOLD, FONT_LOGO, FONT_LOGO_LIGHT
+    global FONT_BEAMER_PICK, FONT_TOOLTIP, FONT_EDID, FONT_PLACEHOLDER
+    import cinema_player as player
+
+    FONT_FAMILY = player.FONT_FAMILY
+    FONT_ROW = player.FONT_ROW
+    FONT_ROW_BOLD = player.FONT_ROW_BOLD
+    FONT_SMALL = player.FONT_SMALL
+    FONT_STATUS = player.FONT_STATUS
+    FONT_UI = player.FONT_UI
+    FONT_UI_BOLD = player.FONT_UI_BOLD
+    delta = player.current_text_size()
+    FONT_LOGO = (FONT_FAMILY, max(6, 17 + delta), "bold")
+    FONT_LOGO_LIGHT = (FONT_FAMILY, max(6, 17 + delta))
+    FONT_BEAMER_PICK = (FONT_FAMILY, max(6, 13 + delta), "bold")
+    FONT_TOOLTIP = (FONT_FAMILY, max(6, 11 + delta))
+    FONT_EDID = ("DejaVu Sans Mono", max(6, 10 + delta))
+    FONT_PLACEHOLDER = (FONT_FAMILY, max(6, 16 + delta))
+
+
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
 LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.png")
 BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
@@ -1148,6 +1178,8 @@ class VideoPlayerGUI:
 
         self.settings = load_settings()
         self.language = set_language(self.settings.get("language", "en"))
+        self.text_size = apply_text_size(self.settings.get("text_size", 0))
+        sync_fonts()
         self.theme = apply_theme(self.settings.get("theme", DEFAULT_THEME))
         self.root.configure(bg=COLOR_BG)
         self.apply_widget_defaults()
@@ -1620,6 +1652,19 @@ class VideoPlayerGUI:
             pass
         self.rebuild_gui()
 
+    def change_text_size(self, delta):
+        size = apply_text_size(delta)
+        if size == self.text_size:
+            return
+        self.text_size = size
+        sync_fonts()
+        self.settings["text_size"] = size
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self.rebuild_gui()
+
     def rebuild_gui(self):
         """Rebuild the window for the current design and re-embed the preview player."""
         self.preview_mpv.quit()
@@ -1640,6 +1685,7 @@ class VideoPlayerGUI:
         self._volume_preview_key = None
         self._volume_program_key = None
         self.root.configure(bg=COLOR_BG)
+        sync_fonts()
         self.apply_widget_defaults()
         self.copy_imported_media_label.set(self._copy_path_label_text())
         self.create_gui()
@@ -2378,6 +2424,16 @@ class VideoPlayerGUI:
                 foreground=self._menu_check_fg() if code == self.language else COLOR_TEXT,
             )
         system.add_cascade(label=t("language"), menu=languages)
+        sizes = self._menu(system)
+        current = current_text_size()
+        for delta in TEXT_SIZE_DELTAS:
+            mark = "✔  " if delta == current else "    "
+            sizes.add_command(
+                label=f"{mark}{TEXT_SIZE_LABELS[delta]}",
+                command=lambda chosen=delta: self.change_text_size(chosen),
+                foreground=self._menu_check_fg() if delta == current else COLOR_TEXT,
+            )
+        system.add_cascade(label=t("text_size"), menu=sizes)
         system.add_command(
             label=t("remote_control"),
             command=self.show_remote_control,
@@ -2714,7 +2770,7 @@ class VideoPlayerGUI:
         self.preview_meter.grid(row=1, column=0, sticky="ns")
         self.preview_placeholder = tk.Label(
             self.preview_video, text=t("video_preview"), bg=COLOR_VIDEO,
-            fg=COLOR_MUTED, font=(FONT_FAMILY, 16),
+            fg=COLOR_MUTED, font=FONT_PLACEHOLDER,
         )
         self.preview_placeholder.place(relx=0.5, rely=0.5, anchor="center")
 

@@ -45,6 +45,7 @@ The burger menu in the header covers booth setup:
   - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
   - Light or dark design
   - Language (English / Deutsch)
+  - Text size (A−− … A++, remembered)
   - Remote control (LAN HTTP API and smartphone page; port and required token)
   - Light control (Shelly switches and dimmers on the LAN; house-light presets Bright / Medium / Dark)
 - **Calibration** (in **OFF** and while already calibrating)
