@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cinema Player — Operator manual</title>
+  <title>Cinema Player — Bedienungsanleitung</title>
   <link rel="icon" href="images/logo-icon.png">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -13,7 +13,7 @@
     <div class="title">
       <span data-lang="en">Operator manual</span>
       <span data-lang="de">Bedienungsanleitung</span>
-      <span class="ver">1.0.3</span>
+      <span class="ver">1.3.0</span>
     </div>
     <div class="lang-switch">
       <button type="button" data-set-lang="en">English</button>
@@ -26,432 +26,620 @@
       <span data-lang="en">Cinema Player operator manual</span>
       <span data-lang="de">Cinema Player Bedienungsanleitung</span>
     </h1>
-    <p class="lead" data-lang="en">
-      Cinema Player plays a cinema program on a dedicated projector output while the projectionist works on a separate control screen. The big screen shows only the picture — never menus, clocks, or subtitles unless you choose a subtitle track.
-    </p>
-    <p class="lead" data-lang="de">
-      Cinema Player spielt ein Kinoprogramm auf einem eigenen Beamerausgang, während die Vorführung an einem separaten Kontrollbildschirm bedient wird. Die große Leinwand zeigt nur das Bild — keine Menüs, Uhren oder Untertitel, außer Sie wählen eine Untertitelspur.
-    </p>
+    <p class="lead" data-lang="en">Cinema Player is not an ordinary media player. It is built to run a complete cinema programme, with the booth on its own monitor and only the show on the screen.</p>
+    <p class="lead" data-lang="de">Der Cinema Player ist kein gewöhnlicher Mediaplayer, sondern bietet Funktionen, um einen kompletten Programmablauf in einer Kinoumgebung steuern zu können.</p>
 
     <nav class="toc">
       <h2 data-lang="en">Contents</h2>
       <h2 data-lang="de">Inhalt</h2>
       <ol>
-        <li><a href="#start" data-lang="en">Start and screens</a><a href="#start" data-lang="de">Start und Bildschirme</a></li>
-        <li><a href="#layout" data-lang="en">Control window</a><a href="#layout" data-lang="de">Kontrollfenster</a></li>
-        <li><a href="#settings" data-lang="en">Settings</a><a href="#settings" data-lang="de">Einstellungen</a></li>
-        <li><a href="#program" data-lang="en">Program states and transport</a><a href="#program" data-lang="de">Programmzustände und Transport</a></li>
+        <li><a href="#intro" data-lang="en">Introduction</a><a href="#intro" data-lang="de">Einleitung</a></li>
+        <li><a href="#beamer" data-lang="en">Beamer status</a><a href="#beamer" data-lang="de">Beamerstatus</a></li>
+        <li><a href="#layout" data-lang="en">Control window</a><a href="#layout" data-lang="de">Bedienoberfläche</a></li>
         <li><a href="#playlist" data-lang="en">Playlist</a><a href="#playlist" data-lang="de">Playlist</a></li>
-        <li><a href="#preview" data-lang="en">Preview and In/Out</a><a href="#preview" data-lang="de">Vorschau und In/Out</a></li>
-        <li><a href="#beamer" data-lang="en">Beamer</a><a href="#beamer" data-lang="de">Beamer</a></li>
-        <li><a href="#audio" data-lang="en">Volume and loudness</a><a href="#audio" data-lang="de">Lautstärke und Lautheit</a></li>
-        <li><a href="#stills" data-lang="en">Still images</a><a href="#stills" data-lang="de">Standbilder</a></li>
-        <li><a href="#quit" data-lang="en">Quit</a><a href="#quit" data-lang="de">Beenden</a></li>
+        <li><a href="#program" data-lang="en">Program</a><a href="#program" data-lang="de">Programmablauf</a></li>
+        <li><a href="#preview" data-lang="en">Preview</a><a href="#preview" data-lang="de">Vorschau</a></li>
+        <li><a href="#remote" data-lang="en">Remote control</a><a href="#remote" data-lang="de">Fernsteuerung</a></li>
+        <li><a href="#lights" data-lang="en">Light control</a><a href="#lights" data-lang="de">Lichtsteuerung</a></li>
+        <li><a href="#settings" data-lang="en">Settings</a><a href="#settings" data-lang="de">Einstellungen</a></li>
+        <li><a href="#tech" data-lang="en">Technical notes</a><a href="#tech" data-lang="de">Technik</a></li>
       </ol>
     </nav>
 
-    <h2 id="start">
-      <span data-lang="en">1. Start and screens</span>
-      <span data-lang="de">1. Start und Bildschirme</span>
+    <h2 id="intro">
+      <span data-lang="en">1. Introduction</span>
+      <span data-lang="de">1. Einleitung</span>
     </h2>
-    <p data-lang="en">
-      Connect two outputs from the graphics card: one for the control monitor, one for the projector (HDMI, DVI, or DisplayPort). From the project folder run <code>./start</code> or <code>pixi run start</code>. The desktop file <code>Cinema-Player.desktop</code> starts the same script.
-    </p>
-    <p data-lang="de">
-      Schließen Sie zwei Ausgänge der Grafikkarte an: einen für den Kontrollmonitor, einen für den Beamer (HDMI, DVI oder DisplayPort). Im Projektordner starten Sie mit <code>./start</code> oder <code>pixi run start</code>. Die Datei <code>Cinema-Player.desktop</code> startet dasselbe Skript.
-    </p>
-    <p data-lang="en">
-      If only one display is found, a warning asks you to attach a second output and select it under <strong>Beamer output</strong>. The projector instance of mpv uses that connector. Preview audio can stay on the control machine; program audio goes out with the projector HDMI.
-    </p>
-    <p data-lang="de">
-      Wird nur ein Bildschirm gefunden, warnt Cinema Player und bittet, einen zweiten Ausgang anzuschließen und unter <strong>Beamerausgang</strong> zu wählen. Die mpv-Instanz für den Beamer nutzt diesen Anschluss. Vorschau-Ton kann am Kontrollrechner bleiben; der Programmton geht mit dem HDMI des Beamers.
-    </p>
-
-    <h2 id="layout">
-      <span data-lang="en">2. Control window</span>
-      <span data-lang="de">2. Kontrollfenster</span>
-    </h2>
-    <p data-lang="en">
-      The header shows the logo, the version, X11 or Wayland, and the settings menu (three lines, top right). Below that the window is split: program and playlist on the left, beamer and preview on the right.
-    </p>
-    <p data-lang="de">
-      Die Kopfzeile zeigt das Logo, die Version, X11 oder Wayland und das Einstellungsmenü (drei Striche oben rechts). Darunter ist das Fenster geteilt: Programm und Playlist links, Beamer und Vorschau rechts.
-    </p>
-    <figure>
-      <img data-lang="en" src="images/overview-en.png" alt="Cinema Player control window in English, program off">
-      <img data-lang="de" src="images/overview-de.png" alt="Cinema-Player-Kontrollfenster auf Deutsch, Programm aus">
-      <figcaption data-lang="en">Control window in <strong>OFF</strong>. A clip is selected for preview (yellow border). The projector is dark.</figcaption>
-      <figcaption data-lang="de">Kontrollfenster in <strong>AUS</strong>. Ein Clip ist für die Vorschau gewählt (gelber Rahmen). Der Beamer bleibt dunkel.</figcaption>
-    </figure>
-    <ul>
-      <li data-lang="en"><strong>Status bar</strong> — program state, clip name, playlist position.</li>
-      <li data-lang="de"><strong>Statuszeile</strong> — Programmzustand, Clipname, Position in der Playlist.</li>
-      <li data-lang="en"><strong>Program block</strong> — progress with live video bitrate, volume with live audio bitrate (and stored A/V delay if one exists), In/Out, transport, four clocks, VU meter.</li>
-      <li data-lang="de"><strong>Programmblock</strong> — Verlauf mit aktueller Videobitrate, Lautstärke mit aktueller Audiobitrate (und gespeicherter A/V-Versatz, falls vorhanden), In/Out, Transport, vier Uhren, VU-Meter.</li>
-      <li data-lang="en"><strong>Playlist tools</strong> — name, import / new / load / save, house lights (Dark / Medium / Bright). The idle-file name appears only when one is set.</li>
-      <li data-lang="de"><strong>Playlist-Werkzeuge</strong> — Name, Import / Neu / Laden / Speichern, Lichtsteuerung (Dunkel / Mittel / Hell). Der Name des Pausenmediums erscheint nur, wenn eines gewählt ist.</li>
-      <li data-lang="en"><strong>Playlist</strong> — the running order.</li>
-      <li data-lang="de"><strong>Playlist</strong> — die Spielfolge.</li>
-      <li data-lang="en"><strong>Beamer status</strong> — aspect ratio, available rates and resolutions, OK or Mismatch.</li>
-      <li data-lang="de"><strong>Beamer-Status</strong> — Seitenverhältnis, verfügbare Frequenzen und Auflösungen, OK oder Abweichung.</li>
-      <li data-lang="en"><strong>Preview</strong> — Live/Preview badge, metadata, clip settings (including dimmer), picture, meters, envelope, transport, In/Out, audio and subtitles.</li>
-      <li data-lang="de"><strong>Vorschau</strong> — Live/Vorschau, Metadaten, Clip-Einstellungen (inkl. Dimmer), Bild, Meter, Hüllkurve, Transport, In/Out, Tonspur und Untertitel.</li>
-    </ul>
-    <p data-lang="en">
-      Fullscreen on the control monitor: <kbd>F11</kbd> or Settings → Fullscreen. It never covers the projector output.
-    </p>
-    <p data-lang="de">
-      Vollbild auf dem Kontrollmonitor: <kbd>F11</kbd> oder Einstellungen → Vollbildmodus. Der Beamerausgang wird davon nicht überdeckt.
-    </p>
-
-    <h2 id="settings">
-      <span data-lang="en">3. Settings</span>
-      <span data-lang="de">3. Einstellungen</span>
-    </h2>
-    <p data-lang="en">Open the burger menu at the top right of the header.</p>
-    <p data-lang="de">Öffnen Sie das Burger-Menü oben rechts in der Kopfzeile.</p>
-    <figure class="snip">
-      <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
-      <img data-lang="de" src="images/menu-settings-de.png" alt="Einstellungsmenü auf Deutsch">
-      <figcaption data-lang="en">Settings: fullscreen, media directories, Program, Playlist, System settings (beamer output, design, language, remote control, light control), Calibration, quit.</figcaption>
-      <figcaption data-lang="de">Einstellungen: Vollbild, Medienverzeichnisse, Programm, Playlist, Systemeinstellungen (Beamerausgang, Design, Sprache, Fernsteuerung, Lichtsteuerung), Kalibrierung, Beenden.</figcaption>
-    </figure>
-    <ul>
-      <li data-lang="en"><strong>Media directories</strong> — add one or more folders. They are saved and offered when media is imported into the playlist. The import dialog can also <strong>Copy files</strong> into a chosen folder and link those copies. A popup shows the copy progress.</li>
-      <li data-lang="de"><strong>Medienverzeichnisse</strong> — einen oder mehrere Ordner hinzufügen. Sie werden gespeichert und beim Laden von Medien in die Playlist angeboten. Im Import-Dialog können Dateien mit <strong>Files kopieren</strong> in einen gewählten Ordner kopiert und von dort verlinkt werden. Ein Popup zeigt den Kopierfortschritt.</li>
-      <li data-lang="en"><strong>Remote control</strong> — LAN API for a smartphone (default port 8765). A token is required. Settings show a QR code with the IP, port, and token; scanning it opens the phone page already signed in. A radio icon in the header is coloured while it is running and grey while off; a bulb next to it is coloured while light control is on and grey while off. Click either icon to open its settings. Resume, Pause, Still, Stop (clip only, not the program), volume, playlist, progress, clocks, and house lights (Dark / Medium / Bright plus a switch that turns Shelly control off). Tap a playlist row to set the program pointer. Pause, Still, Stop, and the program pointer must be confirmed on the phone.</li>
-      <li data-lang="de"><strong>Fernsteuerung</strong> — LAN-API fürs Smartphone (Standardport 8765). Ein Token ist Pflicht. In den Einstellungen erscheint ein QR-Code mit IP, Port und Token; nach dem Scannen ist die Telefonseite angemeldet. Das Funk-Icon in der Kopfzeile ist farbig, wenn sie läuft, und grau, wenn sie aus ist; die Glühbirne daneben ist farbig bei eingeschalteter Lichtsteuerung und grau, wenn sie aus ist. Ein Klick öffnet die jeweilige Einstellung. Weiter, Pause, Standbild, Stop (nur Clip, nicht das Programm), Lautstärke, Playlist, Fortschritt, Zeiten und Saallicht (Dunkel / Mittel / Hell sowie ein Schalter, der die Shelly-Steuerung ausmacht). Antippen einer Playlistzeile setzt den Programmzeiger. Pause, Standbild, Stop und der Programmzeiger müssen am Telefon bestätigt werden.</li>
-      <li data-lang="en"><strong>Light control</strong> (System settings) — Shelly switches and dimmers on the WLAN. Scan the LAN or add an IP. Enter the Shelly <strong>user</strong> and <strong>password</strong> (Gen2 is <code>admin</code>); each device can have its own login. Tick the devices that should follow house-light cues. Presets <strong>Bright</strong>, <strong>Medium</strong>, and <strong>Dark</strong> are dimmer levels (defaults 100 / 40 / 0); a switch turns on above 0%. Fade is the dimmer transition. The matching Dark / Medium / Bright button blinks while that fade runs. <strong>Start film</strong> is how many seconds before the dim-down ends the clip starts (0 waits for the fade). <strong>Lights up</strong> is how many seconds before the clip ends the house lights come up. Test buttons send the preset immediately. <strong>House lights</strong> (here and on the phone) turns all Shelly control off: no manual dimming and no film-start or film-end cues. Off (and locked) until at least one Shelly is ticked. Launching Cinema Player sends Bright to every selected device.</li>
-      <li data-lang="de"><strong>Lichtsteuerung</strong> (Systemeinstellungen) — Shelly-Schalter und -Dimmer im WLAN. Netz suchen oder eine IP eintragen. <strong>Benutzer</strong> und <strong>Passwort</strong> der Shelly-Anmeldung eintragen (bei Gen2 ist der Benutzer <code>admin</code>); jedes Gerät kann eigene Zugangsdaten haben. Dann die Geräte markieren, die den Lichtbefehlen folgen. Die Vorgaben <strong>Hell</strong>, <strong>Mittel</strong> und <strong>Dunkel</strong> sind Dimmerwerte (Standard 100 / 40 / 0); ein Schalter geht über 0 % an. Überblendung ist die Dimmerzeit. Die passende Taste Dunkel / Mittel / Hell blinkt, solange gedimmt wird. <strong>Filmstart</strong> ist, wie viele Sekunden vor Ende der Überblendung der Clip anläuft (0 wartet die Überblendung ab). <strong>Licht an</strong> ist, wie viele Sekunden vor Clipende das Saallicht hochgeht. Die Testtasten senden die Vorgabe sofort. Der Schalter <strong>Lichtsteuerung</strong> (hier und am Telefon) schaltet die Shelly-Steuerung ganz aus: kein manuelles Dimmen und keine Befehle bei Filmstart oder Filmende. Aus (und gesperrt), bis mindestens ein Shelly markiert ist. Beim Start von Cinema Player gehen alle gewählten Geräte auf Hell.</li>
-      <li data-lang="en"><strong>Fullscreen</strong> — control monitor only (<kbd>F11</kbd>).</li>
-      <li data-lang="de"><strong>Vollbildmodus</strong> — nur Kontrollmonitor (<kbd>F11</kbd>).</li>
-      <li data-lang="en"><strong>Light / dark design</strong> — colours of the control window.</li>
-      <li data-lang="de"><strong>Helles / dunkles Design</strong> — Farben des Kontrollfensters.</li>
-      <li data-lang="en"><strong>Language</strong> — English or Deutsch. The brand name Cinema Player stays untranslated.</li>
-      <li data-lang="de"><strong>Sprache</strong> — English oder Deutsch. Der Name Cinema Player bleibt unübersetzt.</li>
-      <li data-lang="en"><strong>Beamer output</strong> — which connector is the projector. Locked while <strong>PLAYING</strong>. The submenu also has <strong>EDID</strong>, which opens a window with the projector’s complete EDID.</li>
-      <li data-lang="de"><strong>Beamerausgang</strong> — welcher Anschluss der Beamer ist. Während <strong>WIEDERGABE</strong> gesperrt. Im Untermenü gibt es außerdem <strong>EDID</strong>: ein Fenster mit den vollständigen EDID-Daten des Beamers.</li>
-      <li data-lang="en"><strong>Use default Idle Media</strong> — checkbox. When on, the projector idle clip is the file in <code>idle</code>. The choice is saved and applied again at the next start.</li>
-      <li data-lang="de"><strong>Standard-Pausenmedium verwenden</strong> — Kontrollkästchen. Wenn aktiv, ist das Pausenmedium die Datei im Ordner <code>idle</code>. Die Wahl wird gespeichert und beim nächsten Start wieder angewendet.</li>
-      <li data-lang="en"><strong>Calibration</strong> — in <strong>OFF</strong> and while already calibrating. <strong>Beamer test image</strong> (logo on the projector until you close the dialog; only in <strong>OFF</strong>). <strong>Video</strong> and <strong>Audio</strong> each have a submenu: <strong>Load all files</strong> (every clip in <code>testdata/videotestdata</code> or <code>testdata/audiosyncdata</code>, loop on), then any <code>.pls</code> playlists in that folder. Audio also has the A/V delay slider.</li>
-      <li data-lang="de"><strong>Kalibrierung</strong> — bei <strong>AUS</strong> und während einer Kalibrierung. <strong>Beamer-Testbild</strong> (Logo auf dem Beamer, bis der Dialog geschlossen wird; nur bei <strong>AUS</strong>). <strong>Video</strong> und <strong>Audio</strong> haben je ein Untermenü: <strong>Alle Files laden</strong> (alle Clips in <code>testdata/videotestdata</code> bzw. <code>testdata/audiosyncdata</code>, Loop an), darunter vorhandene <code>.pls</code>-Playlists. Audio hat zusätzlich den A/V-Versatzregler.</li>
-      <li data-lang="en"><strong>Quit</strong> — only enabled in <strong>OFF</strong>.</li>
-      <li data-lang="de"><strong>Beenden</strong> — nur bei <strong>AUS</strong> aktiv.</li>
-    </ul>
-
-    <h2 id="program">
-      <span data-lang="en">4. Program states and transport</span>
-      <span data-lang="de">4. Programmzustände und Transport</span>
-    </h2>
-    <p data-lang="en">
-      A show has three states. <strong>Start</strong> only arms the program. <strong>Resume</strong> rolls the clip. Idle media (if set) appears only in <strong>PROGRAM</strong>, never in <strong>OFF</strong>. <strong>Video calibration</strong> and <strong>Audio calibration</strong> overlay that status; Stop from PROGRAM leaves the mode.
-    </p>
-    <p data-lang="de">
-      Eine Vorstellung hat drei Zustände. <strong>Start</strong> schaltet das Programm nur scharf. <strong>Weiter</strong> startet den Clip. Ein Pausenmedium erscheint nur im Zustand <strong>PROGRAMM</strong>, niemals bei <strong>AUS</strong>. <strong>Videokalibrierung</strong> und <strong>Audiokalibrierung</strong> überlagern diesen Status; Stop aus PROGRAMM verlässt den Modus.
-    </p>
-    <div class="states">
-      <figure>
-        <img data-lang="en" src="images/status-off-en.png" alt="Status bar OFF">
-        <img data-lang="de" src="images/status-off-de.png" alt="Statuszeile AUS">
-        <figcaption>
-          <span class="badge off" data-lang="en">OFF</span>
-          <span class="badge off" data-lang="de">AUS</span>
-          <span data-lang="en">Program not started. Projector black. Clocks show --:--. Stop is disabled.</span>
-          <span data-lang="de">Programm nicht gestartet. Beamer schwarz. Uhren zeigen --:--. Stop ist inaktiv.</span>
-        </figcaption>
-      </figure>
-      <figure>
-        <img data-lang="en" src="images/status-program-en.png" alt="Status bar PROGRAM">
-        <img data-lang="de" src="images/status-program-de.png" alt="Statuszeile PROGRAMM">
-        <figcaption>
-          <span class="badge program" data-lang="en">PROGRAM</span>
-          <span class="badge program" data-lang="de">PROGRAMM</span>
-          <span data-lang="en">Armed. Idle media may run after the autoplay delay. Resume starts the current clip.</span>
-          <span data-lang="de">Scharf. Pausenmedium kann nach der Autoplay-Pause laufen. Weiter startet den aktuellen Clip.</span>
-        </figcaption>
-      </figure>
-      <figure>
-        <img data-lang="en" src="images/status-playing-en.png" alt="Status bar PLAYING">
-        <img data-lang="de" src="images/status-playing-de.png" alt="Statuszeile WIEDERGABE">
-        <figcaption>
-          <span class="badge playing" data-lang="en">PLAYING</span>
-          <span class="badge playing" data-lang="de">WIEDERGABE</span>
-          <span data-lang="en">Clip on air. Pause, Still, and Stop are available and must be confirmed.</span>
-          <span data-lang="de">Clip läuft. Pause, Standbild und Stop sind verfügbar und müssen bestätigt werden.</span>
-        </figcaption>
-      </figure>
-    </div>
-    <figure>
-      <img data-lang="en" src="images/overview-program-en.png" alt="Window in PROGRAM">
-      <img data-lang="de" src="images/overview-program-de.png" alt="Fenster im Zustand PROGRAMM">
-      <figcaption data-lang="en">After <strong>Start</strong>: blue PROGRAM bar, Stop enabled, Resume ready. The clip is not rolling yet.</figcaption>
-      <figcaption data-lang="de">Nach <strong>Start</strong>: blaue PROGRAMM-Leiste, Stop aktiv, Weiter bereit. Der Clip läuft noch nicht.</figcaption>
-    </figure>
-    <table class="icon-table">
-      <thead>
-        <tr>
-          <th></th>
-          <th data-lang="en">Button</th>
-          <th data-lang="de">Taste</th>
-          <th data-lang="en">Action</th>
-          <th data-lang="de">Wirkung</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><img src="images/icons/start_program.png" alt=""></td>
-          <td data-lang="en">Start</td>
-          <td data-lang="de">Start</td>
-          <td data-lang="en">OFF → PROGRAM. Does not start the file.</td>
-          <td data-lang="de">AUS → PROGRAMM. Startet die Datei nicht.</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/play.png" alt=""></td>
-          <td data-lang="en">Resume</td>
-          <td data-lang="de">Weiter</td>
-          <td data-lang="en">Roll the current clip, unpause, or leave still. Disabled while the clip is rolling.</td>
-          <td data-lang="de">Aktuellen Clip starten, Pause aufheben oder Standbild verlassen. Während der Clip läuft inaktiv.</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/pause.png" alt=""></td>
-          <td data-lang="en">Pause</td>
-          <td data-lang="de">Pause</td>
-          <td data-lang="en">Hold position; projector goes black. Confirm first.</td>
-          <td data-lang="de">Position halten; Beamer wird schwarz. Zuerst bestätigen.</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/still.png" alt=""></td>
-          <td data-lang="en">Still</td>
-          <td data-lang="de">Standbild</td>
-          <td data-lang="en">Freeze the current frame on the projector. Confirm first.</td>
-          <td data-lang="de">Aktuelles Bild auf dem Beamer einfrieren. Zuerst bestätigen.</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/stop.png" alt=""></td>
-          <td data-lang="en">Stop</td>
-          <td data-lang="de">Stop</td>
-          <td data-lang="en">While PLAYING: end the clip → PROGRAM. Again: end the program → OFF. In calibration, Stop from PROGRAM leaves the mode.</td>
-          <td data-lang="de">Bei WIEDERGABE: Clip beenden → PROGRAMM. Nochmals: Programm beenden → AUS. In der Kalibrierung verlässt Stop aus PROGRAMM den Modus.</td>
-        </tr>
-      </tbody>
-    </table>
-    <p data-lang="en">
-      Buttons that cannot be used are shown with a disabled icon (grey) and an arrow cursor. Pause and Still only work while <strong>PLAYING</strong>. Resume is dead while the clip is rolling. Stop is dead in <strong>OFF</strong>.
-    </p>
-    <p data-lang="de">
-      Tasten, die nicht gelten, erscheinen als graues Disabled-Symbol mit Pfeilcursor. Pause und Standbild nur bei <strong>WIEDERGABE</strong>. Weiter ist tot, solange der Clip läuft. Stop ist bei <strong>AUS</strong> tot.
-    </p>
-    <div class="two">
-      <figure>
-        <img data-lang="en" src="images/program-en.png" alt="Program transport in OFF">
-        <img data-lang="de" src="images/program-de.png" alt="Programmtransport bei AUS">
-        <figcaption data-lang="en">OFF: Start highlighted, Pause/Still/Stop disabled, clocks empty.</figcaption>
-        <figcaption data-lang="de">AUS: Start hervorgehoben, Pause/Standbild/Stop inaktiv, Uhren leer.</figcaption>
-      </figure>
-      <figure>
-        <img data-lang="en" src="images/program-playing-en.png" alt="Program transport while playing">
-        <img data-lang="de" src="images/program-playing-de.png" alt="Programmtransport bei Wiedergabe">
-        <figcaption data-lang="en">PLAYING: Resume disabled (grey). Clocks follow the clip (In/Out), not idle media.</figcaption>
-        <figcaption data-lang="de">WIEDERGABE: Weiter inaktiv (grau). Uhren folgen dem Clip (In/Out), nicht dem Pausenmedium.</figcaption>
-      </figure>
-    </div>
-    <p data-lang="en">The four clocks are <strong>Total</strong>, <strong>Elapsed</strong>, <strong>Remaining</strong>, and <strong>End</strong> (wall-clock time when the clip will finish).</p>
-    <p data-lang="de">Die vier Uhren sind <strong>Gesamt</strong>, <strong>Gelaufen</strong>, <strong>Rest</strong> und <strong>Ende</strong> (Uhrzeit, zu der der Clip endet).</p>
-    <p class="note" data-lang="en">
-      Autoplay on a clip starts the next file after the autoplay delay (black). Idle media is not shown in that gap. House lights stay dark between those clips and come up after the last clip. After the last clip the program stays in PROGRAM until you Stop.
-    </p>
-    <p class="note" data-lang="de">
-      Autoplay an einem Clip startet die nächste Datei nach der Autoplay-Pause (schwarz). In dieser Lücke erscheint kein Pausenmedium. Das Saallicht bleibt zwischen diesen Clips aus und geht nach dem letzten Clip wieder an. Nach dem letzten Clip bleibt das Programm auf PROGRAMM, bis Sie Stoppen.
-    </p>
-
-    <h2 id="playlist">
-      <span data-lang="en">5. Playlist</span>
-      <span data-lang="de">5. Playlist</span>
-    </h2>
-    <figure>
-      <img data-lang="en" src="images/playlist-tools-en.png" alt="Playlist toolbar">
-      <img data-lang="de" src="images/playlist-tools-de.png" alt="Playlist-Werkzeugleiste">
-      <figcaption data-lang="en">Name, import, new, load, save. House lights (Dark / Medium / Bright). The idle-file name is shown only when one is set. Red Settings warning on appears beside it while that option is enabled.</figcaption>
-      <figcaption data-lang="de">Name, Import, Neu, Laden, Speichern. Lichtsteuerung (Dunkel / Mittel / Hell). Der Name des Pausenmediums erscheint nur, wenn eines gewählt ist. Daneben steht rot Einstellungswarnung an, solange die Option eingeschaltet ist.</figcaption>
-    </figure>
-    <table class="icon-table">
-      <thead>
-        <tr>
-          <th></th>
-          <th data-lang="en">Tool</th>
-          <th data-lang="de">Funktion</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><img src="images/icons/video_import.png" alt=""></td>
-          <td data-lang="en">Import files or a folder. Saved media directories are offered first; <strong>Import folder</strong> opens a folder dialog there so the path can still be changed. Optional <strong>Copy files</strong> copies them into a chosen folder and links the copies.</td>
-          <td data-lang="de">Dateien oder einen Ordner übernehmen. Gespeicherte Medienverzeichnisse werden zuerst angeboten; <strong>Ordner importieren</strong> öffnet dort einen Ordnerdialog, damit der Pfad noch geändert werden kann. Optional <strong>Files kopieren</strong> kopiert sie in einen gewählten Ordner und verlinkt die Kopien.</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/playlist_new.png" alt=""></td>
-          <td data-lang="en">New playlist (asks before clearing).</td>
-          <td data-lang="de">Neue Playlist (fragt vor dem Leeren).</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/playlist_load.png" alt=""></td>
-          <td data-lang="en">Load a <code>.pls</code> playlist.</td>
-          <td data-lang="de">Eine <code>.pls</code>-Playlist laden.</td>
-        </tr>
-        <tr>
-          <td><img src="images/icons/playlist_save.png" alt=""></td>
-          <td data-lang="en">Save the current list and settings.</td>
-          <td data-lang="de">Aktuelle Liste und Einstellungen speichern.</td>
-        </tr>
-      </tbody>
-    </table>
-    <p data-lang="en">
-      Drag a row to reorder. A left cursor marks the program pointer. Played clips go grey. Missing files stay in the list, show a missing badge, and are skipped during the show. Red metadata (frame rate, aspect, PAR, colorspace) means a beamer change or refresh mismatch — confirm the popup before Resume. With Settings warning on, those clips also show red <strong>setting!</strong> in the right-hand column.
-    </p>
-    <p data-lang="de">
-      Ziehen Sie eine Zeile, um die Reihenfolge zu ändern. Ein Cursor links markiert den Programmzeiger. Gespielte Clips werden grau. Fehlende Dateien bleiben in der Liste, tragen ein FEHLT-Zeichen und werden in der Vorstellung übersprungen. Rote Metadaten (Bildrate, Bildformat, PAR, Farbraum) bedeuten Beamerwechsel oder Frequenzabweichung — den Dialog bestätigen, bevor Sie Weiter drücken. Bei eingeschalteter Einstellungswarnung steht dort rechts zusätzlich rot <strong>setting!</strong>.
-    </p>
-    <figure>
-      <img data-lang="en" src="images/playlist-en.png" alt="Playlist rows">
-      <img data-lang="de" src="images/playlist-de.png" alt="Playlist-Zeilen">
-      <figcaption data-lang="en">Yellow border = selected for preview. If that clip is the program pointer, the fill follows the program state. Red fps values show a refresh mismatch against the current beamer mode. Colorspace and range (for example Rec.2020 limited) appear when the file records them.</figcaption>
-      <figcaption data-lang="de">Gelber Rahmen = für die Vorschau gewählt. Ist das der Programmzeiger, folgt die Füllung dem Programmzustand. Rote Bildraten zeigen eine Abweichung zur aktuellen Beamerfrequenz. Farbraum und Range (z. B. Rec.2020 limited) erscheinen, wenn die Datei sie enthält.</figcaption>
-    </figure>
-    <p data-lang="en">Right-click a row:</p>
-    <p data-lang="de">Rechtsklick auf eine Zeile:</p>
-    <figure class="snip">
-      <img data-lang="en" src="images/menu-entry-en.png" alt="Clip context menu">
-      <img data-lang="de" src="images/menu-entry-de.png" alt="Kontextmenü eines Clips">
-      <figcaption data-lang="en">Set program pointer (not during PLAYING), toggle autoplay, toggle loop (videos), relink a missing file, delete the entry.</figcaption>
-      <figcaption data-lang="de">Programmzeiger setzen (nicht während WIEDERGABE), Autoplay umschalten, Loop umschalten (Videos), fehlende Datei neu verknüpfen, Eintrag löschen.</figcaption>
-    </figure>
-    <p data-lang="en">Changing the program pointer while not playing must be confirmed, so the running order cannot jump by accident.</p>
-    <p data-lang="de">Ein Wechsel des Programmzeigers außerhalb der Wiedergabe muss bestätigt werden, damit die Reihenfolge nicht versehentlich springt.</p>
-    <p data-lang="en">Settings → <strong>Playlist</strong>:</p>
-    <p data-lang="de">Einstellungen → <strong>Playlist</strong>:</p>
-    <figure class="snip">
-      <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist menu">
-      <img data-lang="de" src="images/menu-playlist-de.png" alt="Playlist-Menü">
-      <figcaption data-lang="en">Check files, reset playlist (confirm: played flags and pointer to first entry), settings warning, autosave when the pointer moves, load last playlist at start, idle media (file and black pause), analyze loudness and envelope (OFF only).</figcaption>
-      <figcaption data-lang="de">Dateien prüfen, Playlist zurücksetzen (Nachfrage: gespielt und Zeiger auf den ersten Eintrag), Einstellungswarnung, Autosave bei Programmwechsel, letzte Playlist beim Start laden, Pausenmedium (Datei und Schwarzpause), Lautheit und Hüllkurve analysieren (nur bei AUS).</figcaption>
-    </figure>
-    <ul>
-      <li data-lang="en"><strong>Settings warning</strong> (playlist menu) — popup when aspect, PAR, or colorspace needs a projector zoom/lens change. 16:9 in 21:9 zoom is letterboxed to height. Those clips show red <strong>setting!</strong> in the right-hand column. While this is on, the same checkbox in preview forces the warning on a clip even when the format does not change.</li>
-      <li data-lang="de"><strong>Einstellungswarnung</strong> (Playlist-Menü) — Dialog, wenn Bildformat, PAR oder Farbraum eine Zoom-/Objektivänderung brauchen. 16:9 im 21:9-Zoom wird auf die Höhe eingepasst. Diese Clips tragen rechts rot <strong>setting!</strong>. Solange das eingeschaltet ist, erzwingt dieselbe Option in der Vorschau die Warnung auch ohne Formatwechsel.</li>
-      <li data-lang="en"><strong>Dark / Medium / Bright</strong> — manual house-light presets. Disabled until at least one Shelly is ticked and House lights is on in Settings → System settings → Light control (or on the phone).</li>
-      <li data-lang="de"><strong>Dunkel / Mittel / Hell</strong> — manuelle Saallicht-Vorgaben. Gesperrt, bis mindestens ein Shelly markiert ist und die Lichtsteuerung in Einstellungen → Systemeinstellungen → Lichtsteuerung (oder am Telefon) eingeschaltet ist.</li>
-      <li data-lang="en"><strong>Idle media</strong> (playlist menu) — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). The file name is shown on the tools row only when one is set; it turns green while that media is on screen. Settings → <strong>Use default Idle Media</strong> loads the file in <code>idle</code> at startup.</li>
-      <li data-lang="de"><strong>Pausenmedium</strong> (Playlist-Menü) — Datei und Schwarzpause wählen (Sekunden Schwarz vor dem nächsten Autoplay-Clip und bevor das Pausenmedium erscheint). Der Dateiname steht in der Werkzeugleiste nur, wenn eines gewählt ist; er wird grün, solange das Medium auf der Leinwand ist. Einstellungen → <strong>Standard-Pausenmedium verwenden</strong> lädt die Datei in <code>idle</code> beim Start.</li>
-    </ul>
-
-    <h2 id="preview">
-      <span data-lang="en">6. Preview and In/Out</span>
-      <span data-lang="de">6. Vorschau und In/Out</span>
-    </h2>
-    <p data-lang="en">
-      Click a playlist row to load it in preview (yellow border; yellow <span class="badge preview">Preview</span>). If it is also the program pointer, the row stays filled with the program colour. Click the badge to follow the program output (<span class="badge playing">Live</span>) when a clip is on air. In/Out cannot be edited while that clip is on air.
-    </p>
-    <p data-lang="de">
-      Ein Klick auf eine Playlist-Zeile lädt sie in die Vorschau (gelber Rahmen; gelb <span class="badge preview">Vorschau</span>). Ist sie zugleich der Programmzeiger, bleibt die Zeile in der Programmfarbe gefüllt. Ein Klick auf das Abzeichen folgt der Programmausgabe (<span class="badge playing">Live</span>), wenn ein Clip läuft. In/Out lassen sich nicht ändern, solange dieser Clip auf Sendung ist.
-    </p>
-    <figure>
-      <img data-lang="en" src="images/preview-header-en.png" alt="Preview header">
-      <img data-lang="de" src="images/preview-header-de.png" alt="Vorschau-Kopfzeile">
-      <figcaption data-lang="en">Clip name, Live/Preview badge, length, container, codecs, aspect, PAR, colorspace.</figcaption>
-      <figcaption data-lang="de">Clipname, Live/Vorschau, Länge, Container, Codecs, Bildformat, PAR, Farbraum.</figcaption>
-    </figure>
-    <figure>
-      <img data-lang="en" src="images/preview-clip-settings-en.png" alt="Preview clip settings">
-      <img data-lang="de" src="images/preview-clip-settings-de.png" alt="Vorschau-Clip-Einstellungen">
-      <figcaption data-lang="en">Autoplay, Settings warning, Loop, played, and the play dimmer on one row (✔ marks like the settings menu).</figcaption>
-      <figcaption data-lang="de">Autoplay, Einstellungswarnung, Loop, Gespielt und der Dimmer in einer Zeile (✔ wie im Einstellungsmenü).</figcaption>
-    </figure>
-    <figure>
-      <img data-lang="en" src="images/preview-video-en.png" alt="Preview picture and meter">
-      <img data-lang="de" src="images/preview-video-de.png" alt="Vorschaubild und Meter">
-      <figcaption data-lang="en">Embedded preview player and VU meter. LUFS appears after Analyze loudness; the envelope sits under the progress bar.</figcaption>
-      <figcaption data-lang="de">Eingebetteter Vorschauplayer und VU-Meter. LUFS erscheint nach Lautheit analysieren; die Hüllkurve sitzt unter dem Fortschrittsbalken.</figcaption>
-    </figure>
-    <figure>
-      <img data-lang="en" src="images/preview-envelope-en.png" alt="Preview progress bar with audio envelope">
-      <img data-lang="de" src="images/preview-envelope-de.png" alt="Vorschaubalken mit Audiohüllkurve">
-      <figcaption data-lang="en">After <strong>Analyze loudness</strong> the peak envelope sits under the progress bar. The white line is the current preview time.</figcaption>
-      <figcaption data-lang="de">Nach <strong>Lautheit analysieren</strong> sitzt die Peak-Hüllkurve unter dem Fortschrittsbalken. Die weiße Linie ist die aktuelle Vorschauzeit.</figcaption>
-    </figure>
-    <figure>
-      <img data-lang="en" src="images/preview-controls-en.png" alt="Preview transport and In/Out">
-      <img data-lang="de" src="images/preview-controls-de.png" alt="Vorschau-Transport und In/Out">
-      <figcaption data-lang="en">Scrub, stored audio envelope under the progress bar (white line = current time), volume (Save volume writes the fader onto the clip), live bitrates, In/Out times, transport, Set In / Set Out / Clear, audio track and subtitles. Keys <kbd>I</kbd> and <kbd>O</kbd> set marks at the current preview time.</figcaption>
-      <figcaption data-lang="de">Scrub, gespeicherte Audiohüllkurve unter dem Fortschrittsbalken (weiße Linie = aktuelle Position), Lautstärke (Lautstärke speichern schreibt den Regler in den Clip), aktuelle Bitraten, In/Out-Zeiten, Transport, In setzen / Out setzen / Löschen, Tonspur und Untertitel. Tasten <kbd>I</kbd> und <kbd>O</kbd> setzen Marken an der aktuellen Vorschauzeit.</figcaption>
-    </figure>
-    <p data-lang="en">
-      Per clip you can set autoplay, <strong>Settings warning</strong> (only while that option is on in Settings → Playlist; beamer confirmation and red <strong>setting!</strong> even when the format does not change), loop (videos; ended with <strong>Resume</strong>), played, and the dimmer while the film plays (<strong>Dark</strong> by default, or <strong>Medium</strong> / <strong>Bright</strong>). Audio track and subtitle sit beside Set In / Set Out / Clear. Preview playback continues after Out so you can place a new mark; program playback still stops at Out. That dimmer runs when the clip <strong>starts</strong> (fade, blinking buttons, then the picture), not at the end. After the film, house lights come up automatically; with Autoplay they stay dark until the last clip. The playlist shows <strong>MEDIUM</strong> / <strong>BRIGHT</strong> when the play dimmer is not Dark. The program progress bar and clocks always follow In/Out, even if idle media is looping on the projector.
-    </p>
-    <p data-lang="de">
-      Pro Clip lassen sich Autoplay, <strong>Einstellungswarnung</strong> (nur wenn sie unter Einstellungen → Playlist eingeschaltet ist; Bestätigung am Beamer und rotes <strong>setting!</strong>, auch ohne Formatwechsel), Loop (Videos; endet mit <strong>Weiter</strong>), Gespielt und der Dimmer während des Films setzen (<strong>Dunkel</strong> als Vorgabe, oder <strong>Mittel</strong> / <strong>Hell</strong>). Tonspur und Untertitel stehen neben In setzen / Out setzen / Löschen. Die Vorschau spielt nach Out weiter, damit Sie eine neue Marke setzen können; das Programm stoppt weiterhin am Out. Dieser Dimmer greift beim <strong>Start</strong> des Clips (Überblendung, blinkende Tasten, dann das Bild), nicht am Ende. Nach dem Film geht das Saallicht automatisch an; bei Autoplay bleibt es bis zum letzten Clip aus. Die Playlist zeigt <strong>MITTEL</strong> / <strong>HELL</strong>, wenn der Dimmer nicht Dunkel ist. Verlauf und Uhren im Programm folgen immer In/Out, auch wenn auf dem Beamer ein Pausenmedium läuft.
-    </p>
+    <p data-lang="en">The aim is a clean cinema experience for the audience and less work for the projectionist. Control stays on a dedicated monitor. The screen shows only the programme. While no film or still is showing, the screen stays dark.</p>
+    <p data-lang="de">Ziel ist es, ein perfektes Kinoerlebnis für das Publikum zu bieten und gleichzeitig den Vorführer zu entlasten. Die Steuerung erfolgt über einen eigenen Monitor, während auf der Leinwand ausschließlich der Programminhalt zu sehen ist. Solange kein Film oder Bild gezeigt wird, bleibt die Leinwand dunkel.</p>
+    <p data-lang="en">Clip metadata is compared with what the projector can do, and mismatches are marked. That keeps the wrong frame rate from causing judder. The values stay on screen so the booth always has an overview of the clips and the running programme.</p>
+    <p data-lang="de">Die Metadaten der Filme und die Möglichkeiten des Beamers werden verglichen und Inkompatibilitäten markiert. So wird verhindert, dass es durch falsche Bildraten zu einer ruckelnden Wiedergabe kommt. Alle Werte werden dargestellt, um immer einen Überblick über die Filme und das laufende Programm zu haben.</p>
 
     <h2 id="beamer">
-      <span data-lang="en">7. Beamer</span>
-      <span data-lang="de">7. Beamer</span>
+      <span data-lang="en">2. Beamer status</span>
+      <span data-lang="de">2. Beamerstatus</span>
     </h2>
+    <p data-lang="en">Cinema Player drives the graphics-card output to the projector so the mode matches the clip. That avoids judder during playback.</p>
+    <p data-lang="de">Der Cinema Player steuert den Ausgang zum Beamer der Grafikkarte so, dass immer die passenden Einstellungen zum jeweiligen Film vorliegen. Damit wird vermieden, dass es bei der Wiedergabe zu ruckelnden Bildern kommt.</p>
+    <p data-lang="en">The HDMI handshake between Cinema Player and the projector happens as soon as the program pointer jumps to a clip. When that clip starts, picture and sound reach the auditorium without delay.</p>
+    <p data-lang="de">Das HDMI-Handshake zwischen Cinema Player und Beamer erfolgt, sobald der Programmzeiger auf einen Film springt. Wird der Film gestartet, kommt Bild und Ton ohne Verzögerung im Kinosaal an.</p>
     <figure>
-      <img data-lang="en" src="images/beamer-en.png" alt="Beamer status panel">
-      <img data-lang="de" src="images/beamer-de.png" alt="Beamer-Status">
-      <figcaption data-lang="en">Device name from the projector EDID, then aspect ratio, rates and resolutions. The active mode has a border. Program values are blue, preview values yellow. Green <strong>OK</strong> when a listed rate can show the clip; red <strong>Mismatch</strong> only if none can.</figcaption>
-      <figcaption data-lang="de">Gerätename aus der Beamer-EDID, danach Seitenverhältnis, Frequenzen und Auflösungen. Der aktive Modus hat einen Rahmen. Programmwerte sind blau, Vorschauwerte gelb. Grün <strong>OK</strong>, wenn eine gelistete Frequenz den Clip zeigen kann; rot <strong>Abweichung</strong> nur, wenn keine passt.</figcaption>
+      <img src="images/guide/beamer-status.png" alt="Beamer status with OK, rates and preview clip">
+      <figcaption data-lang="en">Beamer status with the projector EDID, advertised rates and resolutions, and the clip currently in preview.</figcaption>
+      <figcaption data-lang="de">Beamerstatus mit EDID des Beamers, gemeldeten Frequenzen und Auflösungen sowie dem Clip in der Vorschau.</figcaption>
     </figure>
-    <p data-lang="en">
-      The first line is the projector’s name from its EDID (the same identity as under Settings → Beamer output → EDID). Then the panel lists every refresh rate and every resolution the projector currently advertises. The mode that is <strong>on the projector now</strong> has a border around that value. Values that belong to the <strong>program pointer</strong> are blue; values that belong to a clip selected for <strong>preview</strong> are yellow (the preview yellow of the playlist). A 30&nbsp;fps clip marks <strong>60p</strong> when 60&nbsp;Hz is in the list (twice the frame rate). A 50 or 60&nbsp;fps clip marks <strong>25p</strong> / <strong>30p</strong> when those half rates are listed and 50/60&nbsp;Hz are not. Extra entries appear in blue or yellow only when the clip’s frame rate or resolution is not among the advertised modes.
-    </p>
-    <p data-lang="de">
-      Die erste Zeile ist der Gerätename aus der EDID des Beamers (dieselbe Identität wie unter Einstellungen → Beamerausgang → EDID). Danach listet das Feld jede Frequenz und jede Auflösung, die der Beamer derzeit meldet. Der Modus, der <strong>gerade auf dem Beamer liegt</strong>, hat in dieser Liste einen Rahmen um den Wert. Werte des <strong>Programmzeigers</strong> sind blau; Werte eines für die <strong>Vorschau</strong> gewählten Clips sind gelb (das Gelb der Playlist). Ein 30-fps-Clip markiert <strong>60p</strong>, wenn 60&nbsp;Hz in der Liste steht (zweifache Bildrate). Ein 50- oder 60-fps-Clip markiert <strong>25p</strong> / <strong>30p</strong>, wenn diese halbe Frequenz gelistet ist und 50/60&nbsp;Hz fehlen. Zusätzliche Einträge erscheinen nur blau oder gelb, wenn Bildrate oder Auflösung des Clips nicht unter den gemeldeten Modi sind.
-    </p>
-    <p data-lang="en">
-      <strong>OK</strong> / <strong>Mismatch</strong> compares the clip with the <em>capability list</em>, not with the rate that happens to be active. If 60&nbsp;Hz is listed, 30&nbsp;fps is OK even while the projector is still at 50&nbsp;Hz. If 50 or 60&nbsp;fps is not advertised, 25 or 30&nbsp;Hz is treated as a match. Before a clip rolls, Cinema Player switches to a mode at the <strong>video resolution</strong> whose refresh matches the frame rate or an integer multiple (or 25/30&nbsp;Hz for 50/60&nbsp;fps when those rates are missing). If the projector has no such mode, a custom xrandr mode can be created at playback time on X11. GNOME Wayland can only use modes the display already advertises. Import and probe never create modes.
-    </p>
-    <p data-lang="de">
-      <strong>OK</strong> / <strong>Abweichung</strong> vergleicht den Clip mit der <em>Fähigkeitsliste</em>, nicht mit der gerade aktiven Frequenz. Steht 60&nbsp;Hz in der Liste, ist 30&nbsp;fps OK, auch wenn der Beamer noch auf 50&nbsp;Hz liegt. Fehlen 50 oder 60&nbsp;fps in der Liste, gelten 25 bzw. 30&nbsp;Hz als Treffer. Bevor ein Clip läuft, schaltet Cinema Player auf einen Modus in der <strong>Videoauflösung</strong>, dessen Frequenz zur Bildrate oder einem ganzzahligen Vielfachen passt (bei 50/60&nbsp;fps auf 25/30&nbsp;Hz, wenn diese Frequenzen fehlen). Fehlt ein solcher Modus, kann unter X11 zur Wiedergabe ein eigener xrandr-Modus erzeugt werden. Unter GNOME Wayland stehen nur die vom Gerät gemeldeten Modi zur Verfügung. Import und Analyse erzeugen keine Modi.
-    </p>
+    <p data-lang="en">The important fields of the projector’s Extended Display Identification Data (EDID) are read and shown. They are compared with the clip metadata.</p>
+    <p data-lang="de">Die wichtigsten Daten des Extended Display Identification Data (EDID) des Beamers werden ausgelesen und angezeigt. Die Werte werden mit den Metadaten der Filme verglichen.</p>
+    <p data-lang="en">If the clip can play with the projector’s native modes, a green <strong>OK</strong> sits at the top right. If there is a problem, red <strong>Mismatch</strong> is shown.</p>
+    <p data-lang="de">Kann ein Film mit nativen Einstellungen des Beamers gezeigt werden, ist rechts oben ein grünes <strong>OK</strong> zu sehen. Bei einem Problem wird <strong>Abweichung</strong> in rot gezeigt.</p>
+    <p data-lang="en">The complete EDID record is under <em>Settings → Beamer output → EDID</em>.</p>
+    <p data-lang="de">Der komplette EDID-Datensatz kann in den Einstellungen unter <em>Einstellungen → Beamerausgang → EDID</em> abgerufen werden.</p>
+    <p data-lang="en">Playback options that belong to the clip under the program pointer are marked blue. If a clip is loaded in preview, the matching values are yellow.</p>
+    <p data-lang="de">Die theoretisch möglichen Wiedergabeoptionen des aktuellen Films, auf dem der Programmzeiger steht, sind blau markiert. Ist ein Film als Vorschau gewählt, werden die entsprechenden Werte gelb dargestellt.</p>
+    <p data-lang="en">Values that have been negotiated and set on the projector have a border.</p>
+    <p data-lang="de">Die Werte, die mit dem Beamer ausgehandelt und eingestellt sind, werden umrandet.</p>
 
-    <h2 id="audio">
-      <span data-lang="en">8. Volume and loudness</span>
-      <span data-lang="de">8. Lautstärke und Lautheit</span>
+    <h2 id="layout">
+      <span data-lang="en">3. Control window</span>
+      <span data-lang="de">3. Bedienoberfläche</span>
     </h2>
-    <p data-lang="en">
-      Each clip has its own volume. Adjust it in preview and press <strong>Save volume</strong>. The program fader follows the clip that is on air. Program and preview each have a VU meter (separate audio filters). Next to the progress bar the current video bitrate is shown; next to the volume slider the current audio bitrate. Both are live values from the last few seconds of playback.
-    </p>
-    <p data-lang="de">
-      Jeder Clip hat eine eigene Lautstärke. Stellen Sie sie in der Vorschau und drücken Sie <strong>Lautstärke speichern</strong>. Der Programmregler folgt dem Clip auf Sendung. Programm und Vorschau haben je ein VU-Meter (getrennte Audiofilter). Neben dem Fortschrittsbalken steht die aktuelle Videobitrate, neben dem Lautstärkeregler die aktuelle Audiobitrate. Beides sind Live-Werte der letzten Sekunden der Wiedergabe.
-    </p>
-    <p data-lang="en">
-      <strong>Analyze loudness</strong> (playlist menu, only in OFF) runs ffmpeg EBU R128 on every video. Integrated LUFS is stored on the entry and shown in the playlist row and above the preview meter. The same pass stores a peak envelope under the preview progress bar. This can take a while.
-    </p>
-    <p data-lang="de">
-      <strong>Lautheit analysieren</strong> (Playlist-Menü, nur bei AUS) misst mit ffmpeg EBU R128 jedes Video. Die integrierte LUFS-Zahl steht in der Playlist-Zeile und über dem Vorschaumeter. Derselbe Lauf speichert eine Peak-Hüllkurve unter dem Vorschaubalken. Das kann dauern.
-    </p>
+    <p data-lang="en">The control window is fully separate from the projection and sits on its own monitor. It is split into two main areas.</p>
+    <p data-lang="de">Die Bedienoberfläche ist vollständig von der Projektion getrennt und wird auf einem eigenen Monitor angezeigt. Sie ist in zwei Hauptbereiche aufgeteilt.</p>
+    <figure>
+      <img src="images/guide/overview.png" alt="Cinema Player control window">
+      <figcaption data-lang="en">Left: program status and transport, then the playlist. Right: beamer status and the preview window.</figcaption>
+      <figcaption data-lang="de">Links der Programmstatus und die Ablaufsteuerung, darunter die Playlist mit den Medieninhalten. Rechts der Beamerstatus und darunter das Vorschaufenster.</figcaption>
+    </figure>
 
-    <h2 id="stills">
-      <span data-lang="en">9. Still images</span>
-      <span data-lang="de">9. Standbilder</span>
+    <h2 id="playlist">
+      <span data-lang="en">4. Playlist</span>
+      <span data-lang="de">4. Playlist</span>
     </h2>
-    <p data-lang="en">
-      Images can sit in the playlist. Set a display time in seconds. After that time the program stops or autoplays the next item. Display time 0 keeps the still until Resume. Preview transport is hidden for stills. If a still is followed by a video, the output refresh is set to the video frame rate first, so the projector does not renegotiate when the video starts.
-    </p>
-    <p data-lang="de">
-      Bilder können in der Playlist stehen. Die Anzeigezeit in Sekunden festlegen. Danach stoppt das Programm oder startet den nächsten Eintrag per Autoplay. Anzeigezeit 0 hält das Bild bis Weiter. Der Vorschau-Transport ist bei Standbildern ausgeblendet. Folgt auf ein Bild ein Video, wird die Ausgangsfrequenz zuerst auf die Videobildrate gesetzt, damit der Beamer beim Videostart nicht neu verhandelt.
-    </p>
+    <p data-lang="en">The playlist is the centre of Cinema Player: the running order is assembled and edited here. All important information and settings — including measured loudness and audio envelopes — live on the playlist and are saved with it.</p>
+    <p data-lang="de">Die Playlist ist das zentrale Element im Cinema Player, in dem der Programmablauf zusammengestellt und bearbeitet wird. Alle wichtigen Informationen und Einstellungen, bis zu den berechneten Lautheitswerten und Audio-Hüllkurven, sind in der Playlist enthalten und werden mit ihr gespeichert.</p>
+    <p data-lang="en">A programme can be prepared in advance, clips can be edited, and the finished list is simply loaded for the event.</p>
+    <p data-lang="de">So lässt sich ein Programmablauf im Vorhinein zusammenstellen, die Filme bearbeiten und die fertige Zusammenstellung bei der Veranstaltung einfach laden.</p>
+    <figure>
+      <img src="images/guide/playlist-tools.png" alt="Playlist toolbar">
+      <figcaption data-lang="en">Playlist name, import, new, load, save, and house-light buttons.</figcaption>
+      <figcaption data-lang="de">Playlist-Name, Import, Neu, Laden, Speichern und Tasten für das Saallicht.</figcaption>
+    </figure>
+    <div class="icon-row">
+      <img src="images/guide/icon-import.png" alt="">
+      <p data-lang="en">Import films and stills</p>
+      <p data-lang="de">Filme und Bilder importieren</p>
+    </div>
+    <div class="icon-row">
+      <img src="images/guide/icon-new.png" alt="">
+      <p data-lang="en">Clear everything and start an empty playlist</p>
+      <p data-lang="de">Alles löschen und eine leere Playlist anlegen</p>
+    </div>
+    <div class="icon-row">
+      <img src="images/guide/icon-load.png" alt="">
+      <p data-lang="en">Load a playlist</p>
+      <p data-lang="de">Eine Playlist laden</p>
+    </div>
+    <div class="icon-row">
+      <img src="images/guide/icon-save.png" alt="">
+      <p data-lang="en">Save the playlist</p>
+      <p data-lang="de">Die Playlist speichern</p>
+    </div>
+    <p data-lang="en">On import, the <strong>media directories</strong> list opens first, for quick access to the folders you use often.</p>
+    <p data-lang="de">Beim Import von Medien öffnet sich die Auswahl der <strong>Medienverzeichnisse</strong>, die einen schnellen Zugang zu den wichtigen Speicherorten ermöglichen.</p>
+    <p data-lang="en">You can import single files or whole folders.</p>
+    <p data-lang="de">Es lassen sich einzelne Dateien oder ganze Verzeichnisse in die Playlist importieren.</p>
+    <p data-lang="en">Under <em>Settings → Playlist</em> there are two options:</p>
+    <p data-lang="de">In den Einstellungen finden sich unter <em>Einstellungen → Playlist</em> zwei Optionen.</p>
+    <ul>
+      <li data-lang="en"><strong>Autosave</strong>: as soon as the program pointer jumps to a new entry, the playlist is saved. On a later day the list opens again at the last playback position.</li>
+      <li data-lang="de"><strong>Automatisch speichern</strong>: Sobald der Programmzeiger im Ablauf auf einen neuen Eintrag springt, wird die Playlist gespeichert. An einem Folgetag steht die Playlist beim erneuten Laden automatisch an der Stelle der letzten Wiedergabe.</li>
+      <li data-lang="en"><strong>Load last playlist</strong>: the last playlist is loaded automatically when Cinema Player starts.</li>
+      <li data-lang="de"><strong>Letzte Playlist laden</strong>: Die letzte Playlist wird beim Start des Cinema Players automatisch geladen.</li>
+    </ul>
 
-    <h2 id="quit">
-      <span data-lang="en">10. Quit</span>
-      <span data-lang="de">10. Beenden</span>
+    <h3>
+      <span data-lang="en">Playlist entries</span>
+      <span data-lang="de">Playlist-Einträge</span>
+    </h3>
+    <figure>
+      <img src="images/guide/playlist.png" alt="Playlist entries with metadata">
+      <figcaption data-lang="en">Each row shows the file name and the main metadata. A red value conflicts with the projector.</figcaption>
+      <figcaption data-lang="de">Jeder Medieneintrag zeigt den Dateinamen und die wichtigsten Metadaten. Ist ein Wert rot, gibt es einen Konflikt mit den Möglichkeiten des Beamers.</figcaption>
+    </figure>
+    <p data-lang="en">An arrow on the left marks the program pointer — that entry plays next. With the program started the row is filled blue. While the clip is on air it is green.</p>
+    <p data-lang="de">Ein Pfeil links vom Eintrag markiert den Programmzeiger. Dieser Eintrag wird als nächstes gespielt. Bei gestartetem Programm ist dieser Eintrag blau hinterlegt. Läuft der Film, ist er grün gekennzeichnet.</p>
+    <p data-lang="en">The entry loaded in the <em>preview window</em> has a yellow border.</p>
+    <p data-lang="de">Der Eintrag, der im <em>Vorschaufenster</em> geladen ist, wird gelb umrandet dargestellt.</p>
+
+    <h3>
+      <span data-lang="en">Metadata</span>
+      <span data-lang="de">Metadaten</span>
+    </h3>
+    <ul>
+      <li data-lang="en">File name — duration</li>
+      <li data-lang="de">Dateiname — Laufzeit</li>
+      <li data-lang="en">Resolution — frame rate / aspect ratio / pixel aspect / colourspace</li>
+      <li data-lang="de">Auflösung — Bildrate / Seitenverhältnis / Pixel-Seitenverhältnis / Farbraum</li>
+    </ul>
+
+    <h3>
+      <span data-lang="en">Audio</span>
+      <span data-lang="de">Ton</span>
+    </h3>
+    <ul>
+      <li data-lang="en">Volume</li>
+      <li data-lang="de">Lautstärke</li>
+      <li data-lang="en">Measured loudness (LUFS) via <em>Settings → Playlist → Analyze loudness</em></li>
+      <li data-lang="de">Berechneter Loudness-Wert (LUFS) unter <em>Einstellungen → Playlist → Audioanalyse</em></li>
+    </ul>
+
+    <h3>
+      <span data-lang="en">Options</span>
+      <span data-lang="de">Optionen</span>
+    </h3>
+    <ul>
+      <li data-lang="en"><strong>AUTO</strong> — when the clip ends, the next clip starts automatically</li>
+      <li data-lang="de"><strong>AUTO</strong> — nach Ablauf des Films wird der nächste Film automatisch gestartet</li>
+      <li data-lang="en"><strong>LOOP</strong> — the clip repeats until <strong>Resume</strong> is pressed</li>
+      <li data-lang="de"><strong>LOOP</strong> — der Film wird endlos in einer Schleife gespielt, bis <strong>Weiter</strong> gedrückt wird</li>
+      <li data-lang="en"><strong>SETTING</strong> — if the projector setup must change, a warning appears before the clip starts</li>
+      <li data-lang="de"><strong>SETTING</strong> — sind Änderungen an den Beamereinstellungen nötig, erscheint vor Start des Films ein Fenster mit einer Warnung</li>
+      <li data-lang="en"><strong>LIGHT</strong> — house-light level at clip start (<strong>MEDIUM</strong>, <strong>BRIGHT</strong>). Dark is the default and is not labelled.</li>
+      <li data-lang="de"><strong>LICHT</strong> — die Helligkeit des Saallichts beim Start des Films (<strong>MITTEL</strong>, <strong>HELL</strong>). Dunkel ist der Standardwert.</li>
+    </ul>
+    <figure class="snip">
+      <img data-lang="en" src="images/menu-entry-en.png" alt="Playlist row context menu in English">
+      <img data-lang="de" src="images/guide/menu-entry.png" alt="Kontextmenü eines Playlist-Eintrags">
+      <figcaption data-lang="en">Right-click a row for the context menu.</figcaption>
+      <figcaption data-lang="de">Mit der rechten Maustaste öffnet sich ein Kontextmenü für wichtige Funktionen.</figcaption>
+    </figure>
+
+    <h3>
+      <span data-lang="en">Set program pointer</span>
+      <span data-lang="de">Programmzeiger setzen</span>
+    </h3>
+    <p data-lang="en">After a clip ends, the pointer moves on by itself. This command sets it by hand. It is disabled during playback.</p>
+    <p data-lang="de">Der Zeiger, welcher Film als nächstes gespielt wird, springt nach dem Ende eines Films automatisch weiter. Mit dieser Funktion kann der Zeiger händisch gesetzt werden. Die Option ist während der Wiedergabe deaktiviert.</p>
+
+    <h3>
+      <span data-lang="en">Toggle autoplay</span>
+      <span data-lang="de">Autoplay umschalten</span>
+    </h3>
+    <p data-lang="en">Turns autoplay on or off. With autoplay on, the next clip starts by itself. The same switch sits in the preview clip-settings row.</p>
+    <p data-lang="de">Die Autoplay-Funktion kann hier umgeschaltet werden. Bei aktivem Autoplay wird der nächste Film automatisch gestartet. Diese Umschaltmöglichkeit besteht auch im Block zum Programmablauf des Vorschaufensters.</p>
+
+    <h3>
+      <span data-lang="en">Toggle loop</span>
+      <span data-lang="de">Loop umschalten</span>
+    </h3>
+    <p data-lang="en">Turns loop on or off. With loop on, the clip repeats until <strong>Resume</strong> ends it. The same switch sits in preview.</p>
+    <p data-lang="de">Die Loop-Funktion kann hier umgeschaltet werden. Bei aktivem Loop wird der Film endlos in einer Schleife gespielt, bis diese durch die <strong>Weiter</strong>-Taste beendet wird. Diese Umschaltmöglichkeit besteht auch im Block zum Programmablauf des Vorschaufensters.</p>
+
+    <h3>
+      <span data-lang="en">Relink</span>
+      <span data-lang="de">Neu verknüpfen</span>
+    </h3>
+    <p data-lang="en">If the file is missing, the row turns red and the program skips it. <em>Relink</em> sets a new path.</p>
+    <p data-lang="de">Ist die Datei nicht auffindbar, wird der Playlist-Eintrag rot dargestellt und im Programmablauf übersprungen. Mit <em>Neu verknüpfen</em> kann der Pfad auf die Datei neu gesetzt werden.</p>
+    <p data-lang="en">To check every media path, use <em>Settings → Playlist → Check video files</em>.</p>
+    <p data-lang="de">Um zu überprüfen, ob alle Dateipfade zu den Mediendateien korrekt sind, in den Einstellungen <em>Einstellungen → Playlist → Videodateien prüfen</em> auswählen.</p>
+
+    <h3>
+      <span data-lang="en">Delete entry</span>
+      <span data-lang="de">Eintrag löschen</span>
+    </h3>
+    <p data-lang="en">Removes the playlist entry.</p>
+    <p data-lang="de">Der Playlist-Eintrag wird gelöscht.</p>
+
+    <h2 id="program">
+      <span data-lang="en">5. Program</span>
+      <span data-lang="de">5. Programmablauf</span>
     </h2>
-    <p data-lang="en">
-      Quit, the window close box, and <kbd>Ctrl</kbd>+<kbd>F4</kbd> only work in <strong>OFF</strong>. If the program is armed or playing, Cinema Player asks you to Stop first so the booth cannot drop a live show by closing the window.
-    </p>
-    <p data-lang="de">
-      Beenden, das Schließen des Fensters und <kbd>Strg</kbd>+<kbd>F4</kbd> gelten nur bei <strong>AUS</strong>. Ist das Programm scharf oder in Wiedergabe, verlangt Cinema Player zuerst Stop — damit die Vorstellung nicht durch Schließen des Fensters abbricht.
-    </p>
+    <p data-lang="en">The running order is assembled in the <strong>playlist</strong>. Films and stills can be loaded one by one, or a whole folder imported. The program drives that order and can take on further control tasks.</p>
+    <p data-lang="de">Der Ablauf des Programms wird in der <strong>Playlist</strong> zusammengestellt. Es können Filme und Standbilder einzeln geladen oder ein gesamtes Verzeichnis importiert werden. Das Programm gibt den Ablauf vor und kann auch weitere Steuerungsaufgaben übernehmen.</p>
+    <p data-lang="en">The program status is shown at the top left. The modes are colour-coded.</p>
+    <p data-lang="de">Der Status des Programms wird links oben angezeigt. Die unterschiedlichen Modi unterscheiden sich farblich.</p>
+    <figure>
+      <img src="images/guide/status-off.png" alt="Status bar OFF">
+      <figcaption data-lang="en"><span class="badge off">OFF</span> — program not started.</figcaption>
+      <figcaption data-lang="de"><span class="badge off">AUS</span> — Programm nicht gestartet.</figcaption>
+    </figure>
+    <p data-lang="en">Until the program is started the screen stays black. Only in this state can functions such as loudness analysis or calibration run.</p>
+    <p data-lang="de">Solange das Programm nicht gestartet ist, bleibt die Leinwand schwarz. Nur in diesem Zustand können Funktionen wie die Tonanalyse oder die Kalibrierung vorgenommen werden.</p>
+    <figure>
+      <img src="images/guide/program-off.png" alt="Program block while OFF">
+      <figcaption data-lang="en">Program block while off. Start is the only transport that is armed.</figcaption>
+      <figcaption data-lang="de">Programmblock bei AUS. Nur Start ist scharf.</figcaption>
+    </figure>
+    <p data-lang="en">The program is begun with <strong>Start</strong> <img class="inline" src="images/guide/icon-start.png" alt="">. The colour changes from red to blue, and the buttons for <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt=""> and <strong>Resume</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> become active.</p>
+    <p data-lang="de">Das Programm wird mit der <strong>Start</strong>-Taste <img class="inline" src="images/guide/icon-start.png" alt=""> begonnen. Die Farbe wechselt von rot auf blau und die Tasten für <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt=""> und <strong>Weiter</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> werden aktiviert.</p>
+    <figure>
+      <img src="images/guide/status-program.png" alt="Status bar PROGRAM">
+      <figcaption data-lang="en"><span class="badge program">PROGRAM</span> — armed.</figcaption>
+      <figcaption data-lang="de"><span class="badge program">PROGRAMM</span> — scharf geschaltet.</figcaption>
+    </figure>
+    <p data-lang="en">The program is now armed. Functions that could disturb the show are disabled. Until a clip starts, or idle media is chosen, the screen stays dark.</p>
+    <p data-lang="de">Das Programm ist nun scharf geschaltet. Funktionen, die den Ablauf stören können, sind deaktiviert. Solange kein Film gestartet wird oder ein Pausenmedium ausgewählt ist, bleibt die Leinwand dunkel.</p>
+    <p data-lang="en">The program pointer in the playlist sits on the clip that plays next. <strong>Resume</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> starts that clip.</p>
+    <p data-lang="de">Der Programmzeiger in der Playlist steht auf dem Film, der als nächstes gespielt wird. Der <strong>WEITER</strong>-Knopf <img class="inline" src="images/guide/icon-resume.png" alt=""> startet diesen Film.</p>
+    <p data-lang="en">When the clip ends, the pointer jumps to the next entry. The picture stays black, or idle media is shown.</p>
+    <p data-lang="de">Nach Ablauf des Films springt der Programmzeiger auf den nächsten Eintrag. Das Bild bleibt schwarz oder es wird das Pausenmedium angezeigt.</p>
+    <p data-lang="en">Played entries are grey.</p>
+    <p data-lang="de">Die gespielten Einträge sind grau.</p>
+
+    <h3>
+      <span data-lang="en">Idle media</span>
+      <span data-lang="de">Pausenmedium</span>
+    </h3>
+    <p data-lang="en">If idle media is chosen, it is shown on the screen while no film is playing.</p>
+    <p data-lang="de">Ist ein Pausenmedium gewählt, wird es auf der Leinwand angezeigt, solange kein Film läuft.</p>
+    <p data-lang="en">Idle media is a film or still shown instead of black. Films loop.</p>
+    <p data-lang="de">Ein Pausenmedium ist ein Film oder Standbild, das statt des Schwarzbildes gezeigt wird. Filme werden dabei in einer Endlosschleife gespielt.</p>
+    <p data-lang="en"><strong>Resume</strong> starts the next clip and ends the idle picture.</p>
+    <p data-lang="de">Wird der nächste Film mit <strong>WEITER</strong> gestartet, beendet dies die Anzeige des Pausenmediums.</p>
+    <p data-lang="en">Choose the file under <em>Settings → Playlist → Idle media</em>. There you can also set seconds of black between idle media and the start of a clip, and between the end of a clip and idle media again.</p>
+    <p data-lang="de">Das Pausenmedium kann in den Einstellungen unter <em>Einstellungen → Playlist → Pausenmedium</em> ausgewählt werden. Dort kann auch eine Zeit gewählt werden, in der zwischen dem Pausenmedium und dem Filmbeginn beziehungsweise dem Filmende und der erneuten Anzeige des Pausenmediums ein schwarzes Bild gezeigt wird.</p>
+    <p data-lang="en">If a file is set, its name appears in the playlist header.</p>
+    <p data-lang="de">Ist ein Medium ausgewählt, wird dies im Kopf der Playlist angezeigt.</p>
+    <p data-lang="en"><strong>Default.</strong> Settings can turn on <strong>Use default Idle Media</strong>. Then the file in the <code>idle</code> folder is used.</p>
+    <p data-lang="de"><strong>Standard.</strong> In den Einstellungen kann das <strong>Standard-Pausenmedium</strong> eingeschaltet werden. In dem Fall wird die Datei, die im Verzeichnis <code>idle</code> abgelegt ist, als Pausenmedium verwendet.</p>
+
+    <h3>
+      <span data-lang="en">Stop and playback</span>
+      <span data-lang="de">Stop</span>
+    </h3>
+    <p data-lang="en">The program can be ended with <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt="">. That action must be confirmed, so the show is not dropped by accident.</p>
+    <p data-lang="de">Der Programmablauf kann mit <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt=""> beendet werden. Diese Aktion muss bestätigt werden, um den Ablauf nicht irrtümlich zu beenden.</p>
+    <figure>
+      <img src="images/guide/status-playing.png" alt="Status bar PLAYING">
+      <figcaption data-lang="en"><span class="badge playing">PLAYING</span> — a clip is on air.</figcaption>
+      <figcaption data-lang="de"><span class="badge playing">WIEDERGABE</span> — ein Film läuft.</figcaption>
+    </figure>
+    <p data-lang="en">While a clip plays, the status bar is green. Current video and audio bitrates sit next to the progress bar. The meter shows the level after the volume fader.</p>
+    <p data-lang="de">Während ein Film wiedergegeben wird, ist die Statuszeile grün. Die aktuellen Datenraten für Video und Audio werden neben dem Fortschrittsbalken angezeigt. Die Lautstärke lässt sich in der Aussteuerungsanzeige ablesen. Die Anzeige zeigt den Wert nach dem Lautstärkeregler.</p>
+    <figure>
+      <img src="images/guide/program-playing.png" alt="Program block while playing">
+      <figcaption data-lang="en">Program block during playback: progress, volume, clocks, meter, Stop, Pause and Still.</figcaption>
+      <figcaption data-lang="de">Programmblock während der Wiedergabe: Verlauf, Lautstärke, Uhren, Meter, Stop, Pause und Still.</figcaption>
+    </figure>
+    <p data-lang="en">The buttons for <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt="">, <strong>Pause</strong> <img class="inline" src="images/guide/icon-pause.png" alt=""> and <strong>Still</strong> <img class="inline" src="images/guide/icon-still.png" alt=""> are enabled. These actions must be confirmed so the show is not disturbed by accident.</p>
+    <p data-lang="de">Die Tasten für <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt="">, <strong>Pause</strong> <img class="inline" src="images/guide/icon-pause.png" alt=""> und <strong>Still</strong> <img class="inline" src="images/guide/icon-still.png" alt=""> sind aktiviert. Diese Aktionen müssen bestätigt werden, um den Ablauf nicht irrtümlich zu stören.</p>
+    <div class="icon-row">
+      <img src="images/guide/icon-stop.png" alt="">
+      <p data-lang="en">Stop ends the clip; the program pointer jumps to the next entry</p>
+      <p data-lang="de">Stop beendet den Film, der Programmzeiger springt auf den nächsten Eintrag</p>
+    </div>
+    <div class="icon-row">
+      <img src="images/guide/icon-pause.png" alt="">
+      <p data-lang="en">Pause holds playback and shows a black frame</p>
+      <p data-lang="de">Pause hält die Wiedergabe an, es wird ein schwarzes Bild gezeigt</p>
+    </div>
+    <div class="icon-row">
+      <img src="images/guide/icon-still.png" alt="">
+      <p data-lang="en">Still holds playback and freezes the current frame</p>
+      <p data-lang="de">Still hält die Wiedergabe an und zeigt ein Standbild</p>
+    </div>
+    <p data-lang="en"><strong>Resume</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> continues from that position.</p>
+    <p data-lang="de">Mit <strong>Weiter</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> wird die Wiedergabe an der Stelle fortgesetzt.</p>
+    <p data-lang="en">Scrubbing the progress bar is locked except in Still.</p>
+    <p data-lang="de">Die Navigation im Fortschrittsbalken ist außer im Still-Modus gesperrt.</p>
+    <div class="note warn">
+      <img src="images/guide/icon-warning.png" alt="">
+      <div>
+        <p data-lang="en">In Still, the playhead can be dragged on the progress bar. The change is live on the screen. This is meant for seminars or talks where a film is shown and discussed interactively.</p>
+        <p data-lang="de">Im Still-Modus kann die Spielposition im Fortschrittsbalken mit der Maus verändert werden. Diese Änderung ist live auf der Leinwand zu sehen. Die Funktion ist für Seminare oder Vorträge gedacht, bei denen ein Film interaktiv gezeigt und besprochen wird.</p>
+      </div>
+    </div>
+
+    <h2 id="preview">
+      <span data-lang="en">6. Preview</span>
+      <span data-lang="de">6. Vorschau</span>
+    </h2>
+    <p data-lang="en">The preview window shows every value for a clip. Settings made here are stored in the playlist and used in the program.</p>
+    <p data-lang="de">Im Vorschaufenster werden alle Daten zu einem Film angezeigt. Es können Einstellungen vorgenommen werden, die in der Playlist gespeichert und im Programmablauf genutzt werden.</p>
+    <figure>
+      <img src="images/guide/preview-header.png" alt="Preview header with metadata">
+      <figcaption data-lang="en">File name and clip metadata. Values that can cause production problems are red.</figcaption>
+      <figcaption data-lang="de">Dateiname und Metadaten des Films. Werte, die zu Produktionsproblemen führen können, sind rot markiert.</figcaption>
+    </figure>
+    <ul>
+      <li data-lang="en">Duration</li>
+      <li data-lang="de">Lauflänge</li>
+      <li data-lang="en">Container format</li>
+      <li data-lang="de">Containerformat</li>
+      <li data-lang="en">Video codec with bitrate</li>
+      <li data-lang="de">Videocodec mit Datenrate</li>
+      <li data-lang="en">Audio codec with bitrate</li>
+      <li data-lang="de">Audiocodec mit Datenrate</li>
+      <li data-lang="en">Picture aspect ratio</li>
+      <li data-lang="de">Bild-Seitenverhältnis</li>
+      <li data-lang="en">Pixel aspect ratio</li>
+      <li data-lang="de">Pixel-Seitenverhältnis</li>
+      <li data-lang="en">Colourspace</li>
+      <li data-lang="de">Farbraum</li>
+    </ul>
+    <p data-lang="en">The coloured button on the right switches between <img class="badge-shot" src="images/guide/badge-preview.png" alt="Preview"> and <img class="badge-shot" src="images/guide/badge-live-program.png" alt="Live"> (program armed) / <img class="badge-shot" src="images/guide/badge-live-playing.png" alt="Live playing"> (clip on air). In preview mode the video can be watched and set independently of the program. In Live, the picture follows the program nearly in sync.</p>
+    <p data-lang="de">Der farbige Knopf rechts schaltet zwischen <img class="badge-shot" src="images/guide/badge-preview.png" alt="Vorschau"> und <img class="badge-shot" src="images/guide/badge-live-program.png" alt="Live Programm"> (Programmmodus) / <img class="badge-shot" src="images/guide/badge-live-playing.png" alt="Live Wiedergabe"> (Film läuft) um. Im Vorschau-Modus kann das Video unabhängig vom Programm angesehen und eingestellt werden. Im Live-Modus wird das Bild aus dem Programm weitgehend synchron angezeigt.</p>
+    <figure>
+      <img src="images/guide/clip-settings.png" alt="Preview clip settings">
+      <figcaption data-lang="en">Program options for the clip. Set options also appear in the right-hand playlist column.</figcaption>
+      <figcaption data-lang="de">Einstellungen für den Programmablauf. Gesetzte Optionen werden auch in der rechten Spalte des Playlist-Eintrags angezeigt.</figcaption>
+    </figure>
+    <ul>
+      <li data-lang="en"><strong>Autoplay</strong> — when the clip ends, the next clip starts automatically</li>
+      <li data-lang="de"><strong>Autoplay</strong> — nach Ablauf des Films wird der nächste Film automatisch gestartet</li>
+      <li data-lang="en"><strong>Settings warning</strong> — if the projector setup must change, a warning appears before the clip starts</li>
+      <li data-lang="de"><strong>Einstellungswarnung</strong> — sind Änderungen an den Beamereinstellungen nötig, erscheint vor Start des Films ein Fenster mit einer Warnung</li>
+      <li data-lang="en"><strong>Loop</strong> — the clip repeats until <strong>Resume</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> is pressed</li>
+      <li data-lang="de"><strong>Loop</strong> — der Film wird endlos in einer Schleife gespielt, bis <strong>Weiter</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> gedrückt wird</li>
+      <li data-lang="en"><strong>played</strong> — the played flag can be toggled; played clips are grey</li>
+      <li data-lang="de"><strong>gespielt</strong> — der Status <em>gespielt</em> lässt sich umstellen; gespielte Filme werden grau dargestellt</li>
+      <li data-lang="en"><strong>Dimmer</strong> — house-light level at clip start (<strong>Medium</strong>, <strong>Bright</strong>). <strong>Dark</strong> is the default.</li>
+      <li data-lang="de"><strong>Dimmer</strong> — die Helligkeit des Lichts beim Start des Films (<strong>Mittel</strong>, <strong>Hell</strong>). <strong>Dunkel</strong> ist der Standardwert.</li>
+    </ul>
+    <figure>
+      <img src="images/guide/preview-video.png" alt="Preview picture and VU meter">
+      <figcaption data-lang="en">A video can be watched in its own preview player, independently of the projection — also while the program is running. The meter is on the right. After loudness analysis, the LUFS value is shown as well.</figcaption>
+      <figcaption data-lang="de">Ein Video lässt sich im eigenen Vorschau-Player unabhängig von der Projektion ansehen. Das ist auch beim laufenden Programm möglich. Rechts wird die Tonaussteuerung angezeigt. Wurde die Audioanalyse aufgerufen, ist zusätzlich der berechnete Loudnesswert (LUFS) zu sehen.</figcaption>
+    </figure>
+    <figure>
+      <img src="images/guide/preview-controls.png" alt="Preview progress, envelope and transport">
+      <figcaption data-lang="en">The progress bar shows the current time plus In and Out. In Play or Pause the playhead can be dragged. After loudness analysis a peak envelope sits under the bar; the white line is the current time.</figcaption>
+      <figcaption data-lang="de">Der Fortschrittsbalken zeigt die momentane Spielposition sowie gesetzte In- und Out-Punkte. Die Spielposition kann im Play- oder Pause-Modus durch Ziehen im Fortschrittsbalken verändert werden. Nach der Audioanalyse sitzt eine Peak-Hüllkurve unter dem Balken; die weiße Linie ist die aktuelle Zeit.</figcaption>
+    </figure>
+
+    <h3>
+      <span data-lang="en">Volume</span>
+      <span data-lang="de">Lautstärke</span>
+    </h3>
+    <p data-lang="en">The audio bitrate is shown next to the volume slider.</p>
+    <p data-lang="de">Die Audio-Datenrate wird neben dem Lautstärkeregler angezeigt.</p>
+    <p data-lang="en">After loudness analysis, LUFS appears above the meter and an audio envelope under the progress bar.</p>
+    <p data-lang="de">Wurde die Audioanalyse aufgerufen, ist über der Aussteuerungsanzeige der Lautheitswert (LUFS) und unter dem Fortschrittsbalken eine Audio-Hüllkurve sichtbar.</p>
+    <p data-lang="en">Monitor-speaker volume can be set independently of the auditorium. <em>Save volume</em> writes the value into the playlist and uses it in the program.</p>
+    <p data-lang="de">Die Lautstärke der Tonwiedergabe am Monitor-Lautsprecher kann unabhängig von der Lautstärke im Kinosaal eingestellt werden. Mit <em>Lautstärke speichern</em> wird der Wert in der Playlist gespeichert und im Programm übernommen.</p>
+    <div class="note warn">
+      <img src="images/guide/icon-warning.png" alt="">
+      <div>
+        <p data-lang="en">In Live, or when the clip on air is open in preview, <em>Save volume</em> applies the preview fader to the program at once. The auditorium level can jump. To change house volume immediately, use the program fader.</p>
+        <p data-lang="de">Im Live-Modus, oder wenn der gerade laufende Film in der Vorschau geöffnet ist, wird mit <em>Lautstärke speichern</em> die Lautstärkeeinstellung im Vorschaufenster sofort im Programm übernommen. Es kann daher zu einem Lautstärkesprung kommen. Muss die Lautstärke im Kinosaal sofort verändert werden, ist das durch den Regler im Programm möglich.</p>
+      </div>
+    </div>
+
+    <h3>IN / OUT</h3>
+    <p data-lang="en">Next to the transport buttons are In and Out. When they are set, the clip starts at In and ends at Out. That can hide a leader or a long black tail from the projection.</p>
+    <p data-lang="de">Neben den Transporttasten liegen die Tasten für die In- und Out-Punkte. Sind sie gesetzt, wird der Film am In-Punkt begonnen und am Out-Punkt beendet. Damit lässt sich ein Vorspann oder ein langer schwarzer Teil am Ende in der Projektion ausblenden.</p>
+    <p data-lang="en">In and Out are visible as a blue span on the program and preview progress bars.</p>
+    <p data-lang="de">Die In- und Out-Punkte sind im Fortschrittsbalken des Programms und der Vorschau durch einen blauen Balken sichtbar.</p>
+    <div class="note warn">
+      <img src="images/guide/icon-warning.png" alt="">
+      <div>
+        <p data-lang="en">Set In and Out marks are applied at once, even while the program is running.</p>
+        <p data-lang="de">Gesetzte In- und Out-Punkte werden auch während des Programmablaufs sofort übernommen.</p>
+      </div>
+    </div>
+
+    <h2 id="remote">
+      <span data-lang="en">7. Remote control</span>
+      <span data-lang="de">7. Fernsteuerung</span>
+    </h2>
+    <p data-lang="en">The program can be run from the auditorium on a smartphone or tablet. It needs a WLAN link between Cinema Player and the device.</p>
+    <p data-lang="de">Der Programmablauf kann über eine Fernsteuerung aus dem Zuschauerraum auf einem Smartphone oder Tablet erfolgen. Sie benötigt eine WLAN-Verbindung zwischen dem Cinema Player und dem Mobilgerät.</p>
+    <figure class="snip">
+      <img src="images/guide/icon-remote-on.png" alt="Remote control icon">
+      <figcaption data-lang="en">Remote control is on.</figcaption>
+      <figcaption data-lang="de">Fernsteuerung aktiviert.</figcaption>
+    </figure>
+    <p data-lang="en">Settings are reached via the radio icon at the top right, or via Settings. Connection: scan the QR code. If that fails, type the shown IP address into a browser and enter the token in Cinema Player and in the browser.</p>
+    <p data-lang="de">Die Einstellungen sind über das Funk-Icon rechts oben oder die Einstellungen erreichbar. Die Verbindung wird hergestellt, indem der QR-Code gescannt wird. Sollte dies nicht funktionieren, wird die angezeigte IP-Adresse in einen Browser übernommen und ein Token im Feld des Cinema Players und des Browsers eingegeben.</p>
+    <figure>
+      <img src="images/guide/remote-settings.png" alt="Remote control settings with QR code">
+      <figcaption data-lang="en">Remote control: network API, port, token, QR code and phone URL.</figcaption>
+      <figcaption data-lang="de">Fernsteuerung: Netzwerk-API, Port, Token, QR-Code und Telefon-URL.</figcaption>
+    </figure>
+
+    <h3>
+      <span data-lang="en">Phone page</span>
+      <span data-lang="de">Fernsteuer-Oberfläche</span>
+    </h3>
+    <div class="phones">
+      <figure>
+        <img src="images/guide/phone-lights.png" alt="Phone remote with house lights">
+      </figure>
+      <figure>
+        <img src="images/guide/phone-transport.png" alt="Phone remote transport">
+      </figure>
+    </div>
+    <p data-lang="en">There are buttons for <strong>STOP</strong>, <strong>PAUSE</strong>, <strong>STILL</strong> and <strong>RESUME</strong>. If light control is on, it can be driven from here. Transport needs the same confirmation as on the Cinema Player window.</p>
+    <p data-lang="de">Es gibt Tasten für die Transportfunktionen <strong>STOP</strong>, <strong>PAUSE</strong>, <strong>STILL</strong> und <strong>WEITER</strong>. Ist die Lichtsteuerung aktiviert, kann sie von hier bedient werden. Die Transporttasten erfordern die gleiche Bestätigung wie auf der Oberfläche des Cinema Players.</p>
+    <figure class="mid">
+      <img src="images/guide/phone-playlist.png" alt="Phone remote playlist">
+      <figcaption data-lang="en">The playlist is below. Tap a row to set the program pointer. The action must be confirmed and is locked during playback.</figcaption>
+      <figcaption data-lang="de">Darunter ist die Playlist abgebildet. Der Programmzeiger kann durch Touch auf einen Eintrag neu gesetzt werden. Die Aktion muss bestätigt werden und ist während der Wiedergabe gesperrt.</figcaption>
+    </figure>
+
+    <h2 id="lights">
+      <span data-lang="en">8. Light control</span>
+      <span data-lang="de">8. Lichtsteuerung</span>
+    </h2>
+    <p data-lang="en">If house lights are driven with Shelly devices, Cinema Player can take over the operation.</p>
+    <p data-lang="de">Wird das Saallicht mittels Shelly-Komponenten gesteuert, kann die Bedienung vom Cinema Player übernommen werden.</p>
+    <figure class="snip">
+      <img src="images/guide/icon-lights-on.png" alt="Light control icon">
+      <figcaption data-lang="en">Light control is on.</figcaption>
+      <figcaption data-lang="de">Lichtsteuerung aktiviert.</figcaption>
+    </figure>
+    <p data-lang="en">Settings are reached via the bulb icon at the top right, or via <strong>Settings</strong>.</p>
+    <p data-lang="de">Die Einstellungen sind über das Lampen-Icon rechts oben oder die <strong>Einstellungen</strong> erreichbar.</p>
+    <p data-lang="en"><strong>Shelly settings</strong></p>
+    <p data-lang="de"><strong>Shelly-Einstellungen</strong></p>
+    <figure>
+      <img src="images/guide/light-settings.png" alt="Light control settings">
+      <figcaption data-lang="en">Shelly list, logins, presets Dark / Medium / Bright, fade, start-film and lights-up delays.</figcaption>
+      <figcaption data-lang="de">Shelly-Liste, Anmeldung, Vorgaben Dunkel / Mittel / Hell, Überblendung, Filmstart und Licht an.</figcaption>
+    </figure>
+    <p data-lang="en">Every Shelly on the LAN appears in the list. A user name and password can be entered per device if needed. Ticked devices follow light control. Switches and dimmers are supported.</p>
+    <p data-lang="de">In der Liste melden sich alle Shelly-Komponenten. Für jeden Baustein kann, wenn notwendig, der Benutzername und das Passwort eingegeben werden. Alle ausgewählten Bausteine werden in der Lichtsteuerung bedient. Es werden Schalter und Dimmer unterstützt.</p>
+    <p data-lang="en">With light control on, house lights can be driven from Cinema Player and from the phone with <img class="inline" src="images/guide/light-buttons.png" alt="Dark Medium Bright">. The blue button shows the current state.</p>
+    <p data-lang="de">Ist die Lichtsteuerung aktiviert, kann das Saallicht vom Cinema Player und der Fernsteuerung aus über die Tasten <img class="inline" src="images/guide/light-buttons.png" alt="Dunkel Mittel Hell"> bedient werden. Die blaue Taste zeigt den Zustand an.</p>
+    <p data-lang="en">While a fade runs, the button blinks.</p>
+    <p data-lang="de">Während des Dimmvorgangs blinkt die Taste.</p>
+    <p data-lang="en">The program drives the lights. When a clip starts, the lights dim to dark. At the end of the clip they come up to bright.</p>
+    <p data-lang="de">Die Lichtsteuerung wird vom Programmablauf gesteuert. Wird ein Film gestartet, dimmt das Licht auf dunkel ab. Am Ende des Films läuft der Dimmer wieder auf Hell.</p>
+    <p data-lang="en"><strong>Fade</strong> is how long the dim from dark to bright (or the reverse) takes.</p>
+    <p data-lang="de">Die <strong>Dimmzeit</strong> gibt an, wie lange für den Dimmvorgang von dunkel zu hell oder umgekehrt benötigt wird.</p>
+    <p data-lang="en"><strong>Start film</strong> and <strong>Lights up</strong> are two values in seconds:</p>
+    <p data-lang="de">Mit den Werten <strong>Filmstart</strong> und <strong>Filmende</strong> können zwei Werte in Sekunden eingestellt werden.</p>
+    <ul>
+      <li data-lang="en"><strong>Start film</strong> — the clip starts this many seconds before the lights are fully dark</li>
+      <li data-lang="de"><strong>Filmstart</strong> — der Film startet die angegebenen Sekunden, bevor das Licht ganz aus ist</li>
+      <li data-lang="en"><strong>Lights up</strong> — the lights begin to come up this many seconds before the clip ends</li>
+      <li data-lang="de"><strong>Filmende</strong> — das Licht beginnt die angegebenen Sekunden vor dem Filmende hell zu werden</li>
+    </ul>
+
+    <h3>
+      <span data-lang="en">Dimmer override</span>
+      <span data-lang="de">Dimmer-Überschreibung</span>
+    </h3>
+    <p data-lang="en">A clip can override the automatic dim. If <strong>Medium</strong> or <strong>Bright</strong> is chosen, the lights go to that level when the playlist entry starts. A clip can then run at full or half light — for example an interval insert.</p>
+    <p data-lang="de">In der Programmsteuerung eines Filmes kann das Standardverhalten der automatischen Dimmung überschrieben werden. Wird der Wert <strong>Mittel</strong> oder <strong>Hell</strong> gewählt, dimmt das Licht auf den gewählten Wert, sobald der Eintrag in der Playlist gestartet wurde. So kann ein Eintrag bei vollem oder halbem Licht laufen, zum Beispiel bei Zwischeninserts.</p>
+
+    <h2 id="settings">
+      <span data-lang="en">9. Settings</span>
+      <span data-lang="de">9. Einstellungen</span>
+    </h2>
+    <p data-lang="en">All settings sit behind the three lines at the top right.</p>
+    <p data-lang="de">Alle Einstellungen sind über die drei Striche im rechten oberen Eck zugänglich.</p>
+    <figure class="snip">
+      <img data-lang="en" src="images/menu-settings-en.png" alt="Settings menu in English">
+      <img data-lang="de" src="images/guide/menu-settings.png" alt="Einstellungsmenü">
+      <figcaption data-lang="en">Fullscreen, media directories, Program, Playlist, System settings, Calibration, Quit.</figcaption>
+      <figcaption data-lang="de">Vollbildmodus, Medienverzeichnisse, Programm, Playlist, Systemeinstellungen, Kalibrierung, Beenden.</figcaption>
+    </figure>
+
+    <h3>
+      <span data-lang="en">Fullscreen (recommended)</span>
+      <span data-lang="de">Vollbildmodus (empfohlen)</span>
+    </h3>
+    <p data-lang="en">The menu item <strong>Fullscreen</strong> or the shortcut <kbd>F11</kbd> puts the Cinema Player window into fullscreen. The whole monitor is used for the booth, and unused window chrome is hidden.</p>
+    <p data-lang="de">Mit dem Menüpunkt <strong>Vollbildmodus</strong> oder dem Shortcut <kbd>F11</kbd> wird das Fenster des Cinema Players im Vollbildmodus dargestellt. Es wird die gesamte Fläche des Monitors für die Bedienung genutzt und die nicht benötigten Fensterelemente ausgeblendet.</p>
+
+    <h3>
+      <span data-lang="en">Media directories</span>
+      <span data-lang="de">Medienverzeichnisse</span>
+    </h3>
+    <p data-lang="en">Folders you use often can be saved as media directories. When films or stills are imported, those folders are offered first and can be opened directly. The following file dialog can still navigate elsewhere.</p>
+    <p data-lang="de">Oft genutzte Speicherorte können als Medienverzeichnisse gespeichert werden. Beim Import von Filmen oder Bildern erscheint zuerst eine Auswahl der gespeicherten Medienverzeichnisse, die dann direkt geöffnet werden. In der folgenden Dateiauswahl kann auch zu anderen Verzeichnissen navigiert werden.</p>
+    <figure>
+      <img src="images/guide/media-directories.png" alt="Media directories dialog">
+      <figcaption data-lang="en">Saved folders for import.</figcaption>
+      <figcaption data-lang="de">Gespeicherte Ordner für den Import.</figcaption>
+    </figure>
+    <p data-lang="en">By default the media files are only linked in the playlist. The data stays on the source drive and is played from there.</p>
+    <p data-lang="de">Im Normalfall werden die Mediendateien nur in der Timeline verlinkt. Die Daten bleiben am Transportmedium und werden von dort abgespielt.</p>
+    <p data-lang="en">If <em>Copy files</em> is ticked at the bottom, files are not only linked but copied into the folder chosen to the right of the tick.</p>
+    <p data-lang="de">Wird am unteren Rand ein Haken bei <em>Datei kopieren</em> gesetzt, werden die Dateien nicht nur verlinkt, sondern in das Verzeichnis kopiert, das rechts vom Haken gewählt werden kann.</p>
+    <figure>
+      <img src="images/guide/copy-files.png" alt="Copy files during import">
+      <figcaption data-lang="en">Copy imported files into a chosen folder so the original drive can be removed.</figcaption>
+      <figcaption data-lang="de">Importierte Dateien in einen gewählten Ordner kopieren, damit das Originalmedium entfernt werden kann.</figcaption>
+    </figure>
+    <p data-lang="en">The original medium can then be removed and the program uses the copies. That simplifies shows where films arrive on different drives, and it avoids playback problems from slow USB sticks.</p>
+    <p data-lang="de">Damit kann das originale Speichermedium entfernt werden und das Programm nutzt die Kopien. So vereinfacht sich der Ablauf, wenn die Filme auf unterschiedlichen Medien geliefert werden. Damit lassen sich auch Abspielprobleme, zum Beispiel durch langsame USB-Sticks, vermeiden.</p>
+
+    <h3>
+      <span data-lang="en">Program</span>
+      <span data-lang="de">Programm</span>
+    </h3>
+    <figure class="snip">
+      <img src="images/guide/menu-program.png" alt="Program submenu">
+    </figure>
+    <p data-lang="en">When this is on, the media (film / still) in the <code>idle</code> folder is always used as idle media.</p>
+    <p data-lang="de">Ist die Funktion ausgewählt, wird das Medium (Film / Bild) aus dem idle-Verzeichnis immer als Pausenmedium genutzt.</p>
+
+    <h3>
+      <span data-lang="en">Playlist</span>
+      <span data-lang="de">Playlist</span>
+    </h3>
+    <figure class="snip">
+      <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist submenu in English">
+      <img data-lang="de" src="images/guide/menu-playlist.png" alt="Playlist-Untermenü">
+      <figcaption data-lang="en">Check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness.</figcaption>
+      <figcaption data-lang="de">Videodateien prüfen, Playlist zurücksetzen, Einstellungswarnung, automatisch speichern, letzte Playlist laden, Pausenmedium, Audioanalyse.</figcaption>
+    </figure>
+
+    <h3>
+      <span data-lang="en">System settings</span>
+      <span data-lang="de">Systemsteuerung</span>
+    </h3>
+    <figure class="snip">
+      <img src="images/guide/menu-system.png" alt="System settings submenu">
+      <figcaption data-lang="en">Beamer output, design, language, remote control, light control.</figcaption>
+      <figcaption data-lang="de">Beamerausgang, Design, Sprache, Fernsteuerung, Lichtsteuerung.</figcaption>
+    </figure>
+
+    <h3>
+      <span data-lang="en">Calibration</span>
+      <span data-lang="de">Kalibrierung</span>
+    </h3>
+    <p data-lang="en">Test videos ship with Cinema Player. They live in the <code>testdata</code> folder and can be loaded from here.</p>
+    <p data-lang="de">Für den Kalibriervorgang werden Testvideos mit dem Cinema Player geliefert. Sie sind im Verzeichnis <code>testdata</code> abgelegt und können hier einfach geladen werden.</p>
+    <p data-lang="en">Choosing a calibration switches the player into calibration mode, marked purple.</p>
+    <p data-lang="de">Wird eine Kalibrierung ausgewählt, schaltet der Player in den Kalibriermodus, der lila markiert ist.</p>
+    <figure>
+      <img src="images/guide/calibration.png" alt="Audio calibration with A/V delay">
+      <figcaption data-lang="en">Audio calibration with an extra A/V delay slider.</figcaption>
+      <figcaption data-lang="de">Audio-Kalibrierung mit zusätzlichem A/V-Versatz-Regler.</figcaption>
+    </figure>
+    <p data-lang="en"><strong>Load all files</strong> puts every test clip from the matching testdata folder into the playlist.</p>
+    <p data-lang="de"><strong>Alle Files laden</strong> lädt die gesamten Testvideos aus dem entsprechenden testdata-Verzeichnis in die Playlist.</p>
+    <p data-lang="en">Playlists in that testdata folder appear below. Complete calibration procedures with instructions can be loaded that way.</p>
+    <p data-lang="de">Sind Playlists im testdata-Verzeichnis abgelegt, erscheinen sie darunter. Damit können vollständige Kalibriervorgänge mit Anleitungen geladen werden.</p>
+    <figure class="snip">
+      <img src="images/guide/menu-calibration.png" alt="Calibration submenu">
+    </figure>
+    <h4>
+      <span data-lang="en">Audio calibration</span>
+      <span data-lang="de">Audiokalibrierung</span>
+    </h4>
+    <p data-lang="en">Calibration of picture–sound offset for each resolution / frame-rate combination. Under the program volume slider an extra slider for A/V delay appears. <strong>Save</strong> stores the measured values so they can be loaded later. The values apply to the whole playlist.</p>
+    <p data-lang="de">Kalibrierung des Ton-Bild-Versatzes für jede Auflösungs-/Bildraten-Kombination. Unter dem Lautstärkeregler im Programm erscheint ein zusätzlicher Regler für den Bild-Ton-Versatz. Mit <strong>Speichern</strong> werden die Messwerte abgelegt und können später wieder geladen werden. Die Werte gelten für die gesamte Playlist.</p>
+    <p class="center-caption" data-lang="en">A meter that sets the offset automatically to 1 millisecond is in development. Calibration should then run fully automatically.</p>
+    <p class="center-caption" data-lang="de">Ein Messgerät, das den Versatz auf 1 Millisekunde genau automatisch einstellt, ist in Entwicklung. Die Kalibrierung soll dann vollautomatisch erfolgen.</p>
+    <h4>
+      <span data-lang="en">Video calibration</span>
+      <span data-lang="de">Videokalibrierung</span>
+    </h4>
+    <p class="center-caption" data-lang="en">Colour calibration with a probe and loading the profile into the graphics card (currently a proof of concept).</p>
+    <p class="center-caption" data-lang="de">Farbkalibrierung mit einem Farbmesskopf und Übernahme des Farbprofils in die Grafikkarte (derzeit Proof of Concept).</p>
+
+    <h3>
+      <span data-lang="en">Quit</span>
+      <span data-lang="de">Beenden</span>
+    </h3>
+    <p data-lang="en">The program can only be quit when the running order is stopped.</p>
+    <p data-lang="de">Das Programm kann nur beendet werden, wenn der Programmablauf gestoppt ist.</p>
+
+    <h2 id="tech">
+      <span data-lang="en">10. Technical notes</span>
+      <span data-lang="de">10. Technik</span>
+    </h2>
+    <h3>
+      <span data-lang="en">Hardware</span>
+      <span data-lang="de">Hardware</span>
+    </h3>
+    <p data-lang="en">PC with Linux (X11, Wayland).</p>
+    <p data-lang="de">PC mit Linux (X11, Wayland).</p>
+    <p data-lang="en">Graphics card: AMD, Intel (Nvidia not recommended).</p>
+    <p data-lang="de">Grafikkarte: AMD, Intel (Nvidia nicht empfohlen).</p>
+    <h3>
+      <span data-lang="en">Software</span>
+      <span data-lang="de">Software</span>
+    </h3>
+    <p data-lang="en">The Cinema Player package includes an installer that sets up the important libraries. With an Nvidia card the proprietary graphics driver must be installed by hand.</p>
+    <p data-lang="de">Das Cinema-Player-Softwarepaket bringt einen Installer mit, der die wichtigen Bibliotheken installiert. Im Fall einer Nvidia-Grafikkarte muss der proprietäre Grafiktreiber händisch installiert werden.</p>
+    <p data-lang="en">AMD and Intel graphics cards have not been tested yet.</p>
+    <p data-lang="de">AMD- und Intel-Grafikkarten sind bisher noch ungetestet.</p>
   </main>
 
   <script>

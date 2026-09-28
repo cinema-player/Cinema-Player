@@ -140,6 +140,7 @@ h2 {
   border-top: 1px solid var(--line);
 }
 h3 { font-size: 1.12rem; margin: 24px 0 8px; color: var(--accent); }
+h4 { font-size: 1rem; margin: 20px 0 8px; color: var(--muted); }
 
 p, ul, ol { margin: 0 0 12px; }
 ul, ol { padding-left: 22px; }
@@ -252,6 +253,88 @@ html[lang="de"] .badge[data-lang="de"] {
   padding: 10px 14px;
   margin: 12px 0 20px;
   border-radius: 0 6px 6px 0;
+}
+
+.note.warn {
+  border-left-color: var(--off);
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.note.warn img {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.note.warn p { margin: 0 0 8px; }
+.note.warn p:last-child { margin: 0; }
+
+img.inline {
+  height: 1.7rem;
+  width: auto;
+  vertical-align: middle;
+  margin: 0 0.15em;
+  border-radius: 4px;
+}
+
+img.badge-shot {
+  height: 1.6rem;
+  width: auto;
+  vertical-align: middle;
+  margin: 0 0.2em;
+  border-radius: 3px;
+}
+
+.icon-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+
+.icon-row img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  background: #0b0d12;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.icon-row p { margin: 0; flex: 1; }
+
+.phones {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+  margin: 16px 0 24px;
+}
+
+.phones figure {
+  width: min(100%, 240px);
+  margin: 0;
+}
+
+.center-caption {
+  text-align: center;
+  font-style: italic;
+  color: var(--muted);
+  margin: -4px 0 20px;
+}
+
+figure.mid {
+  width: fit-content;
+  max-width: min(100%, 32rem);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+figure.mid img {
+  width: auto;
+  max-width: 100%;
 }
 
 kbd {
