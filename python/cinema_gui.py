@@ -1091,7 +1091,7 @@ class BeamerChoiceLine(tk.Frame):
             fg = COLOR_TEXT
         else:
             fg = COLOR_MUTED
-        font = FONT_BEAMER_PICK if (program or preview) else FONT_SMALL
+        font = FONT_BEAMER_PICK if (program or preview or picked) else FONT_SMALL
         ring = COLOR_PANEL
         if picked:
             ring = COLOR_WHITE if THEME == "dark" else COLOR_TEXT
