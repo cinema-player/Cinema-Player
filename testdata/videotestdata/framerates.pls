@@ -1,10 +1,10 @@
 {
-  "projection_zoom": false,
-  "autoplay_delay": 0.0,
+  "projection_zoom": true,
+  "autoplay_delay": 2.0,
   "idle_media": "AFC Idle.mp4",
-  "idle_media_path": "./idle/AFC Idle.mp4",
-  "program_index": 0,
-  "autosave_on_program_change": false,
+  "idle_media_path": "/home/administrator/Cinema-Player/idle/AFC Idle.mp4",
+  "program_index": 1,
+  "autosave_on_program_change": true,
   "entries": [
     {
       "path": "./testdata/videotestdata/UHD_25fps.mp4",
@@ -33,16 +33,20 @@
       "out_point": null,
       "display_time": 0.0,
       "is_image": false,
-      "refresh_ok": false,
+      "refresh_ok": true,
       "aspect_warning": false,
       "par_warning": false,
       "colorspace_warning": false,
-      "played": false,
+      "played": true,
       "missing": false,
       "volume": 100,
       "colorspace": "--",
       "color_range": "",
-      "loudness_lufs": null
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "",
+      "light_end": "",
+      "force_settings_warning": false
     },
     {
       "path": "./testdata/videotestdata/UHD_30fps.mp4",
@@ -80,7 +84,11 @@
       "volume": 100,
       "colorspace": "--",
       "color_range": "",
-      "loudness_lufs": null
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "",
+      "light_end": "",
+      "force_settings_warning": false
     },
     {
       "path": "./testdata/videotestdata/rec2020-16x9.mp4",
@@ -109,7 +117,7 @@
       "out_point": null,
       "display_time": 0.0,
       "is_image": false,
-      "refresh_ok": false,
+      "refresh_ok": true,
       "aspect_warning": false,
       "par_warning": false,
       "colorspace_warning": false,
@@ -118,7 +126,11 @@
       "volume": 100,
       "colorspace": "Rec.2020",
       "color_range": "limited",
-      "loudness_lufs": null
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "",
+      "light_end": "",
+      "force_settings_warning": false
     }
   ]
 }

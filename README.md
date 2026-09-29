@@ -249,7 +249,7 @@ This check is performed when videos are added to the playlist and when a playlis
 
 ## Audio
 
-The audio track of the program is streamed via the HDMI output of the selected projector connector, not the desktop default. Preview audio can be listened to on a separate device. Each clip has its own volume; program and preview each have a VU meter. Live video and audio bitrates come from mpv (`video-bitrate` / `audio-bitrate`) and show the rate of the last few seconds, not the file average.
+The audio track of the program is streamed via the HDMI output of the selected projector connector, not the desktop default. Cinema Player keeps that HDMI audio device open (silent PCM) while the projector is covered, so the first picture of a clip is not missing its sound. Clip volume is applied in software on PCM to that HDMI jack (PipeWire/Pulse, not raw ALSA passthrough). Preview audio uses the control monitor or analog/USB speakers in the booth, never the projector HDMI. Each clip has its own volume; program and preview each have a VU meter. Live video and audio bitrates come from mpv (`video-bitrate` / `audio-bitrate`) and show the rate of the last few seconds, not the file average.
 
 ## Run
 

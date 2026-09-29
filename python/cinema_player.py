@@ -20,9 +20,11 @@ import os
 import re
 import shutil
 import math
+import tempfile
 import time
 import threading
 import tomllib
+import wave
 from dataclasses import dataclass, field, fields
 from fractions import Fraction
 
@@ -238,6 +240,59 @@ def mpv_background_args(path):
     if mpv_has_option(path, "background-color"):
         return ["--background=color", "--background-color=#000000"]
     return ["--background=#000000"]
+
+
+def program_audio_keepopen_args(path):
+    """Keep HDMI audio clocked so the projector does not mute the first seconds."""
+    arguments = []
+    if mpv_has_option(path, "audio-stream-silence"):
+        arguments.append("--audio-stream-silence=yes")
+    if mpv_has_option(path, "gapless-audio"):
+        arguments.append("--gapless-audio=weak")
+    if mpv_has_option(path, "replaygain"):
+        arguments.append("--replaygain=no")
+    if mpv_has_option(path, "audio-spdif"):
+        # Empty list: decode to PCM so the volume fader can act on HDMI.
+        arguments.append("--audio-spdif=")
+    return arguments
+
+
+METER_AF = "@meter:lavfi=[astats=metadata=1:reset=1]"
+# `--af=` replaces mpv's chain; the trailing volume filter is the program fader.
+PLAYBACK_AF = f"{METER_AF},volume"
+
+
+AUDIO_KEEPALIVE_RATE = 48000
+AUDIO_KEEPALIVE_SECONDS = 1
+
+
+def audio_keepalive_path(directory=None):
+    folder = directory if directory is not None else tempfile.gettempdir()
+    try:
+        suffix = str(os.getuid())
+    except AttributeError:
+        suffix = "user"
+    return os.path.join(folder, f"cinema-player-hdmi-keepalive-{suffix}.wav")
+
+
+def ensure_audio_keepalive_wav(path=None):
+    """Write a silent stereo WAV that can loop on the projector HDMI jack."""
+    path = path or audio_keepalive_path()
+    payload = AUDIO_KEEPALIVE_RATE * AUDIO_KEEPALIVE_SECONDS * 4
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) >= 44 + payload:
+            return path
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        tmp = f"{path}.tmp"
+        with wave.open(tmp, "wb") as handle:
+            handle.setnchannels(2)
+            handle.setsampwidth(2)
+            handle.setframerate(AUDIO_KEEPALIVE_RATE)
+            handle.writeframes(b"\x00" * payload)
+        os.replace(tmp, path)
+        return path
+    except OSError:
+        return None
 
 
 def find_mpv():
@@ -1035,11 +1090,13 @@ def score_program_audio_device(device_id, description, hdmi_index, tokens=None):
 
     score = 0
     if ident.startswith("pipewire/"):
-        score += 50
+        # PCM via PipeWire so mpv software volume reaches the projector.
+        score += 80
     elif ident.startswith("pulse/"):
-        score += 40
-    elif ident.startswith("alsa/hdmi:"):
         score += 70
+    elif ident.startswith("alsa/hdmi:"):
+        # Direct IEC958/HDMI often ignores software volume (passthrough).
+        score += 35
     else:
         return -1
 
@@ -1072,6 +1129,16 @@ def score_program_audio_device(device_id, description, hdmi_index, tokens=None):
     return score
 
 
+def is_pcm_audio_backend(device_id):
+    ident = (device_id or "").lower()
+    return ident.startswith("pipewire/") or ident.startswith("pulse/")
+
+
+def is_hdmi_audio_device(device_id, description=""):
+    text = f"{device_id} {description}".lower()
+    return "hdmi" in text or "iec958" in text or "spdif" in text
+
+
 def choose_program_audio_device(devices, output_name, sibling_outputs=None, identity=None):
     """Pick the mpv audio device that belongs to the projector output."""
     hdmi_index = connector_hdmi_index(output_name, sibling_outputs)
@@ -1079,6 +1146,58 @@ def choose_program_audio_device(devices, output_name, sibling_outputs=None, iden
     ranked = []
     for device_id, description in devices:
         score = score_program_audio_device(device_id, description, hdmi_index, tokens)
+        if score >= 0:
+            ranked.append((score, device_id))
+    # Raw ALSA HDMI is IEC958 and ignores software volume. Preview via Pulse
+    # then sounds regulated on the same jack; program does not.
+    pcm = [(score, device_id) for score, device_id in ranked if is_pcm_audio_backend(device_id)]
+    if pcm:
+        ranked = pcm
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
+def score_preview_audio_device(device_id, description, program_device=None):
+    """Control-room audio: never the projector HDMI jack."""
+    ident = (device_id or "").lower()
+    desc = (description or "").lower()
+    if ident in {"auto", "alsa", "jack", "sdl", "openal", "alsa/pipewire"}:
+        return -1
+    if program_device and ident == program_device.lower():
+        return -1
+    if is_hdmi_audio_device(ident, desc):
+        return -1
+    if ident in {"pulse", "pipewire"}:
+        # Generic default follows the desktop sink, often the projector.
+        return -1
+    if "plughw" in ident or "dmix" in ident:
+        return -1
+    score = 0
+    if ident.startswith("pipewire/"):
+        score += 80
+    elif ident.startswith("pulse/"):
+        score += 70
+    elif ident.startswith("alsa/"):
+        score += 20
+    else:
+        return -1
+    blob = f"{ident} {desc}"
+    if "analog" in blob:
+        score += 50
+    if "built-in" in blob or "internal" in blob or "intern" in blob:
+        score += 30
+    if "speaker" in blob or "headphone" in blob or "usb" in blob:
+        score += 20
+    return score
+
+
+def choose_preview_audio_device(devices, program_device=None):
+    """Pick a booth loudspeaker/headphone device, not the projector HDMI."""
+    ranked = []
+    for device_id, description in devices:
+        score = score_preview_audio_device(device_id, description, program_device)
         if score >= 0:
             ranked.append((score, device_id))
     if not ranked:
@@ -1586,6 +1705,8 @@ class VideoOutputManager:
         self.target_refresh = None
         self._program_audio_device = None
         self._program_audio_output = None
+        self._preview_audio_device = None
+        self._preview_audio_key = None
         self._gdctl_cache = None
         self._gdctl_cache_at = 0.0
         self._device_name_cache = None
@@ -1619,6 +1740,12 @@ class VideoOutputManager:
         self._gdctl_cache = None
         self._gdctl_cache_at = 0.0
         self._device_name_cache = None
+
+    def _clear_audio_cache(self):
+        self._program_audio_device = None
+        self._program_audio_output = None
+        self._preview_audio_device = None
+        self._preview_audio_key = None
 
     def gdctl_state(self):
         now = time.monotonic()
@@ -1716,7 +1843,7 @@ class VideoOutputManager:
             if preferred not in outputs:
                 raise RuntimeError(f"Ausgang {preferred} ist nicht angeschlossen.")
             self.video_output = preferred
-            self._program_audio_device = None
+            self._clear_audio_cache()
             return preferred
 
         if self.video_output:
@@ -1728,11 +1855,11 @@ class VideoOutputManager:
         for output in outputs:
             if output != primary:
                 self.video_output = output
-                self._program_audio_device = None
+                self._clear_audio_cache()
                 return output
 
         self.video_output = outputs[0]
-        self._program_audio_device = None
+        self._clear_audio_cache()
         return self.video_output
 
     def has_dedicated_beamer(self):
@@ -1752,8 +1879,7 @@ class VideoOutputManager:
         self.restore_original_mode()
         self.video_output = name
         self.video_mode = None
-        self._program_audio_device = None
-        self._program_audio_output = None
+        self._clear_audio_cache()
         return name
 
     def program_audio_device(self, mpv_path):
@@ -1785,6 +1911,42 @@ class VideoOutputManager:
         )
         self._program_audio_device = device
         self._program_audio_output = output
+        return device
+
+    def preview_audio_device(self, mpv_path):
+        """Booth audio: control-screen or analog, never the projector HDMI."""
+        program = self.program_audio_device(mpv_path)
+        primary = None
+        try:
+            primary = self.get_primary_output()
+        except Exception:
+            primary = None
+        key = (program, primary, self.video_output)
+        if self._preview_audio_device is not None and self._preview_audio_key == key:
+            return self._preview_audio_device
+        devices = list_mpv_audio_devices(mpv_path)
+        siblings = []
+        try:
+            siblings = self.get_outputs()
+        except Exception:
+            siblings = [primary] if primary else []
+        device = None
+        if primary and self.video_output and primary != self.video_output:
+            identity = None
+            if self.uses_gdctl():
+                try:
+                    identity = self.gdctl_state().identity.get(primary)
+                except Exception:
+                    identity = None
+            control = choose_program_audio_device(
+                devices, primary, sibling_outputs=siblings, identity=identity,
+            )
+            if control and control != program:
+                device = control
+        if not device:
+            device = choose_preview_audio_device(devices, program_device=program)
+        self._preview_audio_device = device
+        self._preview_audio_key = key
         return device
 
     def get_modes(self, output_name):
@@ -2455,6 +2617,7 @@ class VideoOutputManager:
         audio = self.program_audio_device(mpv_path)
         if audio:
             arguments.append(f"--audio-device={audio}")
+        arguments.extend(program_audio_keepopen_args(mpv_path))
         return arguments
 
     def restore_original_mode(self):
@@ -2518,7 +2681,7 @@ class MPVController:
         except FileNotFoundError:
             pass
 
-        command = [self.mpv_path] + list(arguments) + [
+        command = [self.mpv_path, "--no-config"] + list(arguments) + [
             "--idle=yes",
             "--keep-open=yes",
             "--input-ipc-server=" + self.socket_path,
@@ -2615,7 +2778,7 @@ class MPVController:
     def observe(self, property_name, observer_id):
         self.command("observe_property", observer_id, property_name)
 
-    def load_file(self, filename, start=None, end=None, play=True):
+    def load_file(self, filename, start=None, end=None, play=True, aid=None, sid=None):
         self.loaded_path = os.path.abspath(filename)
         self.pending_start = None if start is None else float(start)
         self.pending_end = None if end is None else float(end)
@@ -2625,11 +2788,37 @@ class MPVController:
             options["start"] = str(self.pending_start)
         if self.pending_end is not None:
             options["end"] = str(self.pending_end)
+        if aid is not None:
+            options["aid"] = str(aid)
+        if sid is not None:
+            options["sid"] = str(sid)
         if options:
             # mpv 0.38+: loadfile <url> <flags> <index> <options-map>
             self.command("loadfile", filename, "replace", 0, options)
         else:
             self.command("loadfile", filename, "replace")
+
+    def is_audio_keepalive(self):
+        if not self.loaded_path:
+            return False
+        return os.path.abspath(self.loaded_path) == os.path.abspath(audio_keepalive_path())
+
+    def load_audio_keepalive(self):
+        """Play silence so the HDMI audio device stays open during black/idle."""
+        path = ensure_audio_keepalive_wav()
+        if not path:
+            self.stop()
+            return False
+        self.loaded_path = os.path.abspath(path)
+        self.pending_start = None
+        self.pending_end = None
+        self.play_on_load = True
+        self.set_ab_loop(None, None)
+        self.set_loop_file(True)
+        self.set_vid(True)
+        self.command("loadfile", path, "replace")
+        self.set_pause(False)
+        return True
 
     def apply_pending_range(self):
         if self.pending_start is not None:
@@ -2667,6 +2856,8 @@ class MPVController:
         self.command("set_property", "time-pos", float(position))
 
     def set_volume(self, volume):
+        """Software volume (0–100). Also clear mute so HDMI is not left silenced."""
+        self.command("set_property", "mute", False)
         self.command("set_property", "volume", float(volume))
 
     def set_audio_delay(self, seconds):

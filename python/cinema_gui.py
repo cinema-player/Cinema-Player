@@ -63,6 +63,7 @@ from cinema_player import (
     same_aspect_ratio,
     session_display_name,
     session_is_wayland,
+    PLAYBACK_AF,
 )
 
 LOGO_BG = "#000000"
@@ -610,7 +611,6 @@ _PEAK_LEVEL_RE = re.compile(r"^lavfi\.astats\.(\d+)\.Peak_level$")
 METER_FLOOR_DB = -60.0
 METER_CEILING_DB = 0.0
 METER_TICKS_DB = (0, -6, -12, -18, -24, -36, -48, -60)
-METER_AF = "@meter:lavfi=[astats=metadata=1:reset=1]"
 
 
 def _parse_db(value):
@@ -1236,6 +1236,7 @@ class VideoPlayerGUI:
         self.blackout = False
         self.idle_media_path = ""
         self.idle_showing = False
+        self.hdmi_audio_keepalive = False
         self.beamer_test_active = False
         self.edid_window = None
         self.media_dirs_window = None
@@ -1920,7 +1921,7 @@ class VideoPlayerGUI:
         volume = clamp_volume(value)
         self.program_volume.set(volume)
         self._set_volume_label(self.program_volume_label, volume)
-        if self.program_state == "PLAYING" and not self.idle_showing:
+        if self.main_mpv.process and not self.idle_showing:
             self.main_mpv.set_volume(volume)
 
     def _on_preview_volume(self, value):
@@ -1939,7 +1940,7 @@ class VideoPlayerGUI:
             self._set_volume_label(self.program_volume_label, entry.volume)
             if getattr(self, "program_volume_bar", None):
                 self.program_volume_bar.set_volume(entry.volume)
-            if self.program_state == "PLAYING" and not self.idle_showing:
+            if self.main_mpv.process and not self.idle_showing:
                 self.main_mpv.set_volume(entry.volume)
         self.repaint_playlist()
 
@@ -3659,7 +3660,16 @@ class VideoPlayerGUI:
             return False
         if blank and self.program_state != "PLAYING":
             self.blank_output()
+        self._apply_preview_audio_device()
         return True
+
+    def _apply_preview_audio_device(self):
+        """Keep preview off the projector HDMI after the beamer output changes."""
+        if not self.preview_mpv.process:
+            return
+        device = self.output_manager.preview_audio_device(self.mpv_path)
+        if device:
+            self.preview_mpv.command("set_property", "audio-device", device)
 
     def _pin_main_output_to_beamer(self):
         """Keep the Wayland mpv surface on the projector after a mode change."""
@@ -3744,17 +3754,22 @@ class VideoPlayerGUI:
         except Exception as exc:
             print(f"Beamer-Modus nicht gesetzt: {exc}")
             return
-        changed = (
-            before is None
-            or before.width != mode.width
-            or before.height != mode.height
-            or not self.output_manager.refresh_close(before.refresh, mode.refresh)
-        )
+        changed = self._projection_mode_changed(before, mode)
         if changed and session_is_wayland() and self.main_mpv.process:
             self._restart_main_output(blank=False)
             if self.program_state == "PROGRAM":
                 self.blank_output()
         self.refresh_beamer()
+
+    def _projection_mode_changed(self, before, mode):
+        """True when the projector was switched to a different size or refresh."""
+        if before is None or mode is None:
+            return True
+        return (
+            before.width != mode.width
+            or before.height != mode.height
+            or not self.output_manager.refresh_close(before.refresh, mode.refresh)
+        )
 
     def _skip_to_playable(self, inclusive=True):
         """Move the program cursor to the next clip whose file is still on disk."""
@@ -6330,7 +6345,7 @@ class VideoPlayerGUI:
                 return False
             self.output_manager.ensure_operator_layout()
             arguments = self.output_manager.get_mpv_arguments(self.mpv_path)
-            arguments.append(f"--af={METER_AF}")
+            arguments.append(f"--af={PLAYBACK_AF}")
             self.main_mpv.start(arguments)
             self.main_mpv.observe("af-metadata/meter", 5)
         except Exception as exc:
@@ -6358,10 +6373,16 @@ class VideoPlayerGUI:
         if not self.main_mpv.process:
             self._reset_program_meter()
             return
-        self.main_mpv.stop()
-        self.main_mpv.set_ab_loop(None, None)
-        self.main_mpv.set_loop_file(False)
-        self.main_mpv.set_vid(True)
+        # Keep HDMI PCM running. stop() closes the audio device and the
+        # projector then mutes the first seconds of the next clip.
+        if not self.main_mpv.load_audio_keepalive():
+            self.hdmi_audio_keepalive = False
+            self.main_mpv.stop()
+            self.main_mpv.set_ab_loop(None, None)
+            self.main_mpv.set_loop_file(False)
+            self.main_mpv.set_vid(True)
+        else:
+            self.hdmi_audio_keepalive = True
         self.current_file = None
         self.main_pause = False
         self.blackout = True
@@ -6438,11 +6459,16 @@ class VideoPlayerGUI:
             "--osd-level=0",
             "--image-display-duration=inf",
             "--pause",
-            "--audio-device=auto",
             "--sid=no",
             "--sub-auto=no",
-            f"--af={METER_AF}",
+            f"--af={PLAYBACK_AF}",
         ]
+        audio = self.output_manager.preview_audio_device(self.mpv_path)
+        if audio:
+            arguments.append(f"--audio-device={audio}")
+        else:
+            # Never fall back to auto: that follows the desktop default, often HDMI.
+            arguments.append("--ao=null")
         try:
             self.preview_mpv.start(arguments)
             self.preview_mpv.observe("af-metadata/meter", 5)
@@ -6544,6 +6570,10 @@ class VideoPlayerGUI:
             self.refresh_all()
             return
         entry = self.playlist[self.program_index]
+        before = None
+        output = self.output_manager.video_output
+        if output:
+            before = self.output_manager.get_current_mode(output)
         try:
             video, mode, matched = self.output_manager.prepare_for_video(entry.path)
             entry.refresh_ok = matched
@@ -6565,7 +6595,8 @@ class VideoPlayerGUI:
             self.refresh_all()
             return
 
-        if session_is_wayland():
+        mode_changed = self._projection_mode_changed(before, mode)
+        if session_is_wayland() and mode_changed and self.main_mpv.process:
             if not self._restart_main_output(blank=False):
                 self.program_state = "PROGRAM"
                 self.refresh_all()
@@ -6584,8 +6615,6 @@ class VideoPlayerGUI:
                 "set_property", "geometry", self.output_manager.get_mpv_geometry()
             )
 
-        looping = bool(entry.loop and not entry.is_image)
-        self._apply_program_loop(entry)
         self.main_mpv.set_vid(True)
         self.idle_showing = False
         self._cancel_light_after("lights_play_after")
@@ -6620,19 +6649,23 @@ class VideoPlayerGUI:
         if self.program_state != "PLAYING" or entry is not self.current_entry():
             return
         looping = bool(entry.loop and not entry.is_image)
+        volume = clamp_volume(entry.volume)
+        aid, sid = self._entry_track_ids(entry)
+        self._load_program_volume(entry, force=True)
+        self.main_mpv.set_volume(volume)
+        self._apply_program_audio_delay(entry)
         self.main_mpv.load_file(
             entry.path,
             start=entry.in_point,
             end=None if looping else entry.out_point,
             play=True,
+            aid=aid,
+            sid=sid,
         )
+        self._apply_program_loop(entry)
         if session_is_wayland():
             self._pin_main_output_to_beamer()
         self.apply_tracks(entry, self.main_mpv)
-        volume = clamp_volume(entry.volume)
-        self._load_program_volume(entry, force=True)
-        self.main_mpv.set_volume(volume)
-        self._apply_program_audio_delay(entry)
         self.start_still_timer(entry)
         if self.preview_live:
             self.show_preview_clip(entry, follow_live=True)
@@ -6709,21 +6742,26 @@ class VideoPlayerGUI:
         self.still_started = None
         self.still_waiting = False
 
-    def apply_tracks(self, entry, controller):
-        if entry.audio_track and entry.audio_track != "--":
+    def _entry_track_ids(self, entry):
+        aid = None
+        sid = "no"
+        if entry and entry.audio_track and entry.audio_track != "--":
             try:
                 aid = int(entry.audio_track.split(":", 1)[0])
-                controller.command("set_property", "aid", aid)
             except ValueError:
                 pass
-        if entry.subtitle_track and entry.subtitle_track != "--":
+        if entry and entry.subtitle_track and entry.subtitle_track != "--":
             try:
                 sid = int(entry.subtitle_track.split(":", 1)[0])
-                controller.command("set_property", "sid", sid)
             except ValueError:
                 pass
-        else:
-            controller.command("set_property", "sid", "no")
+        return aid, sid
+
+    def apply_tracks(self, entry, controller):
+        aid, sid = self._entry_track_ids(entry)
+        if aid is not None:
+            controller.command("set_property", "aid", aid)
+        controller.command("set_property", "sid", sid)
 
     def confirm_pause(self):
         if self.program_state != "PLAYING":
@@ -7036,16 +7074,31 @@ class VideoPlayerGUI:
             mpv.apply_pending_range()
             self.program_video_bps = 0
             self.program_audio_bps = 0
+            if mpv.is_audio_keepalive():
+                self.hdmi_audio_keepalive = True
+                self.main_pause = False
+                return
+            self.hdmi_audio_keepalive = False
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
                 self._apply_program_loop(entry, mpv)
                 if self.program_state == "PLAYING":
-                    mpv.set_volume(clamp_volume(entry.volume))
+                    mpv.set_volume(clamp_volume(self.program_volume.get()))
             self.main_pause = False
+            return
+        if event == "playback-restart":
+            if (
+                self.program_state == "PLAYING"
+                and not self.hdmi_audio_keepalive
+                and not self.idle_showing
+            ):
+                mpv.set_volume(clamp_volume(self.program_volume.get()))
             return
         if event == "end-file" and message.get("reason") in (None, "eof", "stop"):
             if self.beamer_test_active:
+                return
+            if self.hdmi_audio_keepalive or mpv.is_audio_keepalive():
                 return
             if (
                 message.get("reason") == "eof"
