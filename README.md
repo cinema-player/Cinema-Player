@@ -12,7 +12,7 @@ Two mpv instances run in parallel: one on the projector output, and one embedded
 
 ## Controller
 
-The header shows the Cinema Player logo, the version, and whether the session is X11 or Wayland, plus a settings menu. The rest of the window is split into two columns.
+The header shows the Cinema Player logo, the program version beside the mpv version, and whether the session is X11 or Wayland, plus a settings menu. The rest of the window is split into two columns.
 
 **Left**
 
