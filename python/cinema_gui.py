@@ -45,6 +45,8 @@ from cinema_player import (
     clamp_volume,
     find_mpv,
     find_ffmpeg,
+    header_version_text,
+    read_mpv_version,
     format_bitrate,
     format_clock,
     format_codec_rate,
@@ -1428,11 +1430,16 @@ class VideoPlayerGUI:
             tk.Label(
                 plate, text="PLAYER", bg=LOGO_BG, fg=LOGO_ACCENT, font=FONT_LOGO_LIGHT,
             ).pack(side="left", padx=(7, 10), pady=4)
-        tk.Label(
+        self.header_version = tk.Label(
             header,
-            text=f"v{APP_VERSION}  ·  {session_display_name()}",
+            text=header_version_text(
+                APP_VERSION,
+                read_mpv_version(getattr(self, "mpv_path", "")),
+                session_display_name(),
+            ),
             bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_UI,
-        ).pack(side="left", padx=(10, 0), pady=(0, 8), anchor="s")
+        )
+        self.header_version.pack(side="left", padx=(10, 0), pady=(0, 8), anchor="s")
 
     def _load_image(self, path):
         try:

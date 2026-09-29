@@ -120,6 +120,52 @@ def session_display_name():
     return "Wayland" if session_is_wayland() else "X11"
 
 
+def parse_mpv_version(text):
+    """Version token from `mpv --version` output."""
+    for line in (text or "").splitlines():
+        parts = line.strip().split()
+        if len(parts) < 2 or parts[0].lower() != "mpv":
+            continue
+        token = parts[1]
+        if token.lower() in {"copyright", "built"}:
+            continue
+        return token.lstrip("vV")
+    return ""
+
+
+_mpv_version_cache = {}
+
+
+def read_mpv_version(path):
+    """Ask the given mpv binary for its version string."""
+    if not path:
+        return ""
+    cached = _mpv_version_cache.get(path)
+    if cached is not None:
+        return cached
+    try:
+        result = subprocess.run(
+            [path, "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        text = f"{result.stdout}\n{result.stderr}"
+    except (OSError, subprocess.TimeoutExpired):
+        text = ""
+    version = parse_mpv_version(text)
+    _mpv_version_cache[path] = version
+    return version
+
+
+def header_version_text(app_version, mpv_ver="", session_name=""):
+    """Header label: program version, optional mpv version, session."""
+    parts = [f"v{app_version}"]
+    if mpv_ver:
+        parts.append(f"mpv {mpv_ver}")
+    if session_name:
+        parts.append(session_name)
+    return "  ·  ".join(parts)
+
+
 def mpv_gpu_context_help(path):
     try:
         result = subprocess.run(
