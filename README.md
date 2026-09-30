@@ -47,7 +47,7 @@ The burger menu in the header covers booth setup:
   - Language (English / Deutsch)
   - Text size (A−− … A++, remembered)
   - Remote control (LAN HTTP API and smartphone page; port and required token)
-  - Light control (Shelly switches and dimmers on the LAN; house-light presets Bright / Medium / Dark)
+  - Light control (DMX512 over an Enttec DMX USB Pro or Art-Net; house-light presets Bright / Medium / Dark)
 - **Calibration** (in **OFF** and while already calibrating)
   - Beamer test image (Cinema Player logo on the projector; only in **OFF**)
   - Video / Audio
@@ -77,7 +77,7 @@ The playlist menu offers:
 
 These settings control the behavior of the playlist.
 
-- **Dark / Medium / Bright** – Manual house-light presets. They are disabled until at least one Shelly is ticked and **House lights** is on in Settings → System settings → Light control (or on the phone).
+- **Dark / Medium / Bright** – Manual house-light presets. They are disabled until **House lights** is on in Settings → System settings → Light control (or on the phone).
 - **Idle media name** – If an idle file is set, its name is shown here. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Playlist. When **Settings warning** is on, red **Settings warning on** appears beside it.
 
 ### Playback Controls
@@ -108,9 +108,14 @@ The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the
 
 ### Lights
 
-Cinema Player talks to Shelly switches and dimmers on the LAN (HTTP, no extra packages). Settings → System settings → **Light control** scans the network (mDNS when `avahi-browse` is installed, otherwise a `/24` probe) or accepts an IP address. Enter the Shelly **user** and **password** (Gen2 is `admin`); they are stored per device and used for HTTP Basic and Gen2 RPC digest. Tick the devices that should follow house-light cues. **Bright**, **Medium**, and **Dark** are dimmer percentages (defaults 100 / 40 / 0); a switch turns on above 0%. Fade is the dimmer transition in seconds.
+Cinema Player sends house lights as DMX512. Settings → System settings → **Light control** chooses the connection:
 
-**Dark**, **Medium**, and **Bright** sit on the playlist tools row and on the smartphone remote so the house lights can be set by hand. The chosen button blinks while the fade runs. **House lights** in Settings → System settings → Light control (and on the phone) switches the whole Shelly control off: no manual buttons, no playlist cues, no film-start or film-end fades. The choice is saved. It cannot be switched on until at least one Shelly is ticked. Launching Cinema Player sends **Bright** to every selected Shelly.
+- **Enttec DMX USB Pro** (default): DMX512 through an Enttec DMX USB Pro compatible interface, usually `/dev/ttyUSB0`, at 57600 baud. Open DMX is not supported. The user needs access to the port (group `dialout`). Plugged-in adapters are listed; a path can also be typed.
+- **Art-Net (LAN)**: ArtDMX to a node (or broadcast) on UDP port 6454. Universe 0 is the default.
+
+**Channels** are the dimmer slots (1–512), as a list or a range such as `1` or `1, 2, 5-7`. The default is channel 1. Other slots stay at 0. **Bright**, **Medium**, and **Dark** are percentages (defaults 100 / 40 / 0) mapped to DMX 0–255. Fade is the software crossfade in seconds. A missing interface does not stop playback; the light window reports the error.
+
+**Dark**, **Medium**, and **Bright** sit on the playlist tools row and on the smartphone remote so the house lights can be set by hand. The chosen button blinks while the fade runs. **House lights** in Settings → System settings → Light control (and on the phone) switches DMX cues off: no manual buttons, no playlist cues, no film-start or film-end fades. The choice is saved. Saved Shelly device lists are ignored; preset levels and fade times are kept, and house lights stay off until they are switched on again. Launching Cinema Player with house lights on sends **Bright**.
 
 In Settings → System settings → **Light control**, **Start film** is how many seconds before the dim-down finishes the clip starts (0 waits until the fade is done). **Lights up** is how many seconds before the clip ends the house lights come up. With Autoplay to the next clip the lights stay dark.
 
