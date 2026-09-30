@@ -19,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 from language import LANGUAGES, t, set_language, current_language
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
 import qr_code
-import shelly
+import dmx
 from cinema_player import (
     APP_VERSION,
     FONT_FAMILY,
@@ -1314,17 +1314,15 @@ class VideoPlayerGUI:
         self.lights_window = None
         lights_cfg = self.settings.get("lights") if isinstance(self.settings.get("lights"), dict) else {}
         (
-            self.lights_devices,
+            self.dmx_output,
             self.lights_presets,
             self.lights_transition_ms,
             lights_on,
             self.lights_start_lead_ms,
             self.lights_end_lead_ms,
-        ) = shelly.load_lights_config(lights_cfg)
+        ) = dmx.load_lights_config(lights_cfg)
         self.lights_control = tk.BooleanVar(value=lights_on)
         self.settings_lights_check = None
-        self.lights_username = tk.StringVar(value=str(lights_cfg.get("username") or ""))
-        self.lights_password = tk.StringVar(value=str(lights_cfg.get("password") or ""))
         self.lights_current = ""
         self.lights_fading = False
         self.lights_fade_after = None
@@ -1332,9 +1330,10 @@ class VideoPlayerGUI:
         self.lights_blink_on = False
         self.lights_play_after = None
         self.lights_end_sent = False
+        self._light_errors = []
+        self._light_error_lock = threading.Lock()
         self.program_light_buttons = {}
         self.settings_light_buttons = {}
-        self._lights_scan_busy = False
         self._remote_action = False
         self._windowed_geometry = None
         self._fullscreen_applied = False
@@ -3150,7 +3149,7 @@ class VideoPlayerGUI:
                 badges.append(t("auto_badge"))
             if entry.loop and not entry.is_image:
                 badges.append(t("loop_badge"))
-            play = shelly.play_preset(entry.light_start)
+            play = dmx.play_preset(entry.light_start)
             if play == "medium":
                 badges.append(t("light_medium_badge"))
             elif play == "bright":
@@ -4608,7 +4607,7 @@ class VideoPlayerGUI:
             start["values"] = self._play_light_labels()
 
     def _light_label_for_key(self, key):
-        key = shelly.normalize_preset(key)
+        key = dmx.normalize_preset(key)
         for item, label in zip(self._light_choice_keys(), self._light_choice_labels()):
             if item == key:
                 return label
@@ -4618,10 +4617,10 @@ class VideoPlayerGUI:
         for item, text in zip(self._light_choice_keys(), self._light_choice_labels()):
             if text == label:
                 return item
-        return shelly.normalize_preset(label)
+        return dmx.normalize_preset(label)
 
     def _set_play_light_combo(self, key):
-        shown = shelly.play_preset(key)
+        shown = dmx.play_preset(key)
         if shown == "medium":
             label = t("light_medium")
         elif shown == "bright":
@@ -4647,58 +4646,52 @@ class VideoPlayerGUI:
             return
         if not bool(self.lights_control.get()):
             return
-        key = shelly.normalize_preset(preset)
+        key = dmx.normalize_preset(preset)
         if not key:
             return
-        if not force and shelly.already_at_preset(self.lights_current, key):
+        if not force and dmx.already_at_preset(self.lights_current, key):
             return
         self.lights_current = key
-        devices = [device for device in self.lights_devices if device.enabled and device.host]
-        if not devices:
+        output = getattr(self, "dmx_output", None)
+        if output is None or not output.ready():
             self._stop_light_fade()
             self._refresh_light_buttons()
             return
-        snapshot = [shelly.ShellyDevice.from_dict(device.to_dict()) for device in devices]
-        username, password = self._lights_auth()
-        for device in snapshot:
-            if not device.username:
-                device.username = username
-            if not device.password:
-                device.password = password
         presets = dict(self.lights_presets)
         transition = self.lights_transition_ms
         self._start_light_fade(transition)
 
         def worker():
-            shelly.apply_preset(snapshot, key, presets, transition)
+            error = dmx.apply_preset(output, key, presets, transition)
+            with self._light_error_lock:
+                self._light_errors.append(error)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _show_lights_error(self, error):
+        """Report a DMX problem (missing Enttec cable, closed port) in the light window."""
+        status = getattr(self, "lights_status", None)
+        if status is None or getattr(self, "lights_window", None) is None:
+            return
+        try:
+            status.set(str(error or ""))
+        except tk.TclError:
+            pass
 
     def _on_light_preset(self, preset):
         self._apply_lights(preset, force=True)
 
-    def _lights_auth(self):
-        username = ""
-        password = ""
-        if getattr(self, "lights_username", None) is not None:
-            username = self.lights_username.get().strip()
-        if getattr(self, "lights_password", None) is not None:
-            password = self.lights_password.get()
-        return username, password
-
-    def _has_selected_shelly(self):
-        return any(
-            getattr(device, "enabled", False) and device.host
-            for device in getattr(self, "lights_devices", []) or []
-        )
+    def _dmx_ready(self):
+        output = getattr(self, "dmx_output", None)
+        return bool(output is not None and output.ready())
 
     def _sync_lights_control(self, save=True):
-        has_device = self._has_selected_shelly()
-        if not has_device:
+        ready = self._dmx_ready()
+        if not ready:
             if getattr(self, "lights_control", None) is not None:
                 self.lights_control.set(False)
             self._stop_light_fade()
-        state = "normal" if has_device else "disabled"
+        state = "normal" if ready else "disabled"
         box = getattr(self, "settings_lights_check", None)
         if box is not None:
             try:
@@ -4711,7 +4704,7 @@ class VideoPlayerGUI:
         self._refresh_lights_indicator()
 
     def _on_lights_control(self):
-        if bool(self.lights_control.get()) and not self._has_selected_shelly():
+        if bool(self.lights_control.get()) and not self._dmx_ready():
             self.lights_control.set(False)
         if not bool(self.lights_control.get()):
             self._stop_light_fade()
@@ -4767,7 +4760,7 @@ class VideoPlayerGUI:
 
     def _refresh_light_buttons(self):
         enabled = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
-        current = shelly.normalize_preset(getattr(self, "lights_current", "")) if enabled else ""
+        current = dmx.normalize_preset(getattr(self, "lights_current", "")) if enabled else ""
         fading = bool(enabled and current and getattr(self, "lights_fading", False))
         blink_on = bool(getattr(self, "lights_blink_on", False))
         for key, button in self._iter_light_buttons():
@@ -4799,14 +4792,13 @@ class VideoPlayerGUI:
 
     def _save_lights_settings(self):
         enabled = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else True
-        self.settings["lights"] = shelly.dump_lights_config(
-            self.lights_devices,
+        self.settings["lights"] = dmx.dump_lights_config(
+            getattr(self, "dmx_output", None) or dmx.DmxOutput(),
             self.lights_presets,
             self.lights_transition_ms,
             enabled,
             self.lights_start_lead_ms,
             self.lights_end_lead_ms,
-            *self._lights_auth(),
         )
         try:
             save_settings(self.settings)
@@ -4814,7 +4806,7 @@ class VideoPlayerGUI:
             pass
 
     def show_lights(self):
-        """Choose Shelly switches and dimmers on the LAN."""
+        """Configure DMX house lights over an Enttec DMX USB Pro or Art-Net."""
         window = getattr(self, "lights_window", None)
         if window is not None:
             try:
@@ -4822,7 +4814,6 @@ class VideoPlayerGUI:
                     window.deiconify()
                     window.lift()
                     window.focus_force()
-                    self._refresh_lights_device_list()
                     self._refresh_light_buttons()
                     return
             except tk.TclError:
@@ -4830,7 +4821,7 @@ class VideoPlayerGUI:
         window = tk.Toplevel(self.root)
         window.title(t("lights"))
         window.configure(bg=COLOR_BG)
-        window.minsize(720, 520)
+        window.minsize(640, 420)
         if self.icon_image is not None:
             try:
                 window.iconphoto(True, self.icon_image)
@@ -4840,38 +4831,67 @@ class VideoPlayerGUI:
         window.protocol("WM_DELETE_WINDOW", self._close_lights_window)
         tk.Label(
             window, text=t("lights_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
-            font=FONT_SMALL, wraplength=640, justify="left",
+            font=FONT_SMALL, wraplength=620, justify="left",
         ).pack(fill="x", padx=10, pady=(10, 6))
         holder = tk.Frame(window, bg=COLOR_PANEL)
         holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         tools = tk.Frame(holder, bg=COLOR_PANEL)
         tools.pack(fill="x", padx=8, pady=(8, 4))
-        tk.Button(tools, text=t("lights_scan"), font=FONT_SMALL, command=self._scan_lights).pack(side="left")
-        self.lights_ip = tk.StringVar(value="")
-        tk.Entry(tools, textvariable=self.lights_ip, width=16, font=FONT_UI).pack(side="left", padx=(12, 4))
-        tk.Button(tools, text=t("lights_add"), font=FONT_SMALL, command=self._add_light_host).pack(side="left")
         box = self._checkbutton(
             tools, t("lights_control"), self.lights_control, self._on_lights_control, COLOR_PANEL,
         )
         box.pack(side="right")
         self.settings_lights_check = box
-        self._sync_lights_control(save=False)
-        auth = tk.Frame(holder, bg=COLOR_PANEL)
-        auth.pack(fill="x", padx=8, pady=(0, 4))
-        tk.Label(auth, text=t("lights_username"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(auth, textvariable=self.lights_username, width=14, font=FONT_UI).pack(side="left", padx=(4, 12))
-        tk.Label(auth, text=t("lights_password"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(
-            auth, textvariable=self.lights_password, width=14, font=FONT_UI, show="*",
-        ).pack(side="left", padx=4)
+        output = getattr(self, "dmx_output", None) or dmx.DmxOutput()
+        self.lights_mode = tk.StringVar(value=self._lights_mode_label(output.mode))
+        self.lights_host = tk.StringVar(value=output.host or dmx.DEFAULT_HOST)
+        self.lights_universe = tk.StringVar(value=str(output.universe))
+        self.lights_device = tk.StringVar(value=output.device)
+        self.lights_channels = tk.StringVar(value=dmx.format_channels(output.channels) or "1")
+        node = tk.Frame(holder, bg=COLOR_PANEL)
+        node.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(node, text=t("lights_mode"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        mode_combo = ttk.Combobox(
+            node,
+            textvariable=self.lights_mode,
+            width=22,
+            state="readonly",
+            values=[t("lights_mode_enttec"), t("lights_mode_artnet")],
+        )
+        mode_combo.pack(side="left", padx=(4, 12))
+        mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_lights_mode())
+        tk.Label(node, text=t("lights_host"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        self.lights_host_entry = tk.Entry(node, textvariable=self.lights_host, width=18, font=FONT_UI)
+        self.lights_host_entry.pack(side="left", padx=(4, 12))
+        tk.Label(node, text=t("lights_universe"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        self.lights_universe_entry = tk.Entry(node, textvariable=self.lights_universe, width=5, font=FONT_UI)
+        self.lights_universe_entry.pack(side="left", padx=4)
+        cable = tk.Frame(holder, bg=COLOR_PANEL)
+        cable.pack(fill="x", padx=8, pady=(0, 2))
+        tk.Label(cable, text=t("lights_device"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        self.lights_device_combo = ttk.Combobox(
+            cable,
+            textvariable=self.lights_device,
+            width=30,
+            postcommand=self._fill_lights_devices,
+        )
+        self.lights_device_combo.pack(side="left", padx=(4, 12))
+        self._fill_lights_devices()
+        tk.Label(cable, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        tk.Entry(cable, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
+        tk.Label(
+            holder, text=t("lights_device_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+            wraplength=620, justify="left",
+        ).pack(fill="x", padx=8)
+        tk.Label(
+            holder, text=t("lights_channels_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+        ).pack(fill="x", padx=8, pady=(0, 2))
+        self._update_lights_mode_fields()
         self.lights_status = tk.StringVar(value="")
         tk.Label(
             holder, textvariable=self.lights_status, bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
         ).pack(fill="x", padx=8)
-        list_holder = tk.Frame(holder, bg=COLOR_FIELD, highlightthickness=1, highlightbackground=COLOR_BORDER)
-        list_holder.pack(fill="both", expand=True, padx=8, pady=4)
-        self.lights_list = tk.Frame(list_holder, bg=COLOR_FIELD)
-        self.lights_list.pack(fill="both", expand=True)
+        self._sync_lights_control(save=False)
         presets = tk.Frame(holder, bg=COLOR_PANEL)
         presets.pack(fill="x", padx=8, pady=(8, 4))
         self.lights_bright = tk.StringVar(value=str(self.lights_presets.get("bright", 100)))
@@ -4891,8 +4911,8 @@ class VideoPlayerGUI:
         tk.Label(presets, text=t("seconds_short"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
         timing = tk.Frame(holder, bg=COLOR_PANEL)
         timing.pack(fill="x", padx=8, pady=(0, 4))
-        self.lights_start_lead = tk.StringVar(value=shelly.ms_to_seconds_text(self.lights_start_lead_ms))
-        self.lights_end_lead = tk.StringVar(value=shelly.ms_to_seconds_text(self.lights_end_lead_ms))
+        self.lights_start_lead = tk.StringVar(value=dmx.ms_to_seconds_text(self.lights_start_lead_ms))
+        self.lights_end_lead = tk.StringVar(value=dmx.ms_to_seconds_text(self.lights_end_lead_ms))
         tk.Label(timing, text=t("lights_start_lead"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
         tk.Entry(timing, textvariable=self.lights_start_lead, width=4, font=FONT_UI).pack(side="left", padx=4)
         tk.Label(
@@ -4927,169 +4947,110 @@ class VideoPlayerGUI:
             side="right", padx=(0, 8),
         )
         self.lights_window = window
-        self._refresh_lights_device_list()
-        self._place_on_control_monitor(window, 760, 560)
+        self._place_on_control_monitor(window, 760, 460)
+
+    def _lights_mode_label(self, key):
+        if dmx.normalize_mode(key) == dmx.MODE_ARTNET:
+            return t("lights_mode_artnet")
+        return t("lights_mode_enttec")
+
+    def _lights_mode_key(self):
+        variable = getattr(self, "lights_mode", None)
+        if variable is None:
+            output = getattr(self, "dmx_output", None)
+            return dmx.normalize_mode(output.mode if output else dmx.DEFAULT_MODE)
+        if variable.get() == t("lights_mode_artnet"):
+            return dmx.MODE_ARTNET
+        return dmx.MODE_ENTTEC
+
+    def _fill_lights_devices(self):
+        combo = getattr(self, "lights_device_combo", None)
+        if combo is None:
+            return
+        devices = dmx.list_serial_devices()
+        current = self.lights_device.get().strip()
+        if current and current not in devices:
+            devices.insert(0, current)
+        try:
+            combo.configure(values=devices)
+        except tk.TclError:
+            self.lights_device_combo = None
+
+    def _update_lights_mode_fields(self):
+        enttec = self._lights_mode_key() == dmx.MODE_ENTTEC
+        widgets = (
+            (getattr(self, "lights_host_entry", None), not enttec),
+            (getattr(self, "lights_universe_entry", None), not enttec),
+            (getattr(self, "lights_device_combo", None), enttec),
+        )
+        for widget, active in widgets:
+            if widget is None:
+                continue
+            try:
+                widget.config(state="normal" if active else "disabled")
+            except tk.TclError:
+                pass
+
+    def _on_lights_mode(self):
+        self._update_lights_mode_fields()
+        self._commit_lights_settings()
 
     def _close_lights_window(self):
         self._commit_lights_settings()
         window = getattr(self, "lights_window", None)
         self.lights_window = None
-        self.lights_list = None
         self.settings_light_buttons = {}
         self.settings_lights_check = None
+        self.lights_host_entry = None
+        self.lights_universe_entry = None
+        self.lights_device_combo = None
         if window is not None:
             try:
                 window.destroy()
             except tk.TclError:
                 pass
 
-    def _refresh_lights_device_list(self):
-        holder = getattr(self, "lights_list", None)
-        if holder is None:
-            return
-        for child in holder.winfo_children():
-            child.destroy()
-        if not self.lights_devices:
-            tk.Label(
-                holder, text=t("lights_empty"), bg=COLOR_FIELD, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
-            ).pack(fill="x", padx=8, pady=8)
-            return
-        for device in self.lights_devices:
-            row = tk.Frame(holder, bg=COLOR_FIELD)
-            row.pack(fill="x", padx=6, pady=2)
-            variable = tk.BooleanVar(value=bool(device.enabled))
-
-            def toggle(_event=None, chosen=device, var=variable):
-                chosen.enabled = bool(var.get())
-                self._sync_lights_control()
-
-            box = tk.Checkbutton(
-                row, text=device.label(), variable=variable, command=toggle,
-                font=FONT_SMALL, bg=COLOR_FIELD, fg=COLOR_TEXT,
-                activebackground=COLOR_FIELD, activeforeground=COLOR_TEXT,
-                selectcolor=COLOR_FIELD, highlightthickness=0, anchor="w",
-            )
-            box.pack(side="left", fill="x", expand=True)
-            user_var = tk.StringVar(value=device.username)
-            pass_var = tk.StringVar(value=device.password)
-
-            def write_creds(_event=None, chosen=device, user=user_var, pw=pass_var):
-                chosen.username = user.get().strip()
-                chosen.password = pw.get()
-
-            tk.Label(row, text=t("lights_username"), bg=COLOR_FIELD, fg=COLOR_MUTED, font=FONT_SMALL).pack(
-                side="left", padx=(8, 4),
-            )
-            user_entry = tk.Entry(row, textvariable=user_var, width=10, font=FONT_SMALL)
-            user_entry.pack(side="left")
-            user_entry.bind("<FocusOut>", write_creds)
-            tk.Label(row, text=t("lights_password"), bg=COLOR_FIELD, fg=COLOR_MUTED, font=FONT_SMALL).pack(
-                side="left", padx=(8, 4),
-            )
-            pass_entry = tk.Entry(row, textvariable=pass_var, width=10, font=FONT_SMALL, show="*")
-            pass_entry.pack(side="left")
-            pass_entry.bind("<FocusOut>", write_creds)
-            user_var.trace_add("write", lambda *_args: write_creds())
-            pass_var.trace_add("write", lambda *_args: write_creds())
-
     def _lights_transition_text(self):
-        return shelly.ms_to_seconds_text(self.lights_transition_ms)
+        return dmx.ms_to_seconds_text(self.lights_transition_ms)
 
     def _commit_lights_settings(self):
+        if getattr(self, "lights_host", None) is not None:
+            self.dmx_output = dmx.DmxOutput(
+                host=self.lights_host.get(),
+                universe=self.lights_universe.get(),
+                channels=self.lights_channels.get(),
+                mode=self._lights_mode_key(),
+                device=self.lights_device.get(),
+            )
+            self.lights_mode.set(self._lights_mode_label(self.dmx_output.mode))
+            self.lights_host.set(self.dmx_output.host or dmx.DEFAULT_HOST)
+            self.lights_universe.set(str(self.dmx_output.universe))
+            self.lights_device.set(self.dmx_output.device)
+            self.lights_channels.set(dmx.format_channels(self.dmx_output.channels) or "1")
         if getattr(self, "lights_bright", None) is not None:
             self.lights_presets = {
-                "bright": shelly.clamp_percent(self.lights_bright.get(), 100),
-                "medium": shelly.clamp_percent(self.lights_medium.get(), 40),
-                "dark": shelly.clamp_percent(self.lights_dark.get(), 0),
+                "bright": dmx.clamp_percent(self.lights_bright.get(), 100),
+                "medium": dmx.clamp_percent(self.lights_medium.get(), 40),
+                "dark": dmx.clamp_percent(self.lights_dark.get(), 0),
             }
             try:
                 seconds = float(self.lights_transition.get())
             except (TypeError, ValueError):
-                seconds = shelly.DEFAULT_TRANSITION_MS / 1000.0
+                seconds = dmx.DEFAULT_TRANSITION_MS / 1000.0
             self.lights_transition_ms = max(0, int(round(seconds * 1000)))
-            self.lights_start_lead_ms = shelly.seconds_to_ms(
+            self.lights_start_lead_ms = dmx.seconds_to_ms(
                 self.lights_start_lead.get(), self.lights_start_lead_ms,
             )
-            self.lights_end_lead_ms = shelly.seconds_to_ms(
+            self.lights_end_lead_ms = dmx.seconds_to_ms(
                 self.lights_end_lead.get(), self.lights_end_lead_ms,
             )
             self.lights_bright.set(str(self.lights_presets["bright"]))
             self.lights_medium.set(str(self.lights_presets["medium"]))
             self.lights_dark.set(str(self.lights_presets["dark"]))
             self.lights_transition.set(self._lights_transition_text())
-            self.lights_start_lead.set(shelly.ms_to_seconds_text(self.lights_start_lead_ms))
-            self.lights_end_lead.set(shelly.ms_to_seconds_text(self.lights_end_lead_ms))
-        self._save_lights_settings()
-
-    def _scan_lights(self):
-        if self._lights_scan_busy:
-            return
-        self._commit_lights_settings()
-        self._lights_scan_busy = True
-        status = getattr(self, "lights_status", None)
-        if status is not None:
-            status.set(t("lights_scanning"))
-        username, password = self._lights_auth()
-
-        def worker():
-            try:
-                found = shelly.discover_devices(username, password)
-                error = ""
-            except Exception as exc:
-                found = []
-                error = str(exc)
-            self.root.after(0, lambda: self._lights_scan_done(found, error))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _lights_scan_done(self, found, error):
-        self._lights_scan_busy = False
-        self.lights_devices = shelly.merge_discovered(self.lights_devices, found)
+            self.lights_start_lead.set(dmx.ms_to_seconds_text(self.lights_start_lead_ms))
+            self.lights_end_lead.set(dmx.ms_to_seconds_text(self.lights_end_lead_ms))
         self._sync_lights_control()
-        status = getattr(self, "lights_status", None)
-        if status is not None:
-            if error:
-                status.set(error)
-            elif found:
-                status.set(t("lights_found", count=len(found)))
-            else:
-                status.set(t("lights_none"))
-        self._refresh_lights_device_list()
-
-    def _add_light_host(self):
-        host = (self.lights_ip.get() if getattr(self, "lights_ip", None) else "").strip()
-        if not host:
-            return
-        status = getattr(self, "lights_status", None)
-        if status is not None:
-            status.set(t("lights_scanning"))
-        username, password = self._lights_auth()
-
-        def worker():
-            try:
-                device = shelly.probe_host(host, username, password)
-                error = "" if device else t("lights_probe_failed", host=host)
-            except Exception as exc:
-                device = None
-                error = str(exc)
-            self.root.after(0, lambda: self._add_light_host_done(device, error))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _add_light_host_done(self, device, error):
-        status = getattr(self, "lights_status", None)
-        if device:
-            device.enabled = True
-            self.lights_devices = shelly.merge_discovered(self.lights_devices, [device])
-            self._sync_lights_control()
-            if status is not None:
-                status.set(device.label())
-            if getattr(self, "lights_ip", None) is not None:
-                self.lights_ip.set("")
-            self._refresh_lights_device_list()
-            return
-        if status is not None:
-            status.set(error or t("lights_probe_failed", host=""))
 
     def _test_lights(self, preset):
         self._commit_lights_settings()
@@ -5098,10 +5059,11 @@ class VideoPlayerGUI:
             if status is not None:
                 status.set(t("lights_control_off"))
             return
-        if not any(device.enabled and device.host for device in self.lights_devices):
+        if not self._dmx_ready():
             status = getattr(self, "lights_status", None)
             if status is not None:
-                status.set(t("lights_none_enabled"))
+                enttec = self._lights_mode_key() == dmx.MODE_ENTTEC
+                status.set(t("lights_none_ready_enttec") if enttec else t("lights_none_ready"))
             return
         self._apply_lights(preset, force=True)
 
@@ -5174,8 +5136,10 @@ class VideoPlayerGUI:
             "volume": clamp_volume(self.program_volume.get()),
             "lights": {
                 "enabled": bool(self.lights_control.get()),
-                "preset": shelly.normalize_preset(self.lights_current) or "",
+                "preset": dmx.normalize_preset(self.lights_current) or "",
                 "fading": bool(self.lights_fading),
+                "output": self.dmx_output.mode if getattr(self, "dmx_output", None) else "",
+                "connected": dmx.connected(),
             },
             "program_index": self.program_index if self.playlist else 0,
             "playlist_name": self.playlist_name.get().strip() if getattr(self, "playlist_name", None) else "",
@@ -5260,7 +5224,7 @@ class VideoPlayerGUI:
             if enabled and not bool(self.lights_control.get()):
                 return self._remote_result(False, "lights_disabled")
         if preset is not None and str(preset).strip() != "":
-            key = shelly.normalize_preset(preset)
+            key = dmx.normalize_preset(preset)
             if not key:
                 return self._remote_result(False, "invalid_preset")
             if not bool(self.lights_control.get()):
@@ -6702,8 +6666,8 @@ class VideoPlayerGUI:
         self.duration = entry.duration
         self.position = entry.in_point if entry.in_point is not None else 0
         self.program_state = "PLAYING"
-        preset = shelly.resolve_start_preset(entry.light_start)
-        self._apply_lights(preset, force=bool(shelly.play_preset(entry.light_start)))
+        preset = dmx.resolve_start_preset(entry.light_start)
+        self._apply_lights(preset, force=bool(dmx.play_preset(entry.light_start)))
         delay = self._lights_play_delay_ms()
         if delay > 0:
             self.refresh_all()
@@ -6715,11 +6679,11 @@ class VideoPlayerGUI:
     def _lights_play_delay_ms(self):
         if self.calibration_mode or not bool(self.lights_control.get()):
             return 0
-        if not any(device.enabled and device.host for device in self.lights_devices):
+        if not self._dmx_ready():
             return 0
         if not self.lights_fading:
             return 0
-        return shelly.play_delay_ms(self.lights_transition_ms, self.lights_start_lead_ms)
+        return dmx.play_delay_ms(self.lights_transition_ms, self.lights_start_lead_ms)
 
     def _roll_current_clip(self, entry):
         self.lights_play_after = None
@@ -6891,7 +6855,7 @@ class VideoPlayerGUI:
         self._reset_preview_meter()
         self._skip_to_playable(inclusive=False)
         self.lights_end_sent = False
-        self._apply_lights(shelly.resolve_end_preset("", False))
+        self._apply_lights(dmx.resolve_end_preset("", False))
         self.refresh_all()
         self.confirm_projection_zoom(prompt=not self._remote_action)
         return True
@@ -6935,7 +6899,7 @@ class VideoPlayerGUI:
         self.blank_output(show_idle=not (autoplay and has_next))
         if not self.lights_end_sent:
             self._apply_lights(
-                shelly.resolve_end_preset("", autoplay and has_next)
+                dmx.resolve_end_preset("", autoplay and has_next)
             )
         self.lights_end_sent = False
         self.refresh_all()
@@ -7481,13 +7445,24 @@ class VideoPlayerGUI:
             entry and entry.autoplay and self._has_playable_after(self.program_index)
         )
         self.lights_end_sent = True
-        preset = shelly.resolve_end_preset("", autoplay_continues)
+        preset = dmx.resolve_end_preset("", autoplay_continues)
         if autoplay_continues and preset == "dark":
             return
         self._apply_lights(preset)
 
+    def _drain_light_errors(self):
+        lock = getattr(self, "_light_error_lock", None)
+        if lock is None:
+            return
+        with lock:
+            pending = list(self._light_errors)
+            self._light_errors.clear()
+        for error in pending:
+            self._show_lights_error(error)
+
     def update_gui(self):
         try:
+            self._drain_light_errors()
             if self.still_started is not None and self.program_state == "PLAYING":
                 self.position = min(self.duration, time.monotonic() - self.still_started)
             if not self.main_progress.dragging:
@@ -7520,6 +7495,7 @@ class VideoPlayerGUI:
             self.preview_mpv.quit()
             self.main_mpv.quit()
         finally:
+            dmx.shutdown()
             self.output_manager.restore_original_mode()
             self.root.destroy()
 
