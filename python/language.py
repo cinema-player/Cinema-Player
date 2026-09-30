@@ -40,22 +40,16 @@ STRINGS = {
         "remote_control_off": "The network API is switched off.",
         "lights": "Light control",
         "lights_hint": (
-            "Scan the LAN for Shelly switches and dimmers, or type an IP address. "
-            "Username and password are required when the Shelly login is enabled "
-            "(Gen2 uses admin). Tick the devices that should follow house-light cues. "
-            "Bright, Medium, and Dark are dimmer levels in percent; switches turn on above 0%."
+            "House lights are sent as Art-Net (DMX512) on the LAN. "
+            "Enter the node IP or a broadcast address, the universe, and the dimmer channels "
+            "(1–512, comma or range). Bright, Medium, and Dark are levels in percent."
         ),
-        "lights_scan": "Scan",
-        "lights_add": "Add",
-        "lights_username": "User",
-        "lights_password": "Password",
+        "lights_host": "Art-Net node",
+        "lights_universe": "Universe",
+        "lights_channels": "Channels",
+        "lights_channels_hint": "1–512, e.g. 1 or 1, 2, 5-7",
         "lights_close": "Close",
-        "lights_empty": "No Shelly devices yet. Scan the LAN or add an address.",
-        "lights_scanning": "Looking for Shelly devices on the LAN…",
-        "lights_found": "{count} device(s) found.",
-        "lights_none": "No Shelly devices were found. Enter an IP address.",
-        "lights_probe_failed": "No Shelly answered at {host}.",
-        "lights_none_enabled": "Tick at least one Shelly in the list.",
+        "lights_none_ready": "Set an Art-Net node and at least one DMX channel.",
         "lights_control": "House lights",
         "lights_control_off": "House lights are switched off.",
         "lights_transition": "Fade",
@@ -304,22 +298,16 @@ STRINGS = {
         "remote_control_off": "Die Netzwerk-API ist ausgeschaltet.",
         "lights": "Lichtsteuerung",
         "lights_hint": (
-            "Suchen Sie im WLAN nach Shelly-Schaltern und -Dimmern, oder geben Sie eine IP-Adresse ein. "
-            "Benutzername und Passwort sind nötig, wenn die Shelly-Anmeldung aktiv ist "
-            "(bei Gen2 ist der Benutzer admin). Markieren Sie die Geräte, die den Lichtbefehlen folgen sollen. "
-            "Hell, Mittel und Dunkel sind Dimmerwerte in Prozent; Schalter gehen über 0 % an."
+            "Das Saallicht wird als Art-Net (DMX512) im Netzwerk gesendet. "
+            "Node-IP oder Broadcast, Universe und Dimmerkanäle (1–512, Komma oder Bereich) eintragen. "
+            "Hell, Mittel und Dunkel sind Pegel in Prozent."
         ),
-        "lights_scan": "Suchen",
-        "lights_add": "Hinzufügen",
-        "lights_username": "Benutzer",
-        "lights_password": "Passwort",
+        "lights_host": "Art-Net-Node",
+        "lights_universe": "Universe",
+        "lights_channels": "Kanäle",
+        "lights_channels_hint": "1–512, z. B. 1 oder 1, 2, 5-7",
         "lights_close": "Schließen",
-        "lights_empty": "Noch keine Shelly-Geräte. WLAN durchsuchen oder eine Adresse eintragen.",
-        "lights_scanning": "Suche Shelly-Geräte im WLAN…",
-        "lights_found": "{count} Gerät(e) gefunden.",
-        "lights_none": "Keine Shelly-Geräte gefunden. IP-Adresse eingeben.",
-        "lights_probe_failed": "Unter {host} hat kein Shelly geantwortet.",
-        "lights_none_enabled": "Mindestens ein Shelly in der Liste markieren.",
+        "lights_none_ready": "Art-Net-Node und mindestens einen DMX-Kanal eintragen.",
         "lights_control": "Lichtsteuerung",
         "lights_control_off": "Die Lichtsteuerung ist ausgeschaltet.",
         "lights_transition": "Überblendung",
