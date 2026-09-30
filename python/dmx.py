@@ -1,7 +1,10 @@
-"""House lights over Art-Net (DMX512 on the LAN)."""
+"""House lights over DMX512 — as Art-Net on the LAN or on a USB-RS485 cable."""
 
 from __future__ import annotations
 
+import fcntl
+import glob
+import os
 import socket
 import struct
 import threading
@@ -23,6 +26,28 @@ DMX_CHANNELS = 512
 REFRESH_S = 0.8
 FADE_HZ = 40
 
+MODE_ARTNET = "artnet"
+MODE_USB = "usb"
+MODES = (MODE_ARTNET, MODE_USB)
+DEFAULT_MODE = MODE_ARTNET
+
+DMX_BAUDRATE = 250000
+DMX_START_CODE = b"\x00"
+BREAK_S = 0.000176
+MARK_AFTER_BREAK_S = 0.000012
+SERIAL_PATTERNS = ("/dev/serial/by-id/*", "/dev/ttyUSB*", "/dev/ttyACM*")
+
+# Linux termios2: custom baud rates that termios itself cannot express.
+TCSETS2 = 0x402C542B
+TIOCSBRK = 0x5427
+TIOCCBRK = 0x5428
+TERMIOS2_FORMAT = "@IIIIB19sII"
+BOTHER = 0o010000
+CS8 = 0o000060
+CSTOPB = 0o000100
+CREAD = 0o000200
+CLOCAL = 0o004000
+
 
 @dataclass
 class DmxOutput:
@@ -30,12 +55,16 @@ class DmxOutput:
     port: int = DEFAULT_PORT
     universe: int = DEFAULT_UNIVERSE
     channels: list = field(default_factory=list)
+    mode: str = DEFAULT_MODE
+    device: str = ""
 
     def __post_init__(self):
         self.host = str(self.host or "").strip()
         self.port = clamp_port(self.port)
         self.universe = clamp_universe(self.universe)
         self.channels = parse_channels(self.channels)
+        self.mode = normalize_mode(self.mode)
+        self.device = str(self.device or "").strip()
 
     @classmethod
     def from_dict(cls, data):
@@ -45,6 +74,8 @@ class DmxOutput:
             port=raw.get("port", DEFAULT_PORT),
             universe=raw.get("universe", DEFAULT_UNIVERSE),
             channels=raw.get("channels", []),
+            mode=raw.get("mode", DEFAULT_MODE),
+            device=raw.get("device", ""),
         )
 
     def to_dict(self):
@@ -53,10 +84,34 @@ class DmxOutput:
             "port": self.port,
             "universe": self.universe,
             "channels": list(self.channels),
+            "mode": self.mode,
+            "device": self.device,
         }
 
     def ready(self):
-        return bool(self.host) and bool(self.channels)
+        if not self.channels:
+            return False
+        if self.mode == MODE_USB:
+            return bool(self.device)
+        return bool(self.host)
+
+
+def normalize_mode(value):
+    key = str(value or "").strip().lower()
+    aliases = {
+        "": DEFAULT_MODE,
+        "artnet": MODE_ARTNET,
+        "art-net": MODE_ARTNET,
+        "lan": MODE_ARTNET,
+        "net": MODE_ARTNET,
+        "network": MODE_ARTNET,
+        "usb": MODE_USB,
+        "usb-rs485": MODE_USB,
+        "rs485": MODE_USB,
+        "serial": MODE_USB,
+        "dmx-usb": MODE_USB,
+    }
+    return aliases.get(key, DEFAULT_MODE)
 
 
 def normalize_preset(value):
@@ -299,13 +354,86 @@ def frame_for_level(channels, percent):
     return bytes(frame)
 
 
-class ArtNetController:
-    """Send house-light levels as Art-Net; fade in a background thread."""
+def dmx_frame_bytes(frame):
+    """Start code plus 512 slots, as they go out on the RS485 line."""
+    payload = bytes(frame or b"")[:DMX_CHANNELS]
+    return DMX_START_CODE + payload + bytes(DMX_CHANNELS - len(payload))
 
-    def __init__(self, send=None):
+
+def termios2_settings(baudrate=DMX_BAUDRATE):
+    """termios2 block for a DMX line: 250 kBd, 8 data bits, no parity, 2 stop bits."""
+    cflag = CS8 | CSTOPB | CREAD | CLOCAL | BOTHER
+    return struct.pack(
+        TERMIOS2_FORMAT,
+        0,  # c_iflag
+        0,  # c_oflag
+        cflag,
+        0,  # c_lflag
+        0,  # c_line
+        b"\x00" * 19,  # c_cc
+        int(baudrate),  # c_ispeed
+        int(baudrate),  # c_ospeed
+    )
+
+
+def list_serial_devices():
+    """USB-RS485 adapters that are plugged in right now."""
+    devices = []
+    for pattern in SERIAL_PATTERNS:
+        for path in sorted(glob.glob(pattern)):
+            if path not in devices:
+                devices.append(path)
+    return devices
+
+
+class SerialDmxPort:
+    """A USB-RS485 cable driven as a raw DMX512 line (break, MAB, 513 bytes)."""
+
+    def __init__(self, device):
+        self.device = str(device or "").strip()
+        self._fd = os.open(self.device, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK)
+        try:
+            flags = fcntl.fcntl(self._fd, fcntl.F_GETFL) & ~os.O_NONBLOCK
+            fcntl.fcntl(self._fd, fcntl.F_SETFL, flags)
+            fcntl.ioctl(self._fd, TCSETS2, termios2_settings())
+        except (OSError, ValueError) as exc:
+            self.close()
+            raise OSError(str(exc)) from exc
+
+    def write_frame(self, frame):
+        packet = dmx_frame_bytes(frame)
+        fcntl.ioctl(self._fd, TIOCSBRK)
+        time.sleep(BREAK_S)
+        fcntl.ioctl(self._fd, TIOCCBRK)
+        time.sleep(MARK_AFTER_BREAK_S)
+        sent = 0
+        while sent < len(packet):
+            sent += os.write(self._fd, packet[sent:])
+        try:
+            os.fsync(self._fd)
+        except OSError:
+            pass
+
+    def close(self):
+        fd = self._fd
+        self._fd = -1
+        if fd is not None and fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+class DmxController:
+    """Send house-light levels as Art-Net or on a USB-RS485 cable; fade in a thread."""
+
+    def __init__(self, send=None, open_port=None):
         self._send = send or self._send_udp
+        self._open_port = open_port or SerialDmxPort
         self._lock = threading.Lock()
+        self._io_lock = threading.Lock()
         self._sock = None
+        self._port = None
         self._output = DmxOutput()
         self.level = 0
         self._sequence = 0
@@ -331,6 +459,17 @@ class ArtNetController:
                 sock.close()
             except OSError:
                 pass
+        self._close_port()
+
+    def _close_port(self):
+        with self._io_lock:
+            port = self._port
+            self._port = None
+        if port is not None:
+            try:
+                port.close()
+            except OSError:
+                pass
 
     def _socket(self):
         if self._sock is None:
@@ -347,13 +486,37 @@ class ArtNetController:
         self._sequence = 1 if self._sequence >= 255 else self._sequence + 1
         return self._sequence
 
+    def _serial_port(self, device):
+        port = self._port
+        if port is not None and getattr(port, "device", "") != device:
+            try:
+                port.close()
+            except OSError:
+                pass
+            port = None
+        if port is None:
+            port = self._open_port(device)
+            self._port = port
+        return port
+
     def _emit(self, output, percent):
-        packet = artnet_output_packet(
-            output.universe,
-            frame_for_level(output.channels, percent),
-            self._next_sequence(),
-        )
-        self._send(output.host, output.port, packet)
+        frame = frame_for_level(output.channels, percent)
+        with self._io_lock:
+            if output.mode == MODE_USB:
+                try:
+                    self._serial_port(output.device).write_frame(frame)
+                except OSError:
+                    port = self._port
+                    self._port = None
+                    if port is not None:
+                        try:
+                            port.close()
+                        except OSError:
+                            pass
+                    raise
+                return
+            packet = artnet_output_packet(output.universe, frame, self._next_sequence())
+            self._send(output.host, output.port, packet)
 
     def _arm_refresh(self):
         if self._refresh_thread and self._refresh_thread.is_alive():
@@ -375,7 +538,7 @@ class ArtNetController:
                 pass
 
     def apply(self, output, percent, transition_ms=0):
-        """Fade to percent and keep sending the last Art-Net frame."""
+        """Fade to percent and keep repeating the last DMX frame."""
         output = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output)
         if not output.ready():
             return "dmx_not_ready"
@@ -427,7 +590,7 @@ class ArtNetController:
         return ""
 
 
-_controller = ArtNetController()
+_controller = DmxController()
 
 
 def apply_preset(output, preset, presets=None, transition_ms=DEFAULT_TRANSITION_MS):
@@ -436,5 +599,5 @@ def apply_preset(output, preset, presets=None, transition_ms=DEFAULT_TRANSITION_
 
 
 def shutdown():
-    """Stop Art-Net refresh when Cinema Player quits."""
+    """Stop the DMX refresh and release the USB port when Cinema Player quits."""
     _controller.close()

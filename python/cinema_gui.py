@@ -4568,9 +4568,23 @@ class VideoPlayerGUI:
         self._start_light_fade(transition)
 
         def worker():
-            dmx.apply_preset(output, key, presets, transition)
+            error = dmx.apply_preset(output, key, presets, transition)
+            try:
+                self.root.after(0, lambda: self._show_lights_error(error))
+            except (RuntimeError, tk.TclError):
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _show_lights_error(self, error):
+        """Report a DMX problem (a closed Art-Net port, a missing USB cable) in the window."""
+        status = getattr(self, "lights_status", None)
+        if status is None or getattr(self, "lights_window", None) is None:
+            return
+        try:
+            status.set(str(error or ""))
+        except tk.TclError:
+            pass
 
     def _on_light_preset(self, preset):
         self._apply_lights(preset, force=True)
@@ -4700,7 +4714,7 @@ class VideoPlayerGUI:
             pass
 
     def show_lights(self):
-        """Configure Art-Net / DMX house lights."""
+        """Configure DMX house lights over Art-Net or a USB-RS485 cable."""
         window = getattr(self, "lights_window", None)
         if window is not None:
             try:
@@ -4737,22 +4751,52 @@ class VideoPlayerGUI:
         box.pack(side="right")
         self.settings_lights_check = box
         output = getattr(self, "dmx_output", None) or dmx.DmxOutput()
+        self.lights_mode = tk.StringVar(value=self._lights_mode_label(output.mode))
         self.lights_host = tk.StringVar(value=output.host or dmx.DEFAULT_HOST)
         self.lights_universe = tk.StringVar(value=str(output.universe))
+        self.lights_device = tk.StringVar(value=output.device)
         self.lights_channels = tk.StringVar(
             value=dmx.format_channels(output.channels) or "1",
         )
         node = tk.Frame(holder, bg=COLOR_PANEL)
         node.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(node, text=t("lights_mode"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        mode_combo = ttk.Combobox(
+            node,
+            textvariable=self.lights_mode,
+            width=14,
+            state="readonly",
+            values=[t("lights_mode_artnet"), t("lights_mode_usb")],
+        )
+        mode_combo.pack(side="left", padx=(4, 12))
+        mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_lights_mode())
         tk.Label(node, text=t("lights_host"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(node, textvariable=self.lights_host, width=18, font=FONT_UI).pack(side="left", padx=(4, 12))
+        self.lights_host_entry = tk.Entry(node, textvariable=self.lights_host, width=18, font=FONT_UI)
+        self.lights_host_entry.pack(side="left", padx=(4, 12))
         tk.Label(node, text=t("lights_universe"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(node, textvariable=self.lights_universe, width=5, font=FONT_UI).pack(side="left", padx=(4, 12))
-        tk.Label(node, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(node, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
+        self.lights_universe_entry = tk.Entry(node, textvariable=self.lights_universe, width=5, font=FONT_UI)
+        self.lights_universe_entry.pack(side="left", padx=4)
+        cable = tk.Frame(holder, bg=COLOR_PANEL)
+        cable.pack(fill="x", padx=8, pady=(0, 2))
+        tk.Label(cable, text=t("lights_device"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        self.lights_device_combo = ttk.Combobox(
+            cable,
+            textvariable=self.lights_device,
+            width=30,
+            postcommand=self._fill_lights_devices,
+        )
+        self.lights_device_combo.pack(side="left", padx=(4, 12))
+        self._fill_lights_devices()
+        tk.Label(cable, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        tk.Entry(cable, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
+        tk.Label(
+            holder, text=t("lights_device_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+            wraplength=620, justify="left",
+        ).pack(fill="x", padx=8)
         tk.Label(
             holder, text=t("lights_channels_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
         ).pack(fill="x", padx=8, pady=(0, 2))
+        self._update_lights_mode_fields()
         self.lights_status = tk.StringVar(value="")
         tk.Label(
             holder, textvariable=self.lights_status, bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
@@ -4815,12 +4859,57 @@ class VideoPlayerGUI:
         self.lights_window = window
         self._place_on_control_monitor(window, 700, 440)
 
+    def _lights_mode_label(self, key):
+        return t("lights_mode_usb") if dmx.normalize_mode(key) == dmx.MODE_USB else t("lights_mode_artnet")
+
+    def _lights_mode_key(self):
+        variable = getattr(self, "lights_mode", None)
+        if variable is None:
+            output = getattr(self, "dmx_output", None)
+            return dmx.normalize_mode(output.mode if output else dmx.DEFAULT_MODE)
+        return dmx.MODE_USB if variable.get() == t("lights_mode_usb") else dmx.MODE_ARTNET
+
+    def _fill_lights_devices(self):
+        combo = getattr(self, "lights_device_combo", None)
+        if combo is None:
+            return
+        devices = dmx.list_serial_devices()
+        current = self.lights_device.get().strip()
+        if current and current not in devices:
+            devices.append(current)
+        try:
+            combo.configure(values=devices)
+        except tk.TclError:
+            self.lights_device_combo = None
+
+    def _update_lights_mode_fields(self):
+        usb = self._lights_mode_key() == dmx.MODE_USB
+        widgets = (
+            (getattr(self, "lights_host_entry", None), not usb),
+            (getattr(self, "lights_universe_entry", None), not usb),
+            (getattr(self, "lights_device_combo", None), usb),
+        )
+        for widget, active in widgets:
+            if widget is None:
+                continue
+            try:
+                widget.config(state="normal" if active else "disabled")
+            except tk.TclError:
+                pass
+
+    def _on_lights_mode(self):
+        self._update_lights_mode_fields()
+        self._commit_lights_settings()
+
     def _close_lights_window(self):
         self._commit_lights_settings()
         window = getattr(self, "lights_window", None)
         self.lights_window = None
         self.settings_light_buttons = {}
         self.settings_lights_check = None
+        self.lights_host_entry = None
+        self.lights_universe_entry = None
+        self.lights_device_combo = None
         if window is not None:
             try:
                 window.destroy()
@@ -4836,9 +4925,13 @@ class VideoPlayerGUI:
                 host=self.lights_host.get(),
                 universe=self.lights_universe.get(),
                 channels=self.lights_channels.get(),
+                mode=self._lights_mode_key(),
+                device=self.lights_device.get(),
             )
+            self.lights_mode.set(self._lights_mode_label(self.dmx_output.mode))
             self.lights_host.set(self.dmx_output.host or dmx.DEFAULT_HOST)
             self.lights_universe.set(str(self.dmx_output.universe))
+            self.lights_device.set(self.dmx_output.device)
             self.lights_channels.set(dmx.format_channels(self.dmx_output.channels) or "1")
         if getattr(self, "lights_bright", None) is not None:
             self.lights_presets = {
@@ -4875,7 +4968,8 @@ class VideoPlayerGUI:
         if not self._dmx_ready():
             status = getattr(self, "lights_status", None)
             if status is not None:
-                status.set(t("lights_none_ready"))
+                usb = self._lights_mode_key() == dmx.MODE_USB
+                status.set(t("lights_none_ready_usb") if usb else t("lights_none_ready"))
             return
         self._apply_lights(preset, force=True)
 

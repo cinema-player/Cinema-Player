@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
-"""DMX/Art-Net house lights and playlist cue resolution (no network)."""
+"""DMX house lights over Art-Net or USB-RS485, plus cue resolution (no hardware)."""
 
 import struct
 import unittest
 
 import dmx
+
+
+class FakeSerialPort:
+    """Stands in for a USB-RS485 cable; records what would go on the line."""
+
+    def __init__(self, device):
+        self.device = device
+        self.frames = []
+        self.closed = False
+
+    def write_frame(self, frame):
+        self.frames.append(dmx.dmx_frame_bytes(frame))
+
+    def close(self):
+        self.closed = True
 
 
 class PresetTests(unittest.TestCase):
@@ -56,6 +71,7 @@ class PresetTests(unittest.TestCase):
         )
         loaded, presets, transition, enabled, start_lead, end_lead = dmx.load_lights_config(dumped)
         self.assertEqual(loaded.host, "10.0.0.20")
+        self.assertEqual(loaded.mode, dmx.MODE_ARTNET)
         self.assertEqual(loaded.universe, 2)
         self.assertEqual(loaded.channels, [1, 3, 4])
         self.assertEqual(presets["bright"], 80)
@@ -127,7 +143,7 @@ class ArtNetTests(unittest.TestCase):
 
     def test_apply_sends_artnet_without_socket(self):
         sent = []
-        controller = dmx.ArtNetController(send=lambda host, port, packet: sent.append((host, port, packet)))
+        controller = dmx.DmxController(send=lambda host, port, packet: sent.append((host, port, packet)))
         output = dmx.DmxOutput(host="10.1.2.3", port=6454, universe=1, channels="4")
         error = controller.apply(output, 40, 0)
         self.assertEqual(error, "")
@@ -140,9 +156,121 @@ class ArtNetTests(unittest.TestCase):
         controller.close()
 
     def test_apply_without_channel_is_not_ready(self):
-        controller = dmx.ArtNetController(send=lambda *_args: None)
+        controller = dmx.DmxController(send=lambda *_args: None)
         self.assertEqual(controller.apply(dmx.DmxOutput(host="10.0.0.1"), 100, 0), "dmx_not_ready")
         controller.close()
+
+
+class UsbRs485Tests(unittest.TestCase):
+    def test_normalize_mode(self):
+        self.assertEqual(dmx.normalize_mode(""), dmx.MODE_ARTNET)
+        self.assertEqual(dmx.normalize_mode("Art-Net"), dmx.MODE_ARTNET)
+        self.assertEqual(dmx.normalize_mode("usb"), dmx.MODE_USB)
+        self.assertEqual(dmx.normalize_mode("RS485"), dmx.MODE_USB)
+        self.assertEqual(dmx.normalize_mode("serial"), dmx.MODE_USB)
+        self.assertEqual(dmx.normalize_mode("nonsense"), dmx.MODE_ARTNET)
+
+    def test_usb_output_needs_a_device(self):
+        self.assertFalse(dmx.DmxOutput(mode="usb", channels="1").ready())
+        self.assertFalse(dmx.DmxOutput(mode="usb", device="/dev/ttyUSB0").ready())
+        self.assertTrue(dmx.DmxOutput(mode="usb", device="/dev/ttyUSB0", channels="1").ready())
+        self.assertFalse(dmx.DmxOutput(mode="usb", host="10.0.0.1", channels="1").ready())
+
+    def test_frame_bytes_carry_start_code_and_512_slots(self):
+        packet = dmx.dmx_frame_bytes(dmx.frame_for_level([1, 3], 100))
+        self.assertEqual(len(packet), 513)
+        self.assertEqual(packet[0], 0)
+        self.assertEqual(packet[1], 255)
+        self.assertEqual(packet[2], 0)
+        self.assertEqual(packet[3], 255)
+        self.assertEqual(dmx.dmx_frame_bytes(b""), bytes(513))
+
+    def test_termios2_block_is_250kbd_8n2(self):
+        block = dmx.termios2_settings()
+        self.assertEqual(len(block), struct.calcsize(dmx.TERMIOS2_FORMAT))
+        iflag, oflag, cflag, lflag, _line, _cc, ispeed, ospeed = struct.unpack(
+            dmx.TERMIOS2_FORMAT, block,
+        )
+        self.assertEqual((iflag, oflag, lflag), (0, 0, 0))
+        self.assertEqual(ispeed, 250000)
+        self.assertEqual(ospeed, 250000)
+        for bit in (dmx.CS8, dmx.CSTOPB, dmx.CREAD, dmx.CLOCAL, dmx.BOTHER):
+            self.assertTrue(cflag & bit)
+
+    def test_apply_writes_to_the_usb_cable(self):
+        ports = []
+
+        def open_port(device):
+            port = FakeSerialPort(device)
+            ports.append(port)
+            return port
+
+        controller = dmx.DmxController(
+            send=lambda *_args: self.fail("USB mode must not send Art-Net"),
+            open_port=open_port,
+        )
+        output = dmx.DmxOutput(mode="usb", device="/dev/ttyUSB0", channels="2")
+        self.assertEqual(controller.apply(output, 40, 0), "")
+        self.assertEqual(controller.apply(output, 100, 0), "")
+        self.assertEqual(len(ports), 1)
+        self.assertEqual(ports[0].device, "/dev/ttyUSB0")
+        self.assertEqual([frame[2] for frame in ports[0].frames], [102, 255])
+        controller.close()
+        self.assertTrue(ports[0].closed)
+
+    def test_changing_the_device_reopens_the_port(self):
+        ports = []
+
+        def open_port(device):
+            port = FakeSerialPort(device)
+            ports.append(port)
+            return port
+
+        controller = dmx.DmxController(open_port=open_port)
+        controller.apply(dmx.DmxOutput(mode="usb", device="/dev/ttyUSB0", channels="1"), 100, 0)
+        controller.apply(dmx.DmxOutput(mode="usb", device="/dev/ttyUSB1", channels="1"), 100, 0)
+        self.assertEqual([port.device for port in ports], ["/dev/ttyUSB0", "/dev/ttyUSB1"])
+        self.assertTrue(ports[0].closed)
+        controller.close()
+
+    def test_write_failure_drops_the_port_so_it_reopens(self):
+        ports = []
+
+        class BrokenPort(FakeSerialPort):
+            def write_frame(self, frame):
+                raise OSError("no such device")
+
+        def open_port(device):
+            port = BrokenPort(device)
+            ports.append(port)
+            return port
+
+        controller = dmx.DmxController(open_port=open_port)
+        output = dmx.DmxOutput(mode="usb", device="/dev/ttyUSB0", channels="1")
+        self.assertEqual(controller.apply(output, 100, 0), "no such device")
+        self.assertEqual(controller.apply(output, 50, 0), "no such device")
+        self.assertEqual(len(ports), 2)
+        self.assertTrue(ports[0].closed)
+        controller.close()
+
+    def test_usb_config_roundtrip(self):
+        dumped = dmx.dump_lights_config(
+            dmx.DmxOutput(mode="usb", device=" /dev/ttyUSB0 ", channels="7"),
+            {}, 2000,
+        )
+        self.assertEqual(dumped["mode"], "usb")
+        self.assertEqual(dumped["device"], "/dev/ttyUSB0")
+        loaded, _, transition, *_ = dmx.load_lights_config(dumped)
+        self.assertEqual(loaded.mode, dmx.MODE_USB)
+        self.assertEqual(loaded.device, "/dev/ttyUSB0")
+        self.assertEqual(loaded.channels, [7])
+        self.assertEqual(transition, 2000)
+        self.assertTrue(loaded.ready())
+
+    def test_list_serial_devices_returns_paths(self):
+        self.assertIsInstance(dmx.list_serial_devices(), list)
+        for device in dmx.list_serial_devices():
+            self.assertTrue(device.startswith("/dev/"))
 
 
 class LanguageTests(unittest.TestCase):
@@ -152,12 +280,18 @@ class LanguageTests(unittest.TestCase):
         keys = (
             "lights",
             "lights_hint",
+            "lights_mode",
+            "lights_mode_artnet",
+            "lights_mode_usb",
             "lights_host",
             "lights_universe",
+            "lights_device",
+            "lights_device_hint",
             "lights_channels",
             "lights_channels_hint",
             "lights_close",
             "lights_none_ready",
+            "lights_none_ready_usb",
             "lights_control",
             "lights_control_off",
             "lights_transition",
