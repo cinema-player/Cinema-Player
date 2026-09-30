@@ -1,9 +1,9 @@
 {
-  "projection_zoom": true,
-  "autoplay_delay": 2.0,
-  "idle_media": "AFC Idle.mp4",
-  "idle_media_path": "/home/administrator/Cinema-Player/idle/AFC Idle.mp4",
-  "program_index": 1,
+  "projection_zoom": false,
+  "autoplay_delay": 5.0,
+  "idle_media": "keins",
+  "idle_media_path": "",
+  "program_index": 2,
   "autosave_on_program_change": true,
   "entries": [
     {
@@ -79,7 +79,7 @@
       "aspect_warning": false,
       "par_warning": false,
       "colorspace_warning": false,
-      "played": false,
+      "played": true,
       "missing": false,
       "volume": 100,
       "colorspace": "--",

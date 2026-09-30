@@ -603,6 +603,45 @@ def format_fps_label(fps):
     return f"{fps:.3f}p"
 
 
+def format_hwdec_current(value):
+    """mpv `hwdec-current`: decoder name, or empty when idle."""
+    if value in (None, False, ""):
+        return ""
+    text = str(value).strip()
+    if text.lower() in {"none", "null"}:
+        return ""
+    return text
+
+
+def parse_mpv_count(value):
+    """Non-negative integer from an mpv counter property."""
+    if value in (None, False, ""):
+        return 0
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, number)
+
+
+def format_dropframe_counts(
+    frame_drop_count,
+    decoder_frame_drop_count,
+    mpv_label="mpv",
+    decoder_label="decoder",
+):
+    """Labeled `frame-drop-count` (mpv vo) and `decoder-frame-drop-count`."""
+    vo = parse_mpv_count(frame_drop_count)
+    decoder = parse_mpv_count(decoder_frame_drop_count)
+    return f"{mpv_label} {vo}  {decoder_label} {decoder}"
+
+
+def frames_were_dropped(frame_drop_count, decoder_frame_drop_count):
+    return (
+        parse_mpv_count(frame_drop_count) + parse_mpv_count(decoder_frame_drop_count)
+    ) > 0
+
+
 def resolution_label(width, height):
     if width >= 4096:
         return "DCI 4K"
@@ -2724,6 +2763,9 @@ class MPVController:
         self.observe("eof-reached", 4)
         self.observe("video-bitrate", 6)
         self.observe("audio-bitrate", 7)
+        self.observe("hwdec-current", 8)
+        self.observe("frame-drop-count", 9)
+        self.observe("decoder-frame-drop-count", 10)
 
     def set_vid(self, enabled):
         self.command("set_property", "vid", "auto" if enabled else "no")

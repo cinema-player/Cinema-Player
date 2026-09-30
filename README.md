@@ -245,6 +245,8 @@ If a listed rate can show the clip (native, 2× refresh, or the 25/30 Hz fallbac
 
 If no matching refresh rate is found, the status changes to **Mismatch** (red). The clip’s unsupported rate or resolution is then added to the list in blue (program) or yellow (preview). The video can still be displayed, but frame-dropping artifacts may occur.
 
+While a clip is on air, the beamer block also shows mpv **HW decode** (`hwdec-current`) and **Drop frames**: **mpv** is `frame-drop-count` (frames the player skipped at display) and **decoder** is `decoder-frame-drop-count` (frames the decoder skipped). If either counter rises, the green **OK** is replaced by a red **Dropped**.
+
 This check is performed when videos are added to the playlist and when a playlist is loaded. Each entry indicates whether the video can be played correctly. Import and probe do not create custom modes; that happens when a clip is prepared for the projector.
 
 ## Audio

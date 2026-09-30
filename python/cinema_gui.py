@@ -51,12 +51,15 @@ from cinema_player import (
     format_clock,
     format_codec_rate,
     format_fps_label,
+    format_hwdec_current,
+    frames_were_dropped,
     format_colorspace_label,
     format_loudness,
     gpu_context_for_mpv,
     mark_missing_media,
     media_file_available,
     parse_bitrate_bps,
+    parse_mpv_count,
     probe_audio,
     probe_media,
     refresh_entry_aspect,
@@ -1230,6 +1233,9 @@ class VideoPlayerGUI:
         self._meter_after_id = None
         self.program_video_bps = 0
         self.program_audio_bps = 0
+        self.program_hwdec = ""
+        self.program_frame_drops = 0
+        self.program_decoder_drops = 0
         self.preview_video_bps = 0
         self.preview_audio_bps = 0
         self.main_pause = False
@@ -2667,6 +2673,33 @@ class VideoPlayerGUI:
             info, text="", font=FONT_STATUS, bg=COLOR_PANEL, fg=ACCENT,
         )
         self.beamer_clip_aspect.pack(side="left", padx=(12, 0))
+
+        decode = tk.Frame(panel, bg=COLOR_PANEL)
+        decode.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(
+            decode, text=t("beamer_hwdec"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left")
+        self.beamer_hwdec = tk.Label(
+            decode, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
+        )
+        self.beamer_hwdec.pack(side="left", padx=(8, 0))
+        tk.Label(
+            decode, text=t("beamer_dropframes"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left", padx=(16, 0))
+        tk.Label(
+            decode, text=t("beamer_drops_mpv"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left", padx=(8, 0))
+        self.beamer_drops_mpv = tk.Label(
+            decode, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
+        )
+        self.beamer_drops_mpv.pack(side="left", padx=(4, 0))
+        tk.Label(
+            decode, text=t("beamer_drops_decoder"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left", padx=(12, 0))
+        self.beamer_drops_decoder = tk.Label(
+            decode, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
+        )
+        self.beamer_drops_decoder.pack(side="left", padx=(4, 0))
         self.beamer_rates = BeamerChoiceLine(panel)
         self.beamer_rates.pack(fill="x", padx=8, pady=(0, 4))
         self.beamer_resolutions = BeamerChoiceLine(panel)
@@ -3287,6 +3320,7 @@ class VideoPlayerGUI:
             self.beamer_ok.config(text="--", bg=COLOR_BADGE_IDLE)
             self.beamer_aspect.config(text="--", fg=COLOR_TEXT)
             self.beamer_clip_aspect.config(text="")
+            self._refresh_beamer_decode()
             self._refresh_beamer_device_name()
             self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
             self.beamer_resolutions.set_choices(
@@ -3301,10 +3335,8 @@ class VideoPlayerGUI:
         fps_ok = True
         if focus and not focus.missing and not focus.is_image and focus.fps:
             fps_ok = self._beamer_rate_supported(focus.fps, rates)
-        self.beamer_ok.config(
-            text=t("ok") if fps_ok else t("mismatch"),
-            bg=COLOR_PLAYING if fps_ok else COLOR_OFF,
-        )
+        self._refresh_beamer_ok_badge(fps_ok)
+        self._refresh_beamer_decode()
         aspect_text = aspect_from_mode(mode)
         self.beamer_aspect.config(text=aspect_text, fg=COLOR_TEXT)
         self.beamer_clip_aspect.config(text="")
@@ -3402,6 +3434,51 @@ class VideoPlayerGUI:
         )
         self._refresh_beamer_device_name()
         self.refresh_beamer_outputs()
+
+    def _program_decode_active(self):
+        return (
+            self.program_state == "PLAYING"
+            and bool(self.main_mpv.process)
+            and bool(self.main_mpv.loaded_path)
+            and not self.idle_showing
+            and not self.blackout
+            and not self.hdmi_audio_keepalive
+            and not self.beamer_test_active
+        )
+
+    def _refresh_beamer_ok_badge(self, fps_ok):
+        dropped = self._program_decode_active() and frames_were_dropped(
+            self.program_frame_drops, self.program_decoder_drops,
+        )
+        if not fps_ok:
+            self.beamer_ok.config(text=t("mismatch"), bg=COLOR_OFF)
+        elif dropped:
+            self.beamer_ok.config(text=t("dropped"), bg=COLOR_OFF)
+        else:
+            self.beamer_ok.config(text=t("ok"), bg=COLOR_PLAYING)
+
+    def _refresh_beamer_decode(self):
+        hwdec = getattr(self, "beamer_hwdec", None)
+        mpv_drops = getattr(self, "beamer_drops_mpv", None)
+        decoder_drops = getattr(self, "beamer_drops_decoder", None)
+        if hwdec is None or mpv_drops is None or decoder_drops is None:
+            return
+        if not self._program_decode_active():
+            hwdec.config(text="--", fg=COLOR_TEXT)
+            mpv_drops.config(text="--", fg=COLOR_TEXT)
+            decoder_drops.config(text="--", fg=COLOR_TEXT)
+            return
+        name = format_hwdec_current(self.program_hwdec) or "--"
+        hwdec.config(text=name, fg=COLOR_TEXT)
+        vo = parse_mpv_count(self.program_frame_drops)
+        decoder = parse_mpv_count(self.program_decoder_drops)
+        mpv_drops.config(text=str(vo), fg=COLOR_OFF if vo else COLOR_TEXT)
+        decoder_drops.config(text=str(decoder), fg=COLOR_OFF if decoder else COLOR_TEXT)
+
+    def _reset_program_decode(self):
+        self.program_hwdec = ""
+        self.program_frame_drops = 0
+        self.program_decoder_drops = 0
 
     def _refresh_beamer_device_name(self):
         name = ""
@@ -7074,6 +7151,7 @@ class VideoPlayerGUI:
             mpv.apply_pending_range()
             self.program_video_bps = 0
             self.program_audio_bps = 0
+            self._reset_program_decode()
             if mpv.is_audio_keepalive():
                 self.hdmi_audio_keepalive = True
                 self.main_pause = False
@@ -7164,6 +7242,12 @@ class VideoPlayerGUI:
             self.program_video_bps = parse_bitrate_bps(value)
         elif name == "audio-bitrate":
             self.program_audio_bps = parse_bitrate_bps(value)
+        elif name == "hwdec-current":
+            self.program_hwdec = format_hwdec_current(value)
+        elif name == "frame-drop-count":
+            self.program_frame_drops = parse_mpv_count(value)
+        elif name == "decoder-frame-drop-count":
+            self.program_decoder_drops = parse_mpv_count(value)
 
     def preview_mpv_event(self, mpv, message):
         event = message.get("event")
@@ -7225,6 +7309,7 @@ class VideoPlayerGUI:
         self._program_meter_shown = [METER_FLOOR_DB, METER_FLOOR_DB]
         self.program_video_bps = 0
         self.program_audio_bps = 0
+        self._reset_program_decode()
         self._refresh_live_bitrates()
         try:
             self.program_meter.reset()
