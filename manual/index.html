@@ -468,8 +468,8 @@
       <span data-lang="en">8. Light control</span>
       <span data-lang="de">8. Lichtsteuerung</span>
     </h2>
-    <p data-lang="en">If house lights are driven with Shelly devices, Cinema Player can take over the operation.</p>
-    <p data-lang="de">Wird das Saallicht mittels Shelly-Komponenten gesteuert, kann die Bedienung vom Cinema Player übernommen werden.</p>
+    <p data-lang="en">If house lights are driven over DMX, Cinema Player can take over the operation. Output is an Enttec DMX USB Pro, or Art-Net on the LAN. Open DMX is not supported.</p>
+    <p data-lang="de">Wird das Saallicht über DMX gesteuert, kann die Bedienung vom Cinema Player übernommen werden. Die Ausgabe geht an ein Enttec DMX USB Pro oder per Art-Net ins Netzwerk. Open DMX wird nicht unterstützt.</p>
     <figure class="snip">
       <img src="images/guide/icon-lights-on.png" alt="Light control icon">
       <figcaption data-lang="en">Light control is on.</figcaption>
@@ -477,15 +477,15 @@
     </figure>
     <p data-lang="en">Settings are reached via the bulb icon at the top right, or via <strong>Settings</strong>.</p>
     <p data-lang="de">Die Einstellungen sind über das Lampen-Icon rechts oben oder die <strong>Einstellungen</strong> erreichbar.</p>
-    <p data-lang="en"><strong>Shelly settings</strong></p>
-    <p data-lang="de"><strong>Shelly-Einstellungen</strong></p>
+    <p data-lang="en"><strong>DMX settings</strong></p>
+    <p data-lang="de"><strong>DMX-Einstellungen</strong></p>
     <figure>
       <img src="images/guide/light-settings.png" alt="Light control settings">
-      <figcaption data-lang="en">Shelly list, logins, presets Dark / Medium / Bright, fade, start-film and lights-up delays.</figcaption>
-      <figcaption data-lang="de">Shelly-Liste, Anmeldung, Vorgaben Dunkel / Mittel / Hell, Überblendung, Filmstart und Licht an.</figcaption>
+      <figcaption data-lang="en">Connection (Enttec DMX USB Pro or Art-Net), channels, presets Dark / Medium / Bright, fade, start-film and lights-up delays.</figcaption>
+      <figcaption data-lang="de">Anschluss (Enttec DMX USB Pro oder Art-Net), Kanäle, Vorgaben Dunkel / Mittel / Hell, Überblendung, Filmstart und Licht an.</figcaption>
     </figure>
-    <p data-lang="en">Every Shelly on the LAN appears in the list. A user name and password can be entered per device if needed. Ticked devices follow light control. Switches and dimmers are supported.</p>
-    <p data-lang="de">In der Liste melden sich alle Shelly-Komponenten. Für jeden Baustein kann, wenn notwendig, der Benutzername und das Passwort eingegeben werden. Alle ausgewählten Bausteine werden in der Lichtsteuerung bedient. Es werden Schalter und Dimmer unterstützt.</p>
+    <p data-lang="en">Choose <strong>Enttec DMX USB Pro</strong> and the serial port (for example <code>/dev/ttyUSB0</code>, 57600 baud), or <strong>Art-Net (LAN)</strong> with the node address and universe. <strong>Channels</strong> lists the dimmer slots, for example <code>1</code> or <code>1, 2, 5-7</code>. If the interface is missing, playback continues and the window shows the error.</p>
+    <p data-lang="de"><strong>Enttec DMX USB Pro</strong> und die Schnittstelle wählen (zum Beispiel <code>/dev/ttyUSB0</code>, 57600 Baud), oder <strong>Art-Net (LAN)</strong> mit Node-Adresse und Universe. Unter <strong>Kanäle</strong> stehen die Dimmer, zum Beispiel <code>1</code> oder <code>1, 2, 5-7</code>. Fehlt das Interface, läuft die Wiedergabe weiter und das Fenster meldet den Fehler.</p>
     <p data-lang="en">With light control on, house lights can be driven from Cinema Player and from the phone with <img class="inline" src="images/guide/light-buttons.png" alt="Dark Medium Bright">. The blue button shows the current state.</p>
     <p data-lang="de">Ist die Lichtsteuerung aktiviert, kann das Saallicht vom Cinema Player und der Fernsteuerung aus über die Tasten <img class="inline" src="images/guide/light-buttons.png" alt="Dunkel Mittel Hell"> bedient werden. Die blaue Taste zeigt den Zustand an.</p>
     <p data-lang="en">While a fade runs, the button blinks.</p>
