@@ -4751,8 +4751,8 @@ class VideoPlayerGUI:
         tk.Label(node, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
         tk.Entry(node, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
         tk.Label(
-            node, text=t("lights_channels_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
-        ).pack(side="left", padx=(8, 0))
+            holder, text=t("lights_channels_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+        ).pack(fill="x", padx=8, pady=(0, 2))
         self.lights_status = tk.StringVar(value="")
         tk.Label(
             holder, textvariable=self.lights_status, bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
