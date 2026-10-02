@@ -578,6 +578,89 @@ class PlaylistEntry:
         return cls(**{key: value for key, value in data.items() if key in names})
 
 
+MEDIA_DIRECTORY_NAME_LIMIT = 80
+
+
+def normalize_media_directories(items):
+    """Saved media folders as ``{"path", "name"}``.
+
+    Older settings stored bare path strings. Names are optional display labels.
+    """
+    seen = set()
+    result = []
+    if not isinstance(items, list):
+        return result
+    for raw in items:
+        name = ""
+        if isinstance(raw, str):
+            path = raw
+        elif isinstance(raw, dict):
+            path = raw.get("path") or ""
+            name = raw.get("name") or ""
+        else:
+            continue
+        if not isinstance(path, str):
+            continue
+        path = path.strip()
+        if not path:
+            continue
+        path = os.path.abspath(os.path.expanduser(path))
+        if not path or path in seen:
+            continue
+        if not isinstance(name, str):
+            name = ""
+        name = name.strip()
+        if len(name) > MEDIA_DIRECTORY_NAME_LIMIT:
+            name = name[:MEDIA_DIRECTORY_NAME_LIMIT].strip()
+        seen.add(path)
+        result.append({"path": path, "name": name})
+    return result
+
+
+def playlist_location_label(file_path, directories):
+    """Folder line for a playlist row.
+
+    A media directory with a name replaces that prefix. Folders inside it stay
+    visible after the name. Without a name, the directory path is shown.
+    """
+    raw = file_path or ""
+    directory = os.path.dirname(raw)
+    if not directory:
+        return ""
+    try:
+        abs_directory = os.path.abspath(directory)
+    except (OSError, ValueError):
+        abs_directory = directory
+    match = None
+    match_len = -1
+    for item in normalize_media_directories(directories):
+        if not item["name"]:
+            continue
+        folder = item["path"]
+        try:
+            if os.path.commonpath([abs_directory, folder]) != folder:
+                continue
+        except ValueError:
+            continue
+        if len(folder) > match_len:
+            match = item
+            match_len = len(folder)
+    if match is None:
+        return directory
+    try:
+        relative = os.path.relpath(abs_directory, match["path"])
+    except ValueError:
+        relative = ""
+    if relative == ".." or relative.startswith("../") or relative.startswith(".." + os.sep):
+        return directory
+    if relative in ("", "."):
+        return match["name"]
+    parts = [part for part in relative.replace("\\", "/").split("/") if part and part != "."]
+    if not parts:
+        return match["name"]
+    return match["name"] + " / " + " / ".join(parts)
+
+
 def clamp_volume(value, default=100):
     """Keep playlist and fader values in the 0–100 range used by mpv."""
     try:
