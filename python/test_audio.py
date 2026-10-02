@@ -140,6 +140,152 @@ class HdmiKeepaliveTests(unittest.TestCase):
             -1,
         )
 
+    def test_audio_labels_are_unique_and_skip_generic_backends(self):
+        devices = [
+            ("auto", "Autoselect device"),
+            ("pipewire", "PipeWire"),
+            ("pipewire/alsa_output.analog-stereo", "Analog Stereo"),
+            ("pulse/alsa_output.analog-stereo", "Analog Stereo"),
+        ]
+        rows = player.unique_audio_device_labels(devices)
+        labels = [label for label, _device in rows]
+        self.assertEqual(len(labels), len(set(labels)))
+        self.assertEqual(labels[0], "Analog Stereo")
+        self.assertIn("pulse/alsa_output.analog-stereo", labels[1])
+        self.assertNotIn("auto", [device for _label, device in rows])
+
+    def test_video_output_label_includes_monitor_name(self):
+        self.assertEqual(player.video_output_menu_label("HDMI-1", "Epson"), "HDMI-1 — Epson")
+        self.assertEqual(player.video_output_menu_label("HDMI-1", "HDMI-1"), "HDMI-1")
+        self.assertEqual(player.video_output_menu_label("DP-1", ""), "DP-1")
+
+    def test_normalize_audio_patch(self):
+        patch = player.normalize_audio_patch({"beamer": "Auto", "preview": "NULL", "extra": "x"})
+        self.assertEqual(patch, {"beamer": "", "preview": "none"})
+        self.assertEqual(player.normalize_audio_patch_choice("pipewire/hdmi"), "pipewire/hdmi")
+
+    def _manager(self, beamer="", preview=""):
+        manager = player.VideoOutputManager("HDMI-0")
+        manager.set_audio_patch({"beamer": beamer, "preview": preview})
+        return manager
+
+    def _silence_display(self, manager):
+        return (
+            patch.object(manager, "uses_gdctl", return_value=False),
+            patch.object(manager, "get_outputs", return_value=["HDMI-0", "DP-1"]),
+            patch.object(manager, "get_primary_output", return_value="DP-1"),
+        )
+
+    def test_explicit_beamer_patch_overrides_hdmi_match(self):
+        devices = [
+            ("pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo", "HDMI stereo"),
+            ("pipewire/alsa_output.analog-stereo", "Analog Stereo"),
+        ]
+        manager = self._manager(beamer="pipewire/alsa_output.analog-stereo")
+        display = self._silence_display(manager)
+        with display[0], display[1], display[2], patch(
+            "cinema_player.list_mpv_audio_devices", return_value=devices,
+        ):
+            chosen = manager.program_audio_device("/usr/bin/mpv")
+            args = manager.audio_launch_args("beamer", "/usr/bin/mpv")
+        self.assertEqual(chosen, "pipewire/alsa_output.analog-stereo")
+        self.assertEqual(args, ["--audio-device=pipewire/alsa_output.analog-stereo"])
+
+    def test_stale_patch_falls_back_to_automatic(self):
+        devices = [
+            ("pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo", "HDMI stereo"),
+            ("pipewire/alsa_output.analog-stereo", "Analog Stereo"),
+        ]
+        manager = self._manager(beamer="pipewire/missing")
+        display = self._silence_display(manager)
+        with display[0], display[1], display[2], patch(
+            "cinema_player.list_mpv_audio_devices", return_value=devices,
+        ):
+            chosen = manager.program_audio_device("/usr/bin/mpv")
+        self.assertIn("hdmi", chosen)
+
+    def test_preview_patch_may_use_the_projector_output(self):
+        hdmi = "pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo"
+        devices = [
+            (hdmi, "HDMI stereo"),
+            ("pipewire/alsa_output.analog-stereo", "Analog Stereo"),
+        ]
+        manager = self._manager(preview=hdmi)
+        display = self._silence_display(manager)
+        with display[0], display[1], display[2], patch(
+            "cinema_player.list_mpv_audio_devices", return_value=devices,
+        ):
+            chosen = manager.preview_audio_device("/usr/bin/mpv")
+        self.assertEqual(chosen, hdmi)
+
+    def test_preview_automatic_avoids_patched_beamer_device(self):
+        analog = "pipewire/alsa_output.analog-stereo"
+        usb = "pipewire/alsa_output.usb-headset"
+        devices = [
+            ("pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo", "HDMI stereo"),
+            (analog, "Analog Stereo"),
+            (usb, "USB Headset"),
+        ]
+        manager = self._manager(beamer=analog)
+        display = self._silence_display(manager)
+        display = (
+            display[0],
+            display[1],
+            patch.object(manager, "get_primary_output", return_value="HDMI-0"),
+        )
+        with display[0], display[1], display[2], patch(
+            "cinema_player.list_mpv_audio_devices", return_value=devices,
+        ):
+            chosen = manager.preview_audio_device("/usr/bin/mpv")
+        self.assertEqual(chosen, usb)
+
+    def test_off_patch_disconnects_both_players(self):
+        manager = self._manager(beamer="none", preview="off")
+        self.assertTrue(manager.audio_patch_is_off("beamer"))
+        self.assertTrue(manager.audio_patch_is_off("preview"))
+        self.assertIsNone(manager.program_audio_device("/usr/bin/mpv"))
+        self.assertIsNone(manager.preview_audio_device("/usr/bin/mpv"))
+        self.assertEqual(manager.audio_launch_args("beamer", "/usr/bin/mpv"), ["--ao=null"])
+        self.assertEqual(manager.audio_launch_args("preview", "/usr/bin/mpv"), ["--ao=null"])
+
+    def test_launch_arguments_use_the_patched_device(self):
+        analog = "pipewire/alsa_output.analog-stereo"
+        devices = [
+            ("pipewire/alsa_output.pci-0000_01_00.1.hdmi-stereo", "HDMI stereo"),
+            (analog, "Analog Stereo"),
+        ]
+        manager = self._manager(beamer=analog)
+        mode = player.DisplayMode("HDMI-0", 1920, 1080, 60.0, name="1920x1080")
+        with patch.object(manager, "effective_mode", return_value=mode), patch(
+            "cinema_player.session_is_wayland", return_value=False,
+        ), patch(
+            "cinema_player.gpu_context_for_mpv", return_value="x11egl",
+        ), patch(
+            "cinema_player.mpv_has_option", return_value=False,
+        ), patch(
+            "cinema_player.list_mpv_audio_devices", return_value=devices,
+        ):
+            args = manager.get_mpv_arguments("/usr/bin/mpv")
+        self.assertIn(f"--audio-device={analog}", args)
+        self.assertIn("--screen-name=HDMI-0", args)
+        self.assertNotIn("--ao=null", args)
+
+    def test_audio_route_commands_switch_without_restarting(self):
+        self.assertEqual(player.audio_route_commands("none"), [("ao", "null")])
+        self.assertEqual(player.audio_route_commands(None), [("ao", "null")])
+        self.assertEqual(
+            player.audio_route_commands(None, when_missing="auto"),
+            [("ao", "auto"), ("audio-device", "auto")],
+        )
+        self.assertEqual(
+            player.audio_route_commands("jack"),
+            [("ao", "jack"), ("audio-device", "jack")],
+        )
+        self.assertEqual(
+            player.audio_route_commands("pipewire/alsa_output.analog-stereo"),
+            [("ao", "pipewire"), ("audio-device", "pipewire/alsa_output.analog-stereo")],
+        )
+
     def test_load_file_passes_aid_before_playback(self):
         ctl = player.MPVController("t", "/usr/bin/mpv")
         ctl.socket = MagicMock()
