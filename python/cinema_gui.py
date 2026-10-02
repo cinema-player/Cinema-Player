@@ -60,6 +60,8 @@ from cinema_player import (
     media_file_available,
     parse_bitrate_bps,
     parse_mpv_count,
+    normalize_media_directories,
+    playlist_location_label,
     probe_audio,
     probe_media,
     refresh_entry_aspect,
@@ -1271,9 +1273,14 @@ class VideoPlayerGUI:
         self.last_import_dir = self.settings.get("last_import_dir") or ""
         if self.last_import_dir and not os.path.isdir(self.last_import_dir):
             self.last_import_dir = ""
-        self.media_directories = self._normalize_media_directories(
+        self.media_directories = normalize_media_directories(
             self.settings.get("media_directories", [])
         )
+        self.settings["media_directories"] = self.media_directories
+        self._media_dir_name_var = None
+        self._media_dir_name_entry = None
+        self._media_dir_name_index = None
+        self._media_dir_name_guard = False
         self.copy_imported_media = tk.BooleanVar(
             value=bool(self.settings.get("copy_imported_media", False))
         )
@@ -2890,16 +2897,44 @@ class VideoPlayerGUI:
         )
         self.playlist_window = self.playlist_canvas.create_window((0, 0), window=self.playlist_inner, anchor="nw")
         self.playlist_canvas.configure(yscrollcommand=scroll.set)
-        self.playlist_canvas.bind(
-            "<Configure>",
-            lambda e: self.playlist_canvas.itemconfigure(self.playlist_window, width=e.width),
-        )
+        self.playlist_canvas.bind("<Configure>", self._on_playlist_canvas_configure)
         self.playlist_canvas.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
         self.playlist_canvas.bind("<Enter>", lambda e: self.playlist_canvas.bind_all("<MouseWheel>", self._on_mousewheel))
         self.playlist_canvas.bind("<Leave>", lambda e: self.playlist_canvas.unbind_all("<MouseWheel>"))
         self.playlist_canvas.bind("<Button-4>", self._on_mousewheel)
         self.playlist_canvas.bind("<Button-5>", self._on_mousewheel)
+
+    def _on_playlist_canvas_configure(self, event):
+        self.playlist_canvas.itemconfigure(self.playlist_window, width=event.width)
+        self._apply_playlist_name_wrap(event.width)
+
+    def _playlist_name_wrap(self, width=None):
+        """Width left for the file name and folder once the metadata columns fit."""
+        if width is None:
+            try:
+                width = self.playlist_canvas.winfo_width()
+            except tk.TclError:
+                width = 0
+        try:
+            width = int(width)
+        except (TypeError, ValueError):
+            width = 0
+        if width <= 1:
+            width = 900
+        return max(220, width - 480)
+
+    def _apply_playlist_name_wrap(self, width=None):
+        wrap = self._playlist_name_wrap(width)
+        for widgets in self.row_widgets:
+            for key in ("filename", "location"):
+                label = widgets.get(key)
+                if label is None:
+                    continue
+                try:
+                    label.configure(wraplength=wrap)
+                except tk.TclError:
+                    return
 
     def _on_mousewheel(self, event):
         if event.num == 5 or event.delta < 0:
@@ -3250,6 +3285,7 @@ class VideoPlayerGUI:
         apply_playlist_warnings(self.playlist, self.projection_zoom.get())
         for index, entry in enumerate(self.playlist):
             self._make_row(index, entry)
+        self._apply_playlist_name_wrap()
         self._sync_clip_settings_warning_option()
         self._refresh_settings_warning_status()
 
@@ -3289,26 +3325,35 @@ class VideoPlayerGUI:
             highlightthickness=2, highlightbackground=border, highlightcolor=border,
         )
         row.pack(fill="x", pady=1, padx=2)
-        row.columnconfigure(1, weight=1)
+        row.columnconfigure(1, weight=1, minsize=220)
 
         cursor = tk.Label(row, text="", width=2, bg=bg, fg=fg, font=FONT_ROW_BOLD)
         cursor.grid(row=0, column=0, rowspan=2)
 
-        plain = [
-            tk.Label(row, text=entry.filename, anchor="w", bg=bg, fg=fg, font=FONT_ROW_BOLD),
-            tk.Label(row, text=os.path.dirname(entry.path), anchor="w", bg=bg, fg=fg, font=FONT_SMALL),
-            tk.Label(row, text="", bg=bg, fg=fg, font=FONT_ROW),
-        ]
-        plain[0].grid(row=0, column=1, sticky="w")
-        plain[1].grid(row=0, column=2, sticky="w", padx=8)
-        plain[2].grid(row=0, column=3, sticky="e")
-        duration = plain[2]
+        wrap = self._playlist_name_wrap()
+        filename = tk.Label(
+            row, text=entry.filename, anchor="w", justify="left",
+            bg=bg, fg=fg, font=FONT_ROW_BOLD, wraplength=wrap,
+        )
+        location = tk.Label(
+            row, text=self._playlist_location_text(entry), anchor="w", justify="left",
+            bg=bg, fg=self._location_fg(fg), font=FONT_SMALL, wraplength=wrap,
+        )
+        filename.grid(row=0, column=1, sticky="ew")
+        location.grid(row=1, column=1, sticky="ew", pady=(1, 0))
+
+        duration = tk.Label(row, text="", bg=bg, fg=fg, font=FONT_ROW)
+        duration.grid(row=0, column=3, sticky="e")
 
         codecs = " / ".join(part for part in (entry.video_codec, entry.audio_codec) if part) or "--"
-        plain.append(tk.Label(row, text=f"{entry.container}   {codecs}", anchor="w", bg=bg, fg=fg, font=FONT_SMALL))
-        plain[-1].grid(row=1, column=1, sticky="w")
-        plain.append(tk.Label(row, text=entry.resolution_label, bg=bg, fg=fg, font=FONT_SMALL))
-        plain[-1].grid(row=1, column=2, sticky="w", padx=8)
+        codec_label = tk.Label(
+            row, text=f"{entry.container}   {codecs}", anchor="w",
+            bg=bg, fg=fg, font=FONT_SMALL,
+        )
+        codec_label.grid(row=0, column=2, sticky="nw", padx=8)
+        resolution = tk.Label(row, text=entry.resolution_label, bg=bg, fg=fg, font=FONT_SMALL)
+        resolution.grid(row=1, column=2, sticky="w", padx=8)
+        plain = [filename, duration, codec_label, resolution]
 
         meta = tk.Frame(row, bg=bg)
         meta.grid(row=1, column=3, sticky="e")
@@ -3337,6 +3382,8 @@ class VideoPlayerGUI:
             "row": row,
             "cursor": cursor,
             "plain": plain,
+            "filename": filename,
+            "location": location,
             "duration": duration,
             "volume": volume,
             "loudness": loudness,
@@ -3370,6 +3417,11 @@ class VideoPlayerGUI:
         )
         for label in widgets["plain"]:
             label.config(bg=bg, fg=fg)
+        widgets["location"].config(
+            text=self._playlist_location_text(entry),
+            bg=bg,
+            fg=self._location_fg(fg),
+        )
         widgets["cursor"].config(
             text=">" if index == self.program_index else " ", bg=bg, fg=fg
         )
@@ -4403,32 +4455,48 @@ class VideoPlayerGUI:
         except OSError:
             pass
 
-    @staticmethod
-    def _normalize_media_directories(paths):
-        seen = set()
-        result = []
-        if not isinstance(paths, list):
-            return result
-        for raw in paths:
-            if not isinstance(raw, str):
-                continue
-            path = os.path.abspath(os.path.expanduser(raw.strip()))
-            if not path or path in seen:
-                continue
-            seen.add(path)
-            result.append(path)
-        return result
-
     def _save_media_directories(self):
-        self.media_directories = self._normalize_media_directories(self.media_directories)
-        self.settings["media_directories"] = list(self.media_directories)
+        self.media_directories = normalize_media_directories(self.media_directories)
+        self.settings["media_directories"] = self.media_directories
         try:
             save_settings(self.settings)
         except OSError:
             pass
+        self._refresh_playlist_locations()
+
+    def _playlist_location_text(self, entry):
+        return playlist_location_label(getattr(entry, "path", ""), self.media_directories)
+
+    def _location_fg(self, fg):
+        """Folder line stays readable on a highlighted row and quieter otherwise."""
+        if fg == COLOR_TEXT:
+            return COLOR_MUTED
+        return fg
+
+    def _refresh_playlist_locations(self):
+        rows = getattr(self, "row_widgets", None)
+        playlist = getattr(self, "playlist", None)
+        if not rows or playlist is None or len(rows) != len(playlist):
+            return
+        for widgets, entry in zip(rows, playlist):
+            label = widgets.get("location")
+            if label is None:
+                continue
+            try:
+                label.configure(text=self._playlist_location_text(entry))
+            except tk.TclError:
+                return
 
     def _existing_media_directories(self):
-        return [path for path in self.media_directories if os.path.isdir(path)]
+        return [item["path"] for item in self.media_directories if os.path.isdir(item["path"])]
+
+    def _media_directory_index(self, path):
+        if not path:
+            return -1
+        for index, item in enumerate(self.media_directories):
+            if item["path"] == path:
+                return index
+        return -1
 
     def _media_directory_for_path(self, path):
         if not path:
@@ -5530,7 +5598,7 @@ class VideoPlayerGUI:
         window = tk.Toplevel(self.root)
         window.title(t("media_directories"))
         window.configure(bg=COLOR_BG)
-        window.minsize(520, 280)
+        window.minsize(560, 340)
         if self.icon_image is not None:
             try:
                 window.iconphoto(True, self.icon_image)
@@ -5555,6 +5623,26 @@ class VideoPlayerGUI:
         listbox.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
 
+        name_row = tk.Frame(window, bg=COLOR_BG)
+        name_row.pack(fill="x", padx=10, pady=(0, 2))
+        tk.Label(
+            name_row, text=t("media_directories_name"), bg=COLOR_BG, fg=COLOR_TEXT,
+            font=FONT_UI,
+        ).pack(side="left")
+        self._media_dir_name_var = tk.StringVar()
+        self._media_dir_name_index = None
+        self._media_dir_name_guard = False
+        name_entry = tk.Entry(name_row, textvariable=self._media_dir_name_var, font=FONT_UI)
+        name_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        name_entry.configure(state="disabled")
+        self._media_dir_name_entry = name_entry
+        name_entry.bind("<Return>", self._commit_media_directory_name)
+        name_entry.bind("<FocusOut>", self._commit_media_directory_name)
+        tk.Label(
+            window, text=t("media_directories_name_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=640, justify="left",
+        ).pack(fill="x", padx=10, pady=(0, 8))
+
         buttons = tk.Frame(window, bg=COLOR_BG)
         buttons.pack(fill="x", padx=10, pady=(0, 10))
         tk.Button(
@@ -5572,8 +5660,14 @@ class VideoPlayerGUI:
 
         window._listbox = listbox
         self.media_dirs_window = window
+        listbox.bind("<<ListboxSelect>>", self._on_media_directory_select)
+        listbox.bind("<Double-Button-1>", lambda _event: self._focus_media_directory_name())
         self._refresh_media_directory_list(listbox)
-        self._place_on_control_monitor(window, 680, 360)
+        if self.media_directories and not listbox.curselection():
+            listbox.selection_set(0)
+            listbox.activate(0)
+        self._load_media_directory_name_field(listbox)
+        self._place_on_control_monitor(window, 720, 420)
 
     def _media_dirs_window_alive(self):
         window = getattr(self, "media_dirs_window", None)
@@ -5585,26 +5679,147 @@ class VideoPlayerGUI:
             self.media_dirs_window = None
             return False
 
-    def _media_directory_label(self, path):
-        if os.path.isdir(path):
+    def _media_directory_label(self, item):
+        path = item["path"]
+        name = item.get("name") or ""
+        text = f"{name}  —  {path}" if name else path
+        if not os.path.isdir(path):
+            text = f"{text}  ({t('media_directories_missing')})"
+        return text
+
+    def _media_directory_choice_label(self, path):
+        index = self._media_directory_index(path)
+        if index < 0:
             return path
-        return f"{path}  ({t('media_directories_missing')})"
+        return self._media_directory_label(self.media_directories[index])
 
     def _refresh_media_directory_list(self, listbox, select_path=None):
         current = select_path
         if current is None:
             selection = listbox.curselection()
-            if selection:
-                current = self.media_directories[selection[0]]
+            if selection and 0 <= selection[0] < len(self.media_directories):
+                current = self.media_directories[selection[0]]["path"]
         listbox.delete(0, "end")
-        for path in self.media_directories:
-            listbox.insert("end", self._media_directory_label(path))
-        if current in self.media_directories:
-            index = self.media_directories.index(current)
+        for item in self.media_directories:
+            listbox.insert("end", self._media_directory_label(item))
+        index = self._media_directory_index(current)
+        if index >= 0:
             listbox.selection_set(index)
+            listbox.activate(index)
             listbox.see(index)
 
+    def _load_media_directory_name_field(self, listbox):
+        entry = getattr(self, "_media_dir_name_entry", None)
+        var = getattr(self, "_media_dir_name_var", None)
+        if entry is None or var is None:
+            return
+        selection = listbox.curselection()
+        self._media_dir_name_guard = True
+        try:
+            if not selection:
+                self._media_dir_name_index = None
+                var.set("")
+                entry.configure(state="disabled")
+                return
+            index = selection[0]
+            if not 0 <= index < len(self.media_directories):
+                self._media_dir_name_index = None
+                var.set("")
+                entry.configure(state="disabled")
+                return
+            self._media_dir_name_index = index
+            entry.configure(state="normal")
+            var.set(self.media_directories[index]["name"])
+        finally:
+            self._media_dir_name_guard = False
+
+    def _focus_media_directory_name(self):
+        entry = getattr(self, "_media_dir_name_entry", None)
+        if entry is None:
+            return
+        try:
+            if str(entry.cget("state")) == "disabled":
+                return
+            entry.focus_set()
+            entry.icursor("end")
+            entry.selection_range(0, "end")
+        except tk.TclError:
+            pass
+
+    def _on_media_directory_select(self, _event=None):
+        if getattr(self, "_media_dir_name_guard", False):
+            return
+        window = getattr(self, "media_dirs_window", None)
+        listbox = getattr(window, "_listbox", None) if window is not None else None
+        if listbox is None:
+            return
+        selection = listbox.curselection()
+        new_index = selection[0] if selection else None
+        if new_index == self._media_dir_name_index:
+            return
+        self._commit_media_directory_name()
+        self._load_media_directory_name_field(listbox)
+
+    def _replace_media_directory_row(self, listbox, index):
+        """Update one list row without moving the current selection."""
+        if listbox is None or not 0 <= index < len(self.media_directories):
+            return
+        try:
+            if index >= listbox.size():
+                return
+            selected = list(listbox.curselection())
+        except tk.TclError:
+            return
+        self._media_dir_name_guard = True
+        try:
+            listbox.delete(index)
+            listbox.insert(index, self._media_directory_label(self.media_directories[index]))
+            listbox.selection_clear(0, "end")
+            for item in selected:
+                if 0 <= item < listbox.size():
+                    listbox.selection_set(item)
+            if selected and 0 <= selected[0] < listbox.size():
+                listbox.activate(selected[0])
+        except tk.TclError:
+            pass
+        finally:
+            self._media_dir_name_guard = False
+
+    def _commit_media_directory_name(self, _event=None):
+        if getattr(self, "_media_dir_name_guard", False):
+            return "break"
+        index = getattr(self, "_media_dir_name_index", None)
+        var = getattr(self, "_media_dir_name_var", None)
+        if index is None or var is None:
+            return "break"
+        if not 0 <= index < len(self.media_directories):
+            return "break"
+        name = var.get().strip()
+        if name == self.media_directories[index]["name"]:
+            if var.get() != name:
+                self._media_dir_name_guard = True
+                try:
+                    var.set(name)
+                finally:
+                    self._media_dir_name_guard = False
+            return "break"
+        self.media_directories[index]["name"] = name
+        self._save_media_directories()
+        if var is not None and 0 <= index < len(self.media_directories):
+            stored = self.media_directories[index]["name"]
+            if var.get() != stored:
+                self._media_dir_name_guard = True
+                try:
+                    var.set(stored)
+                finally:
+                    self._media_dir_name_guard = False
+        window = getattr(self, "media_dirs_window", None)
+        listbox = getattr(window, "_listbox", None) if self._media_dirs_window_alive() else None
+        self._replace_media_directory_row(listbox, index)
+        return "break"
+
     def _add_media_directory(self, window, listbox):
+        self._commit_media_directory_name()
         options = {"parent": window, "title": t("media_directories_add")}
         start = self._preferred_import_dir()
         if start:
@@ -5613,26 +5828,34 @@ class VideoPlayerGUI:
         if not path:
             return
         path = os.path.abspath(path)
-        if path not in self.media_directories:
-            self.media_directories.append(path)
+        if self._media_directory_index(path) < 0:
+            self.media_directories.append({"path": path, "name": ""})
             self._save_media_directories()
         self._refresh_media_directory_list(listbox, select_path=path)
+        self._load_media_directory_name_field(listbox)
+        self._focus_media_directory_name()
 
     def _remove_media_directory(self, listbox):
         selection = listbox.curselection()
         if not selection:
             return
         index = selection[0]
+        self._media_dir_name_index = None
         del self.media_directories[index]
         self._save_media_directories()
         next_path = ""
         if self.media_directories:
-            next_path = self.media_directories[min(index, len(self.media_directories) - 1)]
+            next_path = self.media_directories[min(index, len(self.media_directories) - 1)]["path"]
         self._refresh_media_directory_list(listbox, select_path=next_path)
+        self._load_media_directory_name_field(listbox)
 
     def _close_media_dirs_window(self):
+        self._commit_media_directory_name()
         window = getattr(self, "media_dirs_window", None)
         self.media_dirs_window = None
+        self._media_dir_name_var = None
+        self._media_dir_name_entry = None
+        self._media_dir_name_index = None
         if window is not None:
             try:
                 window.destroy()
@@ -5714,7 +5937,7 @@ class VideoPlayerGUI:
         listbox.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
         for path in directories:
-            listbox.insert("end", path)
+            listbox.insert("end", self._media_directory_choice_label(path))
         selected = self._media_directory_for_path(self.last_import_dir)
         if selected in directories:
             index = directories.index(selected)
