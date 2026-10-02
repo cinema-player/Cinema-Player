@@ -2412,11 +2412,7 @@ class VideoPlayerGUI:
         menu.add_separator()
 
         program = self._menu(menu)
-        program.add_checkbutton(
-            label=t("default_idle_media"),
-            variable=self.use_default_idle_media,
-            command=self._on_use_default_idle_media,
-        )
+        self._fill_program_menu(program)
         menu.add_cascade(label=t("program_menu"), menu=program)
 
         playlist = self._menu(menu)
@@ -2796,6 +2792,30 @@ class VideoPlayerGUI:
             if name.lower().endswith(".pls") and os.path.isfile(os.path.join(folder, name))
         ]
 
+    def _fill_program_menu(self, menu):
+        pause = self._menu(menu)
+        pause.add_checkbutton(
+            label=t("default_idle_media"),
+            variable=self.use_default_idle_media,
+            command=self._on_use_default_idle_media,
+        )
+        pause.add_separator()
+        if self.idle_media_path:
+            pause.add_command(
+                label=os.path.basename(self.idle_media_path),
+                command=self.choose_idle_media,
+            )
+            pause.add_command(label=t("idle_none"), command=self.clear_idle_media)
+        else:
+            pause.add_command(label=t("idle_media_choose"), command=self.choose_idle_media)
+        pause.add_separator()
+        pause.add_entry(
+            label=t("autoplay_delay"),
+            variable=self.autoplay_delay,
+            suffix=t("seconds_short"),
+        )
+        menu.add_cascade(label=t("idle_media_menu"), menu=pause)
+
     def _fill_playlist_menu(self, menu):
         menu.add_command(label=t("refresh_playlist"), command=self.check_playlist_files)
         menu.add_command(label=t("reset_played"), command=self.reset_played)
@@ -2815,23 +2835,6 @@ class VideoPlayerGUI:
             variable=self.load_last_playlist_at_start,
             command=self._on_load_last_playlist_at_start,
         )
-        menu.add_separator()
-        pause = self._menu(menu)
-        if self.idle_media_path:
-            pause.add_command(
-                label=os.path.basename(self.idle_media_path),
-                command=self.choose_idle_media,
-            )
-            pause.add_command(label=t("idle_none"), command=self.clear_idle_media)
-        else:
-            pause.add_command(label=t("idle_media_choose"), command=self.choose_idle_media)
-        pause.add_separator()
-        pause.add_entry(
-            label=t("autoplay_delay"),
-            variable=self.autoplay_delay,
-            suffix=t("seconds_short"),
-        )
-        menu.add_cascade(label=t("idle_media_menu"), menu=pause)
         menu.add_separator()
         menu.add_command(
             label=t("analyze_loudness"),
