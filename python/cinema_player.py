@@ -1245,6 +1245,85 @@ def choose_preview_audio_device(devices, program_device=None):
     return ranked[0][1]
 
 
+AUDIO_PATCH_AUTO = ""
+AUDIO_PATCH_NONE = "none"
+
+
+def normalize_audio_patch_choice(value):
+    """Map a saved patch entry to automatic, off, or an mpv device id."""
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if lowered in {"", "auto", "automatic"}:
+        return AUDIO_PATCH_AUTO
+    if lowered in {"none", "off", "null"}:
+        return AUDIO_PATCH_NONE
+    return text
+
+
+def normalize_audio_patch(value):
+    """Beamer and preview audio routes. Empty means automatic."""
+    data = value if isinstance(value, dict) else {}
+    return {
+        "beamer": normalize_audio_patch_choice(data.get("beamer")),
+        "preview": normalize_audio_patch_choice(data.get("preview")),
+    }
+
+
+def audio_route_commands(device, *, when_missing="null"):
+    """mpv property updates that point a running player at a sound output.
+
+    ``device`` is an mpv id, ``none`` to disconnect, or None when Automatic
+    found no sink. ``when_missing`` is ``null`` (stay silent) or ``auto``.
+    """
+    if device == AUDIO_PATCH_NONE:
+        return [("ao", "null")]
+    if not device:
+        if when_missing == "auto":
+            return [("ao", "auto"), ("audio-device", "auto")]
+        return [("ao", "null")]
+    backend = str(device).split("/", 1)[0] or "auto"
+    return [("ao", backend), ("audio-device", str(device))]
+
+
+def audio_device_menu_label(device_id, description):
+    """Human name for an mpv audio device, falling back to the device id."""
+    desc = " ".join(str(description or "").split())
+    ident = " ".join(str(device_id or "").split())
+    if desc and desc.lower() != ident.lower():
+        return desc
+    return ident or desc
+
+
+def unique_audio_device_labels(devices):
+    """(label, device id) rows with labels that stay unique in a menu."""
+    used = set()
+    rows = []
+    for device_id, description in devices or ():
+        device_id = str(device_id or "").strip()
+        if not device_id or device_id.lower() in {"auto", "pulse", "pipewire", "alsa"}:
+            continue
+        base = audio_device_menu_label(device_id, description) or device_id
+        label = base
+        if label in used:
+            label = f"{base} ({device_id})"
+        suffix = 2
+        while label in used:
+            label = f"{base} ({device_id}) {suffix}"
+            suffix += 1
+        used.add(label)
+        rows.append((label, device_id))
+    return rows
+
+
+def video_output_menu_label(connector, device_name=""):
+    """Connector plus the monitor name, when EDID or the desktop knows one."""
+    connector = str(connector or "").strip()
+    name = " ".join(str(device_name or "").split())
+    if name and name.lower() != connector.lower():
+        return f"{connector} — {name}"
+    return connector
+
+
 def list_mpv_audio_devices(mpv_path):
     try:
         result = subprocess.run(
@@ -1742,8 +1821,10 @@ class VideoOutputManager:
         self.original_mode = None
         self.video_mode = None
         self.target_refresh = None
+        self.audio_patch = {"beamer": AUDIO_PATCH_AUTO, "preview": AUDIO_PATCH_AUTO}
         self._program_audio_device = None
         self._program_audio_output = None
+        self._program_audio_choice = ""
         self._preview_audio_device = None
         self._preview_audio_key = None
         self._gdctl_cache = None
@@ -1783,8 +1864,58 @@ class VideoOutputManager:
     def _clear_audio_cache(self):
         self._program_audio_device = None
         self._program_audio_output = None
+        self._program_audio_choice = ""
         self._preview_audio_device = None
         self._preview_audio_key = None
+
+    def set_audio_patch(self, patch):
+        """Remember which sound output each player uses. Empty stays automatic."""
+        self.audio_patch = normalize_audio_patch(patch)
+        self._clear_audio_cache()
+
+    def audio_patch_is_off(self, role):
+        return normalize_audio_patch_choice(self.audio_patch.get(role)) == AUDIO_PATCH_NONE
+
+    @staticmethod
+    def _patched_device(devices, choice):
+        choice = normalize_audio_patch_choice(choice)
+        if not choice or choice == AUDIO_PATCH_NONE:
+            return None
+        for device_id, _description in devices or ():
+            if device_id == choice:
+                return device_id
+        return None
+
+    def _match_output_audio(self, devices, output_name):
+        if not output_name:
+            return None
+        siblings = []
+        identity = None
+        try:
+            siblings = self.get_outputs()
+        except Exception:
+            siblings = [output_name]
+        if self.uses_gdctl():
+            try:
+                identity = self.gdctl_state().identity.get(output_name)
+            except Exception:
+                identity = None
+        return choose_program_audio_device(
+            devices,
+            output_name,
+            sibling_outputs=siblings,
+            identity=identity,
+        )
+
+    def _automatic_preview_device(self, devices, program, primary):
+        device = None
+        if primary and self.video_output and primary != self.video_output:
+            control = self._match_output_audio(devices, primary)
+            if control and control != program:
+                device = control
+        if not device:
+            device = choose_preview_audio_device(devices, program_device=program)
+        return device
 
     def gdctl_state(self):
         now = time.monotonic()
@@ -1922,71 +2053,83 @@ class VideoOutputManager:
         return name
 
     def program_audio_device(self, mpv_path):
-        """Audio device for program playback: the projector HDMI, not the desktop default."""
-        output = self.video_output
-        if not output:
-            try:
-                output = self.select_video_output()
-            except RuntimeError:
-                return None
-        if self._program_audio_device and self._program_audio_output == output:
+        """Audio device for program playback.
+
+        A saved patch wins. Automatic follows the projector connector.
+        """
+        choice = normalize_audio_patch_choice(self.audio_patch.get("beamer"))
+        if choice == AUDIO_PATCH_NONE:
+            return None
+        output = self.video_output or ""
+        if (
+            self._program_audio_device
+            and self._program_audio_output == output
+            and self._program_audio_choice == choice
+        ):
             return self._program_audio_device
-        siblings = []
-        identity = None
-        try:
-            siblings = self.get_outputs()
-        except Exception:
-            siblings = [output]
-        if self.uses_gdctl():
-            try:
-                identity = self.gdctl_state().identity.get(output)
-            except Exception:
-                identity = None
-        device = choose_program_audio_device(
-            list_mpv_audio_devices(mpv_path),
-            output,
-            sibling_outputs=siblings,
-            identity=identity,
-        )
+        devices = list_mpv_audio_devices(mpv_path)
+        device = self._patched_device(devices, choice)
+        if device is None:
+            if not output:
+                try:
+                    output = self.select_video_output() or ""
+                except RuntimeError:
+                    return None
+            device = self._match_output_audio(devices, output)
         self._program_audio_device = device
         self._program_audio_output = output
+        self._program_audio_choice = choice
         return device
 
     def preview_audio_device(self, mpv_path):
-        """Booth audio: control-screen or analog, never the projector HDMI."""
+        """Booth audio. A saved patch wins; automatic stays off the projector HDMI."""
+        choice = normalize_audio_patch_choice(self.audio_patch.get("preview"))
+        if choice == AUDIO_PATCH_NONE:
+            return None
         program = self.program_audio_device(mpv_path)
         primary = None
         try:
             primary = self.get_primary_output()
         except Exception:
             primary = None
-        key = (program, primary, self.video_output)
+        key = (program, primary, self.video_output, choice)
         if self._preview_audio_device is not None and self._preview_audio_key == key:
             return self._preview_audio_device
         devices = list_mpv_audio_devices(mpv_path)
-        siblings = []
-        try:
-            siblings = self.get_outputs()
-        except Exception:
-            siblings = [primary] if primary else []
-        device = None
-        if primary and self.video_output and primary != self.video_output:
-            identity = None
-            if self.uses_gdctl():
-                try:
-                    identity = self.gdctl_state().identity.get(primary)
-                except Exception:
-                    identity = None
-            control = choose_program_audio_device(
-                devices, primary, sibling_outputs=siblings, identity=identity,
-            )
-            if control and control != program:
-                device = control
-        if not device:
-            device = choose_preview_audio_device(devices, program_device=program)
+        device = self._patched_device(devices, choice)
+        if device is None:
+            device = self._automatic_preview_device(devices, program, primary)
         self._preview_audio_device = device
         self._preview_audio_key = key
         return device
+
+    def audio_launch_args(self, role, mpv_path):
+        """mpv arguments that connect one player to its patched sound output."""
+        role = "beamer" if role in {"beamer", "main", "program"} else "preview"
+        if self.audio_patch_is_off(role):
+            return ["--ao=null"]
+        if role == "beamer":
+            device = self.program_audio_device(mpv_path)
+            if device:
+                return [f"--audio-device={device}"]
+            return []
+        device = self.preview_audio_device(mpv_path)
+        if device:
+            return [f"--audio-device={device}"]
+        return ["--ao=null"]
+
+    def describe_automatic_audio(self, mpv_path):
+        """Device ids Automatic would use, without changing the saved patch."""
+        devices = list_mpv_audio_devices(mpv_path)
+        output = self.video_output or ""
+        beamer = self._match_output_audio(devices, output) if output else None
+        primary = None
+        try:
+            primary = self.get_primary_output()
+        except Exception:
+            primary = None
+        preview = self._automatic_preview_device(devices, beamer, primary)
+        return devices, beamer, preview
 
     def get_modes(self, output_name):
         if self.uses_gdctl():
@@ -2653,9 +2796,7 @@ class VideoOutputManager:
         if self.video_output:
             arguments.append(f"--screen-name={self.video_output}")
             arguments.append(f"--fs-screen-name={self.video_output}")
-        audio = self.program_audio_device(mpv_path)
-        if audio:
-            arguments.append(f"--audio-device={audio}")
+        arguments.extend(self.audio_launch_args("beamer", mpv_path))
         arguments.extend(program_audio_keepopen_args(mpv_path))
         return arguments
 
