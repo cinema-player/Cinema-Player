@@ -63,6 +63,13 @@ from cinema_player import (
     same_aspect_ratio,
     session_display_name,
     session_is_wayland,
+    AUDIO_PATCH_NONE,
+    audio_device_menu_label,
+    list_mpv_audio_devices,
+    normalize_audio_patch_choice,
+    unique_audio_device_labels,
+    video_output_menu_label,
+    audio_route_commands,
     PLAYBACK_AF,
 )
 
@@ -1306,6 +1313,8 @@ class VideoPlayerGUI:
         self.remote_api = RemoteAPIServer(self)
         self.remote_window = None
         self.lights_window = None
+        self.patch_window = None
+        self.output_manager.set_audio_patch(self.settings.get("audio_patch"))
         lights_cfg = self.settings.get("lights") if isinstance(self.settings.get("lights"), dict) else {}
         (
             self.dmx_output,
@@ -1676,6 +1685,7 @@ class VideoPlayerGUI:
         """Rebuild the window for the current design and re-embed the preview player."""
         self.preview_mpv.quit()
         self._close_menus()
+        self._close_patch_window()
         self.edid_window = None
         self.media_dirs_window = None
         self.audiosync_list_window = None
@@ -2419,6 +2429,10 @@ class VideoPlayerGUI:
         self._fill_beamer_output_menu(outputs)
         system.add_cascade(label=t("beamer_output"), menu=outputs)
         system.add_command(
+            label=t("patch"),
+            command=self.show_patch,
+        )
+        system.add_command(
             label=t("theme_to_light") if self.theme == "dark" else t("theme_to_dark"),
             command=self.toggle_theme,
         )
@@ -2497,6 +2511,265 @@ class VideoPlayerGUI:
                 )
         menu.add_separator()
         menu.add_command(label=t("edid"), command=self.show_edid)
+
+    def show_patch(self):
+        """Route Beamer and Preview to a picture output and a sound device."""
+        window = getattr(self, "patch_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.deiconify()
+                    window.lift()
+                    window.focus_force()
+                    self._fill_patch_form()
+                    return
+            except tk.TclError:
+                self.patch_window = None
+        window = tk.Toplevel(self.root)
+        window.title(t("patch"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(720, 320)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_patch_window)
+        tk.Label(
+            window, text=t("patch_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=680, justify="left",
+        ).pack(fill="x", padx=10, pady=(10, 6))
+        holder = tk.Frame(window, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        table = tk.Frame(holder, bg=COLOR_PANEL)
+        table.pack(fill="x", padx=8, pady=(8, 4))
+        table.columnconfigure(1, weight=1)
+        table.columnconfigure(2, weight=1)
+        for column, key in ((1, "patch_picture"), (2, "patch_sound")):
+            tk.Label(
+                table, text=t(key), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+            ).grid(row=0, column=column, sticky="w", padx=(0, 12), pady=(0, 4))
+        tk.Label(
+            table, text=t("patch_beamer"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 12), pady=4)
+        tk.Label(
+            table, text=t("patch_preview"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI,
+        ).grid(row=2, column=0, sticky="w", padx=(0, 12), pady=4)
+        self.patch_video_var = tk.StringVar(value="")
+        self.patch_beamer_audio_var = tk.StringVar(value="")
+        self.patch_preview_audio_var = tk.StringVar(value="")
+        self.patch_video_combo = ttk.Combobox(
+            table, textvariable=self.patch_video_var, state="readonly", width=36,
+        )
+        self.patch_video_combo.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=4)
+        self.patch_beamer_audio_combo = ttk.Combobox(
+            table, textvariable=self.patch_beamer_audio_var, state="readonly", width=36,
+        )
+        self.patch_beamer_audio_combo.grid(row=1, column=2, sticky="ew", pady=4)
+        tk.Label(
+            table, text=t("patch_control_window"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI,
+            anchor="w",
+        ).grid(row=2, column=1, sticky="w", padx=(0, 12), pady=4)
+        self.patch_preview_audio_combo = ttk.Combobox(
+            table, textvariable=self.patch_preview_audio_var, state="readonly", width=36,
+        )
+        self.patch_preview_audio_combo.grid(row=2, column=2, sticky="ew", pady=4)
+        self.patch_picture_hint = tk.Label(
+            holder, text="", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+        )
+        self.patch_picture_hint.pack(fill="x", padx=8)
+        hints = tk.Frame(holder, bg=COLOR_PANEL)
+        hints.pack(fill="x", padx=8, pady=(2, 4))
+        hints.columnconfigure(1, weight=1)
+        tk.Label(
+            hints, text=t("patch_beamer"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.patch_beamer_hint = tk.Label(
+            hints, text="", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+        )
+        self.patch_beamer_hint.grid(row=0, column=1, sticky="ew")
+        tk.Label(
+            hints, text=t("patch_preview"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 8))
+        self.patch_preview_hint = tk.Label(
+            hints, text="", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
+        )
+        self.patch_preview_hint.grid(row=1, column=1, sticky="ew")
+        buttons = tk.Frame(holder, bg=COLOR_PANEL)
+        buttons.pack(fill="x", padx=8, pady=(4, 8))
+        tk.Button(
+            buttons, text=t("patch_close"), font=FONT_UI, command=self._close_patch_window,
+        ).pack(side="right")
+        tk.Button(
+            buttons, text=t("remote_control_apply"), font=FONT_UI, command=self._commit_patch,
+        ).pack(side="right", padx=(0, 8))
+        tk.Button(
+            buttons, text=t("patch_refresh"), font=FONT_UI, command=self._fill_patch_form,
+        ).pack(side="left")
+        self.patch_window = window
+        self._patch_video_ids = {}
+        self._patch_beamer_audio_ids = {}
+        self._patch_preview_audio_ids = {}
+        self._fill_patch_form()
+        self._place_on_control_monitor(window, 760, 340)
+
+    def _close_patch_window(self):
+        window = getattr(self, "patch_window", None)
+        self.patch_window = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def _fill_patch_form(self):
+        window = getattr(self, "patch_window", None)
+        if window is None:
+            return
+        try:
+            if not window.winfo_exists():
+                self.patch_window = None
+                return
+        except tk.TclError:
+            self.patch_window = None
+            return
+        try:
+            names = list(self.output_manager.get_outputs())
+        except Exception:
+            names = []
+        current = self.output_manager.video_output or self.beamer_output.get().strip()
+        if current and current not in names:
+            names = [current, *names]
+        video_rows = []
+        for name in names:
+            try:
+                device_name = self.output_manager.get_output_device_name(name)
+            except Exception:
+                device_name = ""
+            video_rows.append((video_output_menu_label(name, device_name), name))
+        if not video_rows:
+            video_rows = [("--", "")]
+        self._patch_video_ids = self._set_patch_combo(
+            self.patch_video_combo, self.patch_video_var, video_rows, current,
+        )
+        picture_state = "disabled" if self.program_state == "PLAYING" else "readonly"
+        try:
+            self.patch_video_combo.configure(state=picture_state)
+        except tk.TclError:
+            return
+        self.patch_picture_hint.config(
+            text=t("beamer_output_busy") if self.program_state == "PLAYING" else "",
+        )
+        try:
+            devices, beamer_auto, preview_auto = self.output_manager.describe_automatic_audio(
+                self.mpv_path,
+            )
+        except Exception:
+            devices, beamer_auto, preview_auto = [], None, None
+        audio_rows = self._patch_audio_rows(devices)
+        patch = self.output_manager.audio_patch
+        self._patch_beamer_audio_ids = self._set_patch_combo(
+            self.patch_beamer_audio_combo,
+            self.patch_beamer_audio_var,
+            audio_rows,
+            normalize_audio_patch_choice(patch.get("beamer")),
+        )
+        self._patch_preview_audio_ids = self._set_patch_combo(
+            self.patch_preview_audio_combo,
+            self.patch_preview_audio_var,
+            list(audio_rows),
+            normalize_audio_patch_choice(patch.get("preview")),
+        )
+        self.patch_beamer_hint.config(text=self._patch_auto_text(beamer_auto, devices))
+        self.patch_preview_hint.config(text=self._patch_auto_text(preview_auto, devices))
+
+    @staticmethod
+    def _patch_audio_rows(devices):
+        rows = [(t("patch_automatic"), ""), (t("patch_none"), AUDIO_PATCH_NONE)]
+        used = {label for label, _ident in rows}
+        for label, device_id in unique_audio_device_labels(devices):
+            shown = label
+            if shown in used:
+                shown = f"{label} ({device_id})"
+            extra = 2
+            while shown in used:
+                shown = f"{label} ({device_id}) {extra}"
+                extra += 1
+            used.add(shown)
+            rows.append((shown, device_id))
+        return rows
+
+    @staticmethod
+    def _set_patch_combo(combo, variable, rows, current_id):
+        labels = []
+        mapping = {}
+        chosen = ""
+        current_id = "" if current_id is None else str(current_id)
+        for label, ident in rows:
+            label = str(label)
+            if label in mapping:
+                continue
+            labels.append(label)
+            mapping[label] = ident
+            if ident == current_id and not chosen:
+                chosen = label
+        if not chosen and current_id and current_id != AUDIO_PATCH_NONE:
+            missing = t("patch_missing", device=current_id)
+            labels.append(missing)
+            mapping[missing] = current_id
+            chosen = missing
+        if not chosen and labels:
+            chosen = labels[0]
+        try:
+            combo.configure(values=labels)
+        except tk.TclError:
+            return mapping
+        variable.set(chosen)
+        return mapping
+
+    @staticmethod
+    def _patch_auto_text(device_id, devices):
+        if not device_id:
+            return t("patch_auto_none")
+        label = device_id
+        for ident, description in devices or ():
+            if ident == device_id:
+                label = audio_device_menu_label(ident, description) or device_id
+                break
+        return t("patch_auto_using", device=label)
+
+    def _commit_patch(self):
+        if getattr(self, "patch_window", None) is None:
+            return
+        beamer_audio = normalize_audio_patch_choice(
+            self._patch_beamer_audio_ids.get(self.patch_beamer_audio_var.get(), "")
+        )
+        preview_audio = normalize_audio_patch_choice(
+            self._patch_preview_audio_ids.get(self.patch_preview_audio_var.get(), "")
+        )
+        video = self._patch_video_ids.get(self.patch_video_var.get(), "")
+        self.output_manager.set_audio_patch({
+            "beamer": beamer_audio,
+            "preview": preview_audio,
+        })
+        self.settings["audio_patch"] = dict(self.output_manager.audio_patch)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        video_changed = bool(video) and video != (self.output_manager.video_output or "")
+        if video_changed and self.program_state == "PLAYING":
+            messagebox.showinfo(t("beamer_status"), t("beamer_output_busy"))
+        elif video_changed:
+            before = self.output_manager.video_output
+            self.apply_beamer_output(video)
+            if self.output_manager.video_output != before:
+                self._fill_patch_form()
+                return
+        self._apply_main_audio_device()
+        self._apply_preview_audio_device()
+        self._fill_patch_form()
 
     def _fill_calibration_kind_menu(self, menu, kind):
         menu.add_command(
@@ -3662,13 +3935,28 @@ class VideoPlayerGUI:
         self._apply_preview_audio_device()
         return True
 
-    def _apply_preview_audio_device(self):
-        """Keep preview off the projector HDMI after the beamer output changes."""
-        if not self.preview_mpv.process:
+    def _push_audio_route(self, controller, device, when_missing):
+        """Point a running mpv instance at a sound output without restarting it."""
+        if controller is None or not controller.process:
             return
-        device = self.output_manager.preview_audio_device(self.mpv_path)
-        if device:
-            self.preview_mpv.command("set_property", "audio-device", device)
+        for prop, value in audio_route_commands(device, when_missing=when_missing):
+            controller.command("set_property", prop, value)
+
+    def _apply_preview_audio_device(self):
+        """Point preview at its patched sound output."""
+        if self.output_manager.audio_patch_is_off("preview"):
+            device = AUDIO_PATCH_NONE
+        else:
+            device = self.output_manager.preview_audio_device(self.mpv_path)
+        self._push_audio_route(self.preview_mpv, device, "null")
+
+    def _apply_main_audio_device(self):
+        """Point the Beamer player at its patched sound output."""
+        if self.output_manager.audio_patch_is_off("beamer"):
+            device = AUDIO_PATCH_NONE
+        else:
+            device = self.output_manager.program_audio_device(self.mpv_path)
+        self._push_audio_route(self.main_mpv, device, "auto")
 
     def _pin_main_output_to_beamer(self):
         """Keep the Wayland mpv surface on the projector after a mode change."""
@@ -6427,12 +6715,7 @@ class VideoPlayerGUI:
             "--sub-auto=no",
             f"--af={PLAYBACK_AF}",
         ]
-        audio = self.output_manager.preview_audio_device(self.mpv_path)
-        if audio:
-            arguments.append(f"--audio-device={audio}")
-        else:
-            # Never fall back to auto: that follows the desktop default, often HDMI.
-            arguments.append("--ao=null")
+        arguments.extend(self.output_manager.audio_launch_args("preview", self.mpv_path))
         try:
             self.preview_mpv.start(arguments)
             self.preview_mpv.observe("af-metadata/meter", 5)

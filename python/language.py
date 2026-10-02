@@ -112,6 +112,24 @@ STRINGS = {
         "beamer_status": "Beamer status",
         "beamer_output": "Beamer output",
         "beamer_output_busy": "Stop playback before changing the projector output.",
+        "patch": "Patch",
+        "patch_hint": (
+            "Connect the Beamer and Preview players to an output. "
+            "Preview picture stays in this window. "
+            "Automatic sound follows the Beamer connector and keeps Preview off the projector."
+        ),
+        "patch_picture": "Picture",
+        "patch_sound": "Sound",
+        "patch_beamer": "Beamer",
+        "patch_preview": "Preview",
+        "patch_control_window": "Control window",
+        "patch_automatic": "Automatic",
+        "patch_none": "Off",
+        "patch_refresh": "Refresh",
+        "patch_close": "Close",
+        "patch_missing": "Unavailable ({device})",
+        "patch_auto_using": "Automatic uses {device}",
+        "patch_auto_none": "Automatic finds no device",
         "edid": "EDID",
         "edid_title": "EDID — {output}",
         "edid_no_output": "No projector output is selected.",
@@ -380,6 +398,24 @@ STRINGS = {
         "beamer_status": "Beamer-Status",
         "beamer_output": "Beamerausgang",
         "beamer_output_busy": "Wiedergabe beenden, bevor der Beamerausgang gewechselt wird.",
+        "patch": "Patch",
+        "patch_hint": (
+            "Verbindet die Player Beamer und Vorschau mit einem Ausgang. "
+            "Das Bild der Vorschau bleibt in diesem Fenster. "
+            "Automatischer Ton folgt dem Beameranschluss und hält die Vorschau vom Projektor fern."
+        ),
+        "patch_picture": "Bild",
+        "patch_sound": "Ton",
+        "patch_beamer": "Beamer",
+        "patch_preview": "Vorschau",
+        "patch_control_window": "Kontrollfenster",
+        "patch_automatic": "Automatisch",
+        "patch_none": "Aus",
+        "patch_refresh": "Aktualisieren",
+        "patch_close": "Schließen",
+        "patch_missing": "Nicht verfügbar ({device})",
+        "patch_auto_using": "Automatisch nutzt {device}",
+        "patch_auto_none": "Automatisch findet kein Gerät",
         "edid": "EDID",
         "edid_title": "EDID — {output}",
         "edid_no_output": "Es ist kein Beamerausgang ausgewählt.",

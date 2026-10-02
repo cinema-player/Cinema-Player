@@ -43,6 +43,7 @@ The burger menu in the header covers booth setup:
 - **Playlist** — check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness
 - **System settings**
   - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
+  - Patch (connect Beamer and Preview to a picture output and a sound device; remembered)
   - Light or dark design
   - Language (English / Deutsch)
   - Text size (A−− … A++, remembered)
