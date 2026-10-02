@@ -39,8 +39,8 @@ The burger menu in the header covers booth setup:
 
 - Fullscreen on the control monitor (`F11`)
 - Media directories (saved folders offered when importing into the playlist)
-- **Program** — Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
-- **Playlist** — check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness
+- **Program** — Idle media (choose the file, the black pause, and Use default Idle Media)
+- **Playlist** — check files, reset, settings warning, autosave, load last playlist, analyze loudness
 - **System settings**
   - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
   - Patch (connect Beamer and Preview to a picture output and a sound device; remembered)
@@ -71,15 +71,16 @@ The playlist menu offers:
 - **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show red **setting!** in the right-hand playlist column. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
-- **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `idle` at startup.
 - Analyze loudness (ffmpeg EBU R128 and audio envelope; only while **OFF**)
+
+**Program → Idle media** chooses the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. **Use default Idle Media** loads the file from `idle` at startup and is remembered.
 
 ### Global Settings
 
 These settings control the behavior of the playlist.
 
 - **Dark / Medium / Bright** – Manual house-light presets. They are disabled until **House lights** is on in Settings → System settings → Light control (or on the phone).
-- **Idle media name** – If an idle file is set, its name is shown here. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Playlist. When **Settings warning** is on, red **Settings warning on** appears beside it.
+- **Idle media name** – If an idle file is set, its name is shown here. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Program → Idle media. When **Settings warning** is on, red **Settings warning on** appears beside it.
 
 ### Playback Controls
 
