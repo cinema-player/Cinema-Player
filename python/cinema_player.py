@@ -1883,6 +1883,135 @@ def parse_edid_identity(data):
     return identity
 
 
+COLOR_FMT_RGB = "RGB"
+COLOR_FMT_444 = "YCbCr 4:4:4"
+COLOR_FMT_422 = "YCbCr 4:2:2"
+COLOR_FMT_420 = "YCbCr 4:2:0"
+COLOR_FORMAT_LABELS = (COLOR_FMT_RGB, COLOR_FMT_444, COLOR_FMT_422, COLOR_FMT_420)
+
+
+@dataclass
+class EdidColorInfo:
+    """Sink color encodings and HDMI link budget from EDID."""
+    formats: list = field(default_factory=lambda: [COLOR_FMT_RGB])
+    max_tmds_mhz: float | None = None
+
+
+def parse_edid_color_info(data):
+    """RGB / YCbCr support bits and Max TMDS clock from CTA / HDMI blocks."""
+    info = EdidColorInfo()
+    if not data or len(data) < 128 or data[0:8] != bytes.fromhex("00ffffffffffff00"):
+        return info
+    # Digital HDMI sinks always accept RGB; analog rarely reach this path.
+    formats = [COLOR_FMT_RGB]
+    y420 = False
+    max_tmds = None
+    extensions = data[126]
+    for index in range(extensions):
+        start = 128 * (index + 1)
+        block = data[start:start + 128]
+        if len(block) < 128 or block[0] != 0x02:
+            continue
+        flags = block[3]
+        if flags & 0x20:
+            formats.append(COLOR_FMT_444)
+        if flags & 0x10:
+            formats.append(COLOR_FMT_422)
+        dtd_offset = block[2]
+        offset = 4
+        while 4 <= offset < dtd_offset and offset < 128:
+            length = block[offset] & 0x1F
+            tag = block[offset] >> 5
+            payload = block[offset + 1:offset + 1 + length]
+            offset += 1 + length
+            if tag == 3 and len(payload) >= 3:
+                oui = payload[:3]
+                if oui == b"\x03\x0c\x00" and len(payload) >= 7:
+                    # HDMI 1.4 VSDB: Max_TMDS_Clock is byte 6 × 5 MHz.
+                    max_tmds = float(payload[6]) * 5.0
+                    # DC_Y444 bit in byte 5 (bit 3) implies deep-color 4:4:4.
+                    if payload[5] & 0x08 and COLOR_FMT_444 not in formats:
+                        formats.append(COLOR_FMT_444)
+                elif oui == b"\xd8\x5d\xc4" and len(payload) >= 6:
+                    # HDMI Forum VSDB: Max_TMDS_Character_Rate × 5 MHz.
+                    if payload[4]:
+                        max_tmds = float(payload[4]) * 5.0
+                    # Byte 5 bit 3 (DC_48bit_420) / related bits advertise 4:2:0.
+                    if payload[5] & 0x07:
+                        y420 = True
+            elif tag == 7 and payload:
+                ext = payload[0]
+                # 0x0E YCbCr 4:2:0 Video Data Block, 0x0F Capability Map.
+                if ext in (0x0E, 0x0F):
+                    y420 = True
+    if y420:
+        formats.append(COLOR_FMT_420)
+    # Keep a stable order matching the beamer chips.
+    ordered = [label for label in COLOR_FORMAT_LABELS if label in formats]
+    info.formats = ordered or [COLOR_FMT_RGB]
+    info.max_tmds_mhz = max_tmds
+    return info
+
+
+def estimate_mode_pixel_clock_mhz(width, height, refresh):
+    """Rough pixel clock including blanking (CEA/CVT-ish)."""
+    try:
+        width = int(width)
+        height = int(height)
+        refresh = float(refresh)
+    except (TypeError, ValueError):
+        return 0.0
+    if width <= 0 or height <= 0 or refresh <= 0:
+        return 0.0
+    # ~35% blanking covers common CEA timings without needing a full modeline.
+    return width * height * refresh * 1.35 / 1_000_000.0
+
+
+def color_format_link_factor(fmt):
+    """Relative TMDS load vs RGB 4:4:4 8 bpc."""
+    if fmt == COLOR_FMT_420:
+        return 0.5
+    if fmt == COLOR_FMT_422:
+        # HDMI YCbCr 4:2:2 packs chroma so deep color fits; 8 bpc ≈ RGB budget.
+        return 0.75
+    return 1.0
+
+
+def color_format_fits(fmt, width, height, refresh, max_tmds_mhz):
+    """True when the mode is within the link budget for this encoding."""
+    if not max_tmds_mhz or max_tmds_mhz <= 0:
+        return True
+    clock = estimate_mode_pixel_clock_mhz(width, height, refresh)
+    if clock <= 0:
+        return True
+    return clock * color_format_link_factor(fmt) <= max_tmds_mhz * 1.02
+
+
+def choose_color_format(width, height, refresh, color_info, prefer_rate=True):
+    """Pick RGB when the link allows it; otherwise the lightest YCbCr that fits.
+
+    When prefer_rate is set and RGB cannot carry the mode, prefer YCbCr 4:2:2
+    then 4:2:0 (then 4:4:4) so the target refresh stays available.
+    """
+    info = color_info or EdidColorInfo()
+    available = list(info.formats or [COLOR_FMT_RGB])
+    if COLOR_FMT_RGB not in available:
+        available.insert(0, COLOR_FMT_RGB)
+    if color_format_fits(COLOR_FMT_RGB, width, height, refresh, info.max_tmds_mhz):
+        return COLOR_FMT_RGB
+    if not prefer_rate:
+        return COLOR_FMT_RGB if COLOR_FMT_RGB in available else available[0]
+    for fmt in (COLOR_FMT_422, COLOR_FMT_420, COLOR_FMT_444):
+        if fmt not in available:
+            continue
+        if color_format_fits(fmt, width, height, refresh, info.max_tmds_mhz):
+            return fmt
+    for fmt in (COLOR_FMT_422, COLOR_FMT_420, COLOR_FMT_444):
+        if fmt in available:
+            return fmt
+    return available[0]
+
+
 def format_output_device_name(edid_identity=None, monitor_identity=None):
     """Best human-readable name for the display on a connector."""
     edid_identity = edid_identity or {}
@@ -2044,6 +2173,9 @@ class VideoOutputManager:
         self._display_cache_at = 0.0
         self._device_name_cache = None
         self._wayland_backend = None
+        self._color_info_cache = None
+        self.color_format = COLOR_FMT_RGB
+        self._original_color_format = None
 
     @staticmethod
     def desktop_env():
@@ -2151,6 +2283,7 @@ class VideoOutputManager:
         self._display_cache = None
         self._display_cache_at = 0.0
         self._device_name_cache = None
+        self._color_info_cache = None
 
     def _clear_audio_cache(self):
         self._program_audio_device = None
@@ -2686,6 +2819,123 @@ class VideoOutputManager:
             "decoded": decode_edid(data),
         }
 
+    def get_color_info(self, output_name=None):
+        """EDID color encodings / Max TMDS for the projector connector."""
+        name = output_name or self.video_output or ""
+        now = time.monotonic()
+        cache = self._color_info_cache
+        if cache and cache[0] == name and now - cache[1] < 2.0:
+            return cache[2]
+        data, _source = self.read_edid(name) if name else (None, None)
+        info = parse_edid_color_info(data)
+        self._color_info_cache = (name, now, info)
+        return info
+
+    def get_color_formats(self, output_name=None):
+        return list(self.get_color_info(output_name).formats)
+
+    def preferred_color_format(self, width, height, refresh, output_name=None):
+        """RGB when the link allows it; YCbCr when needed to keep the refresh."""
+        return choose_color_format(
+            width,
+            height,
+            refresh,
+            self.get_color_info(output_name),
+            prefer_rate=True,
+        )
+
+    @staticmethod
+    def _nvidia_color_space_token(fmt):
+        return {
+            COLOR_FMT_RGB: "RGB",
+            COLOR_FMT_444: "YCbCr444",
+            COLOR_FMT_422: "YCbCr422",
+            COLOR_FMT_420: "YCbCr420",
+        }.get(fmt, "RGB")
+
+    @staticmethod
+    def _parse_nvidia_color_space(text):
+        blob = (text or "").lower()
+        if "420" in blob:
+            return COLOR_FMT_420
+        if "422" in blob:
+            return COLOR_FMT_422
+        if "444" in blob or "ycbcr" in blob:
+            return COLOR_FMT_444
+        if "rgb" in blob:
+            return COLOR_FMT_RGB
+        return ""
+
+    def query_color_format(self, output_name=None):
+        """Best-effort current HDMI encoding (NVIDIA CurrentColorSpace when available)."""
+        if self.color_format:
+            probed = self.color_format
+        else:
+            probed = ""
+        if not shutil.which("nvidia-settings"):
+            return probed or COLOR_FMT_RGB
+        env = self.desktop_env()
+        try:
+            result = subprocess.run(
+                ["nvidia-settings", "-t", "-q", "CurrentColorSpace"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return probed or COLOR_FMT_RGB
+        parsed = self._parse_nvidia_color_space(result.stdout or result.stderr or "")
+        return parsed or probed or COLOR_FMT_RGB
+
+    def ensure_color_format(self, fmt):
+        """Request RGB/YCbCr on the projector. Returns True when a change was attempted."""
+        fmt = fmt if fmt in COLOR_FORMAT_LABELS else COLOR_FMT_RGB
+        available = self.get_color_formats()
+        if fmt not in available and fmt != COLOR_FMT_RGB:
+            # Still try RGB↔YCbCr when EDID is incomplete.
+            if fmt == COLOR_FMT_420 and COLOR_FMT_422 in available:
+                fmt = COLOR_FMT_422
+            elif fmt == COLOR_FMT_422 and COLOR_FMT_444 in available:
+                fmt = COLOR_FMT_444
+        if self._original_color_format is None:
+            self._original_color_format = self.query_color_format()
+        if fmt == self.color_format:
+            # Re-assert after mode changes; NVIDIA often needs an explicit write.
+            pass
+        token = self._nvidia_color_space_token(fmt)
+        applied = False
+        if shutil.which("nvidia-settings"):
+            env = self.desktop_env()
+            for assignment in (
+                f"CurrentColorSpace={token}",
+                f"ColorSpace={token}",
+            ):
+                try:
+                    result = subprocess.run(
+                        ["nvidia-settings", "-a", assignment],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        env=env,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                if result.returncode == 0:
+                    applied = True
+                    break
+        self.color_format = fmt
+        return applied or fmt != COLOR_FMT_RGB
+
+    def restore_color_format(self):
+        if self._original_color_format is None:
+            return
+        try:
+            self.ensure_color_format(self._original_color_format)
+        except Exception as exc:
+            print("Fehler beim Wiederherstellen des Farbraums:", exc)
+        self._original_color_format = None
+
     def get_video_info(self, filename):
         result = subprocess.run(
             [
@@ -2810,8 +3060,26 @@ class VideoOutputManager:
         self.target_refresh = targets[0][0] if targets else video.fps
         width, height = video.width, video.height
 
-        for rate, _multiplier in targets:
-            found = self.find_refresh_mode(modes, width, height, rate)
+        def match_targets(mode_list):
+            for rate, _multiplier in targets:
+                found = self.find_refresh_mode(mode_list, width, height, rate)
+                if found:
+                    return found
+            return None
+
+        found = match_targets(modes)
+        if found:
+            return found, True
+
+        # Target refresh missing under RGB — try YCbCr so 50p etc. can still run.
+        color_info = self.get_color_info()
+        for fmt in (COLOR_FMT_422, COLOR_FMT_420, COLOR_FMT_444):
+            if fmt not in color_info.formats:
+                continue
+            self.ensure_color_format(fmt)
+            self._invalidate_display_cache()
+            modes = self.get_modes(self.video_output)
+            found = match_targets(modes)
             if found:
                 return found, True
 
@@ -3069,6 +3337,25 @@ class VideoOutputManager:
         if self.original_mode is None:
             self.original_mode = self.get_current_mode(mode.output)
 
+        wanted_fmt = self.preferred_color_format(
+            mode.width, mode.height, mode.refresh, mode.output,
+        )
+        # Keep an earlier YCbCr choice from find_best_mode when RGB still
+        # cannot carry this refresh on the measured link.
+        if (
+            self.color_format in (COLOR_FMT_422, COLOR_FMT_420, COLOR_FMT_444)
+            and wanted_fmt == COLOR_FMT_RGB
+            and not color_format_fits(
+                COLOR_FMT_RGB,
+                mode.width,
+                mode.height,
+                mode.refresh,
+                self.get_color_info(mode.output).max_tmds_mhz,
+            )
+        ):
+            wanted_fmt = self.color_format
+        self.ensure_color_format(wanted_fmt)
+
         current = self.get_current_mode(mode.output)
         if (
             current
@@ -3091,6 +3378,9 @@ class VideoOutputManager:
                 command.extend(["--rate", f"{mode.refresh:.3f}"])
             subprocess.run(command, capture_output=True, text=True, check=True)
             time.sleep(0.2)
+
+        # Re-assert encoding after the mode switch (NVIDIA often resets it).
+        self.ensure_color_format(wanted_fmt)
 
         self._invalidate_display_cache()
         geometry = self.get_output_geometry(mode.output)
@@ -3176,6 +3466,7 @@ class VideoOutputManager:
 
     def restore_original_mode(self):
         if not self.original_mode:
+            self.restore_color_format()
             return
 
         mode = self.original_mode
@@ -3194,6 +3485,7 @@ class VideoOutputManager:
         except Exception as e:
             print("Fehler beim Wiederherstellen:", e)
 
+        self.restore_color_format()
         self._invalidate_display_cache()
         self.original_mode = None
         self.video_mode = None

@@ -3010,7 +3010,9 @@ class VideoPlayerGUI:
         self.beamer_rates = BeamerChoiceLine(panel)
         self.beamer_rates.pack(fill="x", padx=8, pady=(0, 4))
         self.beamer_resolutions = BeamerChoiceLine(panel)
-        self.beamer_resolutions.pack(fill="x", padx=8, pady=(0, 8))
+        self.beamer_resolutions.pack(fill="x", padx=8, pady=(0, 4))
+        self.beamer_colorspaces = BeamerChoiceLine(panel)
+        self.beamer_colorspaces.pack(fill="x", padx=8, pady=(0, 8))
         self._beamer_caps_cache = None
 
     def _build_preview(self, parent):
@@ -3650,9 +3652,12 @@ class VideoPlayerGUI:
             self.beamer_resolutions.set_choices(
                 t("beamer_resolutions", resolutions=""), [],
             )
+            self.beamer_colorspaces.set_choices(
+                t("beamer_colorspaces", spaces=""), [],
+            )
             self.refresh_beamer_outputs()
             return
-        rates, resolutions = self._beamer_capability_lists()
+        rates, resolutions, colorspaces = self._beamer_capability_lists()
         clip = self.current_entry()
         preview = self._preview_clip()
         focus = clip if self.program_state == "PLAYING" else (preview or clip)
@@ -3756,6 +3761,18 @@ class VideoPlayerGUI:
             program_res,
             preview_res,
         )
+        selected_space = None
+        try:
+            selected_space = self.output_manager.color_format or None
+        except Exception:
+            selected_space = None
+        if selected_space and selected_space not in colorspaces:
+            colorspaces = list(colorspaces) + [selected_space]
+        self.beamer_colorspaces.set_choices(
+            t("beamer_colorspaces", spaces=""),
+            colorspaces,
+            selected_space if selected_space in colorspaces else None,
+        )
         self._refresh_beamer_device_name()
         self.refresh_beamer_outputs()
 
@@ -3816,7 +3833,7 @@ class VideoPlayerGUI:
         output = self.output_manager.video_output or ""
         cache = self._beamer_caps_cache
         if cache and cache[0] == output:
-            return cache[1], cache[2]
+            return cache[1], cache[2], cache[3]
         try:
             modes = self.output_manager.get_modes(output) if output else []
         except Exception:
@@ -3833,8 +3850,14 @@ class VideoPlayerGUI:
             if key in seen_res:
                 continue
             seen_res.append(key)
-        self._beamer_caps_cache = (output, rates, seen_res)
-        return rates, seen_res
+        try:
+            colorspaces = self.output_manager.get_color_formats(output) if output else []
+        except Exception:
+            colorspaces = []
+        if not colorspaces:
+            colorspaces = ["RGB"]
+        self._beamer_caps_cache = (output, rates, seen_res, colorspaces)
+        return rates, seen_res, colorspaces
 
     def _beamer_rate_supported(self, fps, rates):
         return any(self.output_manager.refresh_matches(fps, rate) for rate in rates)
