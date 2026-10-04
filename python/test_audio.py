@@ -172,6 +172,7 @@ class HdmiKeepaliveTests(unittest.TestCase):
     def _silence_display(self, manager):
         return (
             patch.object(manager, "uses_gdctl", return_value=False),
+            patch.object(manager, "uses_kscreen", return_value=False),
             patch.object(manager, "get_outputs", return_value=["HDMI-0", "DP-1"]),
             patch.object(manager, "get_primary_output", return_value="DP-1"),
         )
@@ -183,7 +184,7 @@ class HdmiKeepaliveTests(unittest.TestCase):
         ]
         manager = self._manager(beamer="pipewire/alsa_output.analog-stereo")
         display = self._silence_display(manager)
-        with display[0], display[1], display[2], patch(
+        with display[0], display[1], display[2], display[3], patch(
             "cinema_player.list_mpv_audio_devices", return_value=devices,
         ):
             chosen = manager.program_audio_device("/usr/bin/mpv")
@@ -198,7 +199,7 @@ class HdmiKeepaliveTests(unittest.TestCase):
         ]
         manager = self._manager(beamer="pipewire/missing")
         display = self._silence_display(manager)
-        with display[0], display[1], display[2], patch(
+        with display[0], display[1], display[2], display[3], patch(
             "cinema_player.list_mpv_audio_devices", return_value=devices,
         ):
             chosen = manager.program_audio_device("/usr/bin/mpv")
@@ -212,7 +213,7 @@ class HdmiKeepaliveTests(unittest.TestCase):
         ]
         manager = self._manager(preview=hdmi)
         display = self._silence_display(manager)
-        with display[0], display[1], display[2], patch(
+        with display[0], display[1], display[2], display[3], patch(
             "cinema_player.list_mpv_audio_devices", return_value=devices,
         ):
             chosen = manager.preview_audio_device("/usr/bin/mpv")
@@ -231,9 +232,10 @@ class HdmiKeepaliveTests(unittest.TestCase):
         display = (
             display[0],
             display[1],
+            display[2],
             patch.object(manager, "get_primary_output", return_value="HDMI-0"),
         )
-        with display[0], display[1], display[2], patch(
+        with display[0], display[1], display[2], display[3], patch(
             "cinema_player.list_mpv_audio_devices", return_value=devices,
         ):
             chosen = manager.preview_audio_device("/usr/bin/mpv")

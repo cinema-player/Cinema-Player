@@ -245,7 +245,7 @@ To achieve smooth, flicker-free playback, the graphics card’s refresh rate is 
 1. The video’s metadata is read.
 2. The refresh rates supported by the projector are checked (shown as **Rates** / **Frequenzen** in the beamer panel).
 3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**. For 50 and 60 fps, if the projector has no 50/60 Hz mode, Cinema Player uses 25/30 Hz instead.
-4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME Wayland is limited to EDID modes).
+4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME/KWin Wayland is limited to EDID modes).
 
 If a listed rate can show the clip (native, 2× refresh, or the 25/30 Hz fallback for 50/60 fps), the projector status shows **OK** (green). 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz. 50 fps is **OK** when 25 Hz is listed and 50 Hz is not.
 
@@ -270,6 +270,6 @@ From the repository root:
 ./start
 ```
 
-`./install.sh` installs system packages (mpv, ffmpeg, xrandr, gdctl), Pixi and the Python environment, registers the application icon, and adds a menu / Desktop launcher. `./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`.
+`./install.sh` installs system packages (mpv, ffmpeg, xrandr, gdctl, kscreen-doctor), Pixi and the Python environment, registers the application icon, and adds a menu / Desktop launcher. `./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`.
 
-mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`.
+mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`; on KWin/Plasma Wayland it uses `kscreen-doctor`.

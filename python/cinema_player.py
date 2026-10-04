@@ -6,7 +6,7 @@ Two mpv instances:
     - Main: exclusive video output on a separate HDMI output
     - Preview: separate mpv window on the control monitor
 
-Display control uses XRandR on X11 and GNOME gdctl on Wayland.
+Display control uses XRandR on X11, GNOME gdctl or KWin kscreen-doctor on Wayland.
 """
 
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
@@ -115,6 +115,27 @@ def session_is_wayland():
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
         return True
     return bool(os.environ.get("WAYLAND_DISPLAY"))
+
+
+def session_desktop_hint():
+    """Return 'kde', 'gnome', or '' from the usual desktop environment variables."""
+    chunks = []
+    for key in (
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "DESKTOP_SESSION",
+        "GDMSESSION",
+    ):
+        value = os.environ.get(key, "")
+        if value:
+            chunks.append(value.lower())
+    text = " ".join(chunks).replace(":", " ").replace(";", " ")
+    tokens = set(text.split())
+    if tokens & {"kde", "plasma", "plasmawayland", "kwin"}:
+        return "kde"
+    if tokens & {"gnome", "ubuntu", "unity", "mutter"}:
+        return "gnome"
+    return ""
 
 
 def session_display_name():
@@ -1572,6 +1593,115 @@ def parse_gdctl_show(text):
     return state
 
 
+def parse_kscreen_json(text):
+    """Parse `kscreen-doctor -j` into the same layout shape as gdctl."""
+    state = GdctlState()
+    try:
+        payload = json.loads(text or "")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"kscreen-doctor JSON ungültig: {exc}") from exc
+
+    outputs = payload.get("outputs") or []
+    connected = [
+        item for item in outputs
+        if isinstance(item, dict) and item.get("connected")
+    ]
+    connected.sort(
+        key=lambda item: (
+            int(item.get("priority") or 0) == 0,
+            int(item.get("priority") or 999),
+            str(item.get("name") or ""),
+        )
+    )
+
+    for item in connected:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        state.order.append(name)
+        state.modes.setdefault(name, [])
+        identity = {}
+        for key, source in (("vendor", "vendor"), ("product", "model"), ("pretty", "model")):
+            value = " ".join(str(item.get(source) or "").split())
+            if value:
+                identity[key] = value
+        if identity:
+            state.identity[name] = identity
+
+        preferred_ids = {
+            str(mode_id) for mode_id in (item.get("preferredModes") or []) if mode_id is not None
+        }
+        current_id = str(item.get("currentModeId") or "")
+        for mode_info in item.get("modes") or []:
+            if not isinstance(mode_info, dict):
+                continue
+            size = mode_info.get("size") or {}
+            try:
+                width = int(size.get("width"))
+                height = int(size.get("height"))
+                refresh = float(mode_info.get("refreshRate"))
+            except (TypeError, ValueError):
+                continue
+            if width <= 0 or height <= 0 or refresh <= 0:
+                continue
+            mode_name = str(mode_info.get("name") or "")
+            if re.search(r"\di(?:\s|$|@)", mode_name.lower()) or "interlace" in mode_name.lower():
+                continue
+            mode_id = str(mode_info.get("id") or "")
+            # Prefer the stable mode id; kscreen-doctor accepts id or WxH@rounded.
+            display_name = mode_id or f"{width}x{height}@{int(round(refresh))}"
+            mode = DisplayMode(name, width, height, refresh, name=display_name)
+            state.modes[name].append(mode)
+            if mode_id and mode_id == current_id:
+                state.current[name] = mode
+            if mode_id and mode_id in preferred_ids and name not in state.preferred:
+                state.preferred[name] = mode
+
+        if name not in state.current:
+            # Fall back to matching size when currentModeId is missing.
+            size = item.get("size") or {}
+            try:
+                width = int(size.get("width"))
+                height = int(size.get("height"))
+            except (TypeError, ValueError):
+                width = height = 0
+            for mode in state.modes.get(name, []):
+                if mode.width == width and mode.height == height:
+                    state.current[name] = mode
+                    break
+
+        if not item.get("enabled", True):
+            continue
+        pos = item.get("pos") or {}
+        try:
+            x = int(pos.get("x", 0))
+            y = int(pos.get("y", 0))
+        except (TypeError, ValueError):
+            x = y = 0
+        scale = item.get("scale", 1.0)
+        try:
+            scale_text = f"{float(scale):g}"
+        except (TypeError, ValueError):
+            scale_text = "1"
+        primary = int(item.get("priority") or 0) == 1
+        current = state.current.get(name)
+        logical = GdctlLogical(
+            connector=name,
+            x=x,
+            y=y,
+            scale=scale_text,
+            primary=primary,
+            mode_name=current.name if current else "",
+        )
+        state.logical.append(logical)
+        if current:
+            current.x, current.y = x, y
+
+    if state.logical and not any(item.primary for item in state.logical):
+        state.logical[0].primary = True
+    return state
+
+
 DRM_DIR = "/sys/class/drm"
 
 # Established Timings I & II, bit 7 of byte 35 down to bit 0 of byte 37.
@@ -1597,7 +1727,7 @@ _ESTABLISHED_TIMINGS = (
 
 
 def canonicalize_connector(name):
-    """Map xrandr/gdctl/sysfs names onto one HDMI-A-1 / DP-1 style key."""
+    """Map xrandr/gdctl/kscreen/sysfs names onto one HDMI-A-1 / DP-1 style key."""
     text = re.sub(r"^card\d+-", "", (name or "").strip(), flags=re.I)
     text = text.upper().replace("_", "-")
     text = text.replace("DISPLAY-PORT", "DP").replace("DISPLAYPORT", "DP")
@@ -1910,9 +2040,10 @@ class VideoOutputManager:
         self._program_audio_choice = ""
         self._preview_audio_device = None
         self._preview_audio_key = None
-        self._gdctl_cache = None
-        self._gdctl_cache_at = 0.0
+        self._display_cache = None
+        self._display_cache_at = 0.0
         self._device_name_cache = None
+        self._wayland_backend = None
 
     @staticmethod
     def desktop_env():
@@ -1924,24 +2055,101 @@ class VideoOutputManager:
         return env
 
     @staticmethod
+    def _needs_desktop_env(command):
+        if not command:
+            return False
+        return os.path.basename(command[0]) in {"gdctl", "kscreen-doctor"}
+
+    @staticmethod
     def run(command):
         env = None
-        if command and os.path.basename(command[0]) == "gdctl":
+        if VideoOutputManager._needs_desktop_env(command):
             env = VideoOutputManager.desktop_env()
         result = subprocess.run(
             command, capture_output=True, text=True, check=True, env=env,
         )
         return result.stdout
 
+    @staticmethod
+    def _probe(command, timeout=5):
+        """Run a desktop tool without raising; return (ok, stdout)."""
+        env = None
+        if VideoOutputManager._needs_desktop_env(command):
+            env = VideoOutputManager.desktop_env()
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False, ""
+        return result.returncode == 0, result.stdout or ""
+
+    def wayland_backend(self):
+        """Working Wayland display tool: 'gdctl', 'kscreen', or ''."""
+        if not session_is_wayland():
+            return ""
+        if self._wayland_backend is not None:
+            return self._wayland_backend
+
+        has_gdctl = bool(shutil.which("gdctl"))
+        has_kscreen = bool(shutil.which("kscreen-doctor"))
+        hint = session_desktop_hint()
+        if hint == "kde":
+            order = ("kscreen", "gdctl")
+        elif hint == "gnome":
+            order = ("gdctl", "kscreen")
+        else:
+            # install.sh may ship both; use the first tool that answers.
+            order = ("gdctl", "kscreen")
+
+        for name in order:
+            if name == "gdctl" and not has_gdctl:
+                continue
+            if name == "kscreen" and not has_kscreen:
+                continue
+            if name == "gdctl":
+                ok, text = self._probe(["gdctl", "show", "-v", "-m"])
+                if not ok:
+                    continue
+                try:
+                    state = parse_gdctl_show(text)
+                except Exception:
+                    continue
+            else:
+                ok, text = self._probe(["kscreen-doctor", "-j"])
+                if not ok:
+                    continue
+                try:
+                    state = parse_kscreen_json(text)
+                except Exception:
+                    continue
+            self._wayland_backend = name
+            self._display_cache = state
+            self._display_cache_at = time.monotonic()
+            return name
+
+        self._wayland_backend = ""
+        return ""
+
     def uses_gdctl(self):
-        return session_is_wayland() and bool(shutil.which("gdctl"))
+        return self.wayland_backend() == "gdctl"
+
+    def uses_kscreen(self):
+        return self.wayland_backend() == "kscreen"
+
+    def uses_wayland_display(self):
+        return bool(self.wayland_backend())
 
     def xrandr(self, *extra):
         return self.run(["xrandr", "--query", *extra])
 
     def _invalidate_display_cache(self):
-        self._gdctl_cache = None
-        self._gdctl_cache_at = 0.0
+        self._display_cache = None
+        self._display_cache_at = 0.0
         self._device_name_cache = None
 
     def _clear_audio_cache(self):
@@ -1978,9 +2186,9 @@ class VideoOutputManager:
             siblings = self.get_outputs()
         except Exception:
             siblings = [output_name]
-        if self.uses_gdctl():
+        if self.uses_wayland_display():
             try:
-                identity = self.gdctl_state().identity.get(output_name)
+                identity = self.wayland_state().identity.get(output_name)
             except Exception:
                 identity = None
         return choose_program_audio_device(
@@ -2001,21 +2209,36 @@ class VideoOutputManager:
         return device
 
     def gdctl_state(self):
+        return self.wayland_state()
+
+    def wayland_state(self):
         now = time.monotonic()
-        if self._gdctl_cache is not None and now - self._gdctl_cache_at < 0.4:
-            return self._gdctl_cache
-        text = self.run(["gdctl", "show", "-v", "-m"])
-        self._gdctl_cache = parse_gdctl_show(text)
-        self._gdctl_cache_at = now
-        return self._gdctl_cache
+        if self._display_cache is not None and now - self._display_cache_at < 0.4:
+            return self._display_cache
+        backend = self.wayland_backend()
+        if backend == "gdctl":
+            text = self.run(["gdctl", "show", "-v", "-m"])
+            state = parse_gdctl_show(text)
+        elif backend == "kscreen":
+            text = self.run(["kscreen-doctor", "-j"])
+            state = parse_kscreen_json(text)
+        else:
+            raise RuntimeError(
+                "Wayland ohne `gdctl` oder `kscreen-doctor`: "
+                "Display-Steuerung wird nicht unterstützt."
+            )
+        self._display_cache = state
+        self._display_cache_at = now
+        return state
 
     def get_outputs(self):
-        if session_is_wayland() and not self.uses_gdctl():
+        if session_is_wayland() and not self.uses_wayland_display():
             raise RuntimeError(
-                "Wayland ohne GNOME `gdctl`: Display-Steuerung wird nicht unterstützt."
+                "Wayland ohne `gdctl` oder `kscreen-doctor`: "
+                "Display-Steuerung wird nicht unterstützt."
             )
-        if self.uses_gdctl():
-            return list(self.gdctl_state().order)
+        if self.uses_wayland_display():
+            return list(self.wayland_state().order)
         outputs = []
         for line in self.xrandr().splitlines():
             match = re.match(r"^(\S+)\s+connected", line)
@@ -2024,8 +2247,8 @@ class VideoOutputManager:
         return outputs
 
     def get_primary_output(self):
-        if self.uses_gdctl():
-            for item in self.gdctl_state().logical:
+        if self.uses_wayland_display():
+            for item in self.wayland_state().logical:
                 if item.primary:
                     return item.connector
             return None
@@ -2036,8 +2259,8 @@ class VideoOutputManager:
         return None
 
     def get_output_geometry(self, output_name):
-        if self.uses_gdctl():
-            state = self.gdctl_state()
+        if self.uses_wayland_display():
+            state = self.wayland_state()
             current = state.current.get(output_name)
             for item in state.logical:
                 if item.connector == output_name and current:
@@ -2215,8 +2438,8 @@ class VideoOutputManager:
         return devices, beamer, preview
 
     def get_modes(self, output_name):
-        if self.uses_gdctl():
-            return list(self.gdctl_state().modes.get(output_name, []))
+        if self.uses_wayland_display():
+            return list(self.wayland_state().modes.get(output_name, []))
         modes = []
         inside = False
         for line in self.xrandr().splitlines():
@@ -2258,8 +2481,8 @@ class VideoOutputManager:
         return modes
 
     def get_current_mode(self, output_name):
-        if self.uses_gdctl():
-            state = self.gdctl_state()
+        if self.uses_wayland_display():
+            state = self.wayland_state()
             current = state.current.get(output_name)
             if not current:
                 return None
@@ -2315,8 +2538,8 @@ class VideoOutputManager:
         return None
 
     def get_preferred_mode(self, output_name):
-        if self.uses_gdctl():
-            return self.gdctl_state().preferred.get(output_name)
+        if self.uses_wayland_display():
+            return self.wayland_state().preferred.get(output_name)
         inside = False
         for line in self.xrandr().splitlines():
             if re.match(r"^\S+\s+connected", line):
@@ -2351,7 +2574,7 @@ class VideoOutputManager:
         return None
 
     def get_timings(self, output_name):
-        if self.uses_gdctl():
+        if self.uses_wayland_display():
             return []
         timings = []
         inside = False
@@ -2442,9 +2665,9 @@ class VideoOutputManager:
         if data:
             edid_identity = parse_edid_identity(data)
         monitor_identity = {}
-        if self.uses_gdctl():
+        if self.uses_wayland_display():
             try:
-                monitor_identity = dict(self.gdctl_state().identity.get(name) or {})
+                monitor_identity = dict(self.wayland_state().identity.get(name) or {})
             except Exception:
                 monitor_identity = {}
         value = format_output_device_name(edid_identity, monitor_identity)
@@ -2626,7 +2849,7 @@ class VideoOutputManager:
         return fallback, self.refresh_matches(video.fps, fallback.refresh)
 
     def ensure_custom_mode(self, output_name, width, height, refresh):
-        if self.uses_gdctl():
+        if self.uses_wayland_display():
             return None
         modes = self.get_modes(output_name)
         existing = self.find_refresh_mode(modes, width, height, refresh)
@@ -2694,7 +2917,7 @@ class VideoOutputManager:
         return name, modeline
 
     def _gdctl_apply_mode(self, mode):
-        state = self.gdctl_state()
+        state = self.wayland_state()
         current = state.current.get(mode.output)
         old_w = current.width if current else mode.width
         control = [
@@ -2747,12 +2970,80 @@ class VideoOutputManager:
         self._invalidate_display_cache()
         time.sleep(0.2)
 
+    def _kscreen_mode_token(self, mode):
+        """Mode id or WxH@rounded refresh as accepted by kscreen-doctor."""
+        token = (mode.mode or "").strip()
+        if token:
+            return token
+        return f"{mode.width}x{mode.height}@{int(round(mode.refresh))}"
+
+    def _kscreen_apply_mode(self, mode):
+        state = self.wayland_state()
+        current = state.current.get(mode.output)
+        old_w = current.width if current else mode.width
+        control = [
+            item for item in state.logical
+            if item.connector and item.connector != mode.output
+        ]
+        beamer = [
+            item for item in state.logical if item.connector == mode.output
+        ]
+        control.sort(key=lambda item: (not item.primary, item.x, item.y))
+        # Keep the booth / primary display at (0, 0); projector to its right.
+        x_cursor = 0
+        placed = {}
+        for item in control + beamer:
+            if item.connector == mode.output:
+                width = mode.width
+            else:
+                current_item = state.current.get(item.connector)
+                width = current_item.width if current_item else old_w
+            placed[item.connector] = (x_cursor, 0)
+            x_cursor += width
+
+        command = ["kscreen-doctor"]
+        for item in state.logical:
+            if not item.connector:
+                continue
+            if item.connector == mode.output:
+                token = self._kscreen_mode_token(mode)
+            else:
+                token = item.mode_name
+            if token:
+                command.append(f"output.{item.connector}.mode.{token}")
+            x, y = placed.get(item.connector, (item.x, item.y))
+            command.append(f"output.{item.connector}.position.{x},{y}")
+            if item.primary:
+                command.append(f"output.{item.connector}.primary")
+        if not any(arg.endswith(".primary") for arg in command):
+            raise RuntimeError("kscreen-Konfiguration ohne Primary-Monitor.")
+        result = subprocess.run(
+            command, capture_output=True, text=True,
+            env=self.desktop_env(),
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(detail or "kscreen-doctor fehlgeschlagen")
+        self._invalidate_display_cache()
+        time.sleep(0.2)
+
+    def _wayland_apply_mode(self, mode):
+        if self.uses_gdctl():
+            self._gdctl_apply_mode(mode)
+        elif self.uses_kscreen():
+            self._kscreen_apply_mode(mode)
+        else:
+            raise RuntimeError(
+                "Wayland ohne `gdctl` oder `kscreen-doctor`: "
+                "Display-Steuerung wird nicht unterstützt."
+            )
+
     def ensure_operator_layout(self):
-        """Keep the booth display at (0, 0) so GNOME desktop icons stay off the projector."""
-        if not self.uses_gdctl() or not self.video_output:
+        """Keep the booth display at (0, 0) so desktop chrome stays off the projector."""
+        if not self.uses_wayland_display() or not self.video_output:
             return
         try:
-            state = self.gdctl_state()
+            state = self.wayland_state()
         except Exception:
             return
         beamer = next(
@@ -2772,7 +3063,7 @@ class VideoOutputManager:
             return
         if self.original_mode is None:
             self.original_mode = current
-        self._gdctl_apply_mode(current)
+        self._wayland_apply_mode(current)
 
     def set_mode(self, mode):
         if self.original_mode is None:
@@ -2789,8 +3080,8 @@ class VideoOutputManager:
             self.video_mode = mode
             return
 
-        if self.uses_gdctl():
-            self._gdctl_apply_mode(mode)
+        if self.uses_wayland_display():
+            self._wayland_apply_mode(mode)
         else:
             command = [
                 "xrandr", "--output", mode.output,
@@ -2889,8 +3180,8 @@ class VideoOutputManager:
 
         mode = self.original_mode
         try:
-            if self.uses_gdctl():
-                self._gdctl_apply_mode(mode)
+            if self.uses_wayland_display():
+                self._wayland_apply_mode(mode)
             else:
                 subprocess.run(
                     [

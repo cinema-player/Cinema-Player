@@ -1,12 +1,12 @@
 # Linux MPV Video Player
 
-Two-instance mpv video player for X11 or GNOME Wayland with NVIDIA.
+Two-instance mpv video player for X11, GNOME Wayland, or KWin/Plasma Wayland with NVIDIA.
 
 ## Features
 
 - Main mpv instance for dedicated HDMI video output
 - Second mpv instance for preview
-- Display mode switching via XRandR (X11) or GNOME gdctl (Wayland)
+- Display mode switching via XRandR (X11), GNOME gdctl, or KWin kscreen-doctor (Wayland)
 - Automatic video FPS detection with ffprobe
 - Selects a matching display refresh rate at the video resolution
 - `--geometry` / fullscreen placement for the video window
@@ -27,7 +27,7 @@ mpv must be the distro build (the conda-forge mpv cannot open a GPU window).
 
 This installs Pixi, the Python environment, distro `mpv`, display tools, the application icon, and a launcher. Alternatively, install Pixi yourself and run `pixi install`; then `sudo apt install mpv`.
 
-On X11, `xrandr` comes from `x11-xserver-utils`. On GNOME Wayland, `gdctl` is part of the desktop (Mutter).
+On X11, `xrandr` comes from `x11-xserver-utils`. On GNOME Wayland, `gdctl` is part of the desktop (Mutter). On KWin/Plasma Wayland, `kscreen-doctor` comes from `libkscreen-bin`.
 
 ## Run
 

@@ -12,6 +12,7 @@ APT_PACKAGES=(
   x11-xserver-utils
   xfonts-utils
   mutter-common-bin
+  libkscreen-bin
   edid-decode
   curl
   ca-certificates
@@ -29,7 +30,7 @@ install_apt_packages() {
   local missing=()
   local pkg
   if ! need_cmd dpkg; then
-    log "Kein Debian/Ubuntu erkannt. Bitte mpv, ffmpeg, xrandr und gdctl manuell installieren."
+    log "Kein Debian/Ubuntu erkannt. Bitte mpv, ffmpeg, xrandr, gdctl und kscreen-doctor manuell installieren."
     return 0
   fi
   for pkg in "${APT_PACKAGES[@]}"; do
