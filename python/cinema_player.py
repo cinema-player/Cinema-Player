@@ -3443,7 +3443,7 @@ class VideoOutputManager:
             "--video-sync=display-resample",
             f"--override-display-fps={mode.refresh:.3f}",
             "--hwdec=auto-safe",
-            "--vo=gpu",
+            "--vo=gpu-next",
             f"--gpu-context={gpu_context_for_mpv(mpv_path)}",
             "--force-window=yes",
             "--osd-level=0",

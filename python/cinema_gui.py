@@ -7027,7 +7027,7 @@ class VideoPlayerGUI:
             f"--wid={wid}",
             "--keepaspect=yes",
             "--hwdec=auto-safe",
-            "--vo=gpu",
+            "--vo=gpu-next",
             f"--gpu-context={gpu_context_for_mpv(self.mpv_path, embed=True)}",
             "--force-window=yes",
             "--osc=no",
