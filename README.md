@@ -48,7 +48,7 @@ The burger menu in the header covers booth setup:
   - Language (English / Deutsch)
   - Text size (A−− … A++, remembered)
   - Remote control (LAN HTTP API and smartphone page; port and required token)
-  - Light control (DMX512 over an Enttec DMX USB Pro or Art-Net; house-light presets Bright / Medium / Dark)
+  - Light control (DMX512 over an Enttec DMX USB Pro, Open DMX USB, or Art-Net; house-light presets Bright / Medium / Dark)
 - **Calibration** (in **OFF** and while already calibrating)
   - Beamer test image (Cinema Player logo on the projector; only in **OFF**)
   - Video / Audio
@@ -111,7 +111,8 @@ The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the
 
 Cinema Player sends house lights as DMX512. Settings → System settings → **Light control** chooses the connection:
 
-- **Enttec DMX USB Pro** (default): DMX512 through an Enttec DMX USB Pro compatible interface, usually `/dev/ttyUSB0`, at 57600 baud. Open DMX is not supported. The user needs access to the port (group `dialout`). Plugged-in adapters are listed; a path can also be typed.
+- **Enttec DMX USB Pro** (default): DMX512 through an Enttec DMX USB Pro compatible interface, usually `/dev/ttyUSB0`, at 57600 baud. The user needs access to the port (group `dialout`). Plugged-in adapters are listed; a path can also be typed.
+- **Open DMX USB**: DMX512 through an Enttec Open DMX USB compatible interface on the same kind of serial port. The line runs at 250000 baud, 8 data bits, no parity and 2 stop bits, with a break before each frame. Cinema Player keeps refreshing the universe, because this interface does not store a frame of its own. The user needs access to the port (group `dialout`).
 - **Art-Net (LAN)**: ArtDMX to a node (or broadcast) on UDP port 6454. Universe 0 is the default.
 
 **Channels** are the dimmer slots (1–512), as a list or a range such as `1` or `1, 2, 5-7`. The default is channel 1. Other slots stay at 0. **Bright**, **Medium**, and **Dark** are percentages (defaults 100 / 40 / 0) mapped to DMX 0–255. Fade is the software crossfade in seconds. A missing interface does not stop playback; the light window reports the error.

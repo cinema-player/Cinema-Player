@@ -5185,7 +5185,7 @@ class VideoPlayerGUI:
             pass
 
     def show_lights(self):
-        """Configure DMX house lights over an Enttec DMX USB Pro or Art-Net."""
+        """Configure DMX house lights over Enttec, Open DMX, or Art-Net."""
         window = getattr(self, "lights_window", None)
         if window is not None:
             try:
@@ -5235,7 +5235,11 @@ class VideoPlayerGUI:
             textvariable=self.lights_mode,
             width=22,
             state="readonly",
-            values=[t("lights_mode_enttec"), t("lights_mode_artnet")],
+            values=[
+                t("lights_mode_enttec"),
+                t("lights_mode_opendmx"),
+                t("lights_mode_artnet"),
+            ],
         )
         mode_combo.pack(side="left", padx=(4, 12))
         mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_lights_mode())
@@ -5258,10 +5262,11 @@ class VideoPlayerGUI:
         self._fill_lights_devices()
         tk.Label(cable, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
         tk.Entry(cable, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
-        tk.Label(
+        self.lights_device_hint = tk.Label(
             holder, text=t("lights_device_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
             wraplength=620, justify="left",
-        ).pack(fill="x", padx=8)
+        )
+        self.lights_device_hint.pack(fill="x", padx=8)
         tk.Label(
             holder, text=t("lights_channels_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
         ).pack(fill="x", padx=8, pady=(0, 2))
@@ -5329,8 +5334,11 @@ class VideoPlayerGUI:
         self._place_on_control_monitor(window, 760, 460)
 
     def _lights_mode_label(self, key):
-        if dmx.normalize_mode(key) == dmx.MODE_ARTNET:
+        mode = dmx.normalize_mode(key)
+        if mode == dmx.MODE_ARTNET:
             return t("lights_mode_artnet")
+        if mode == dmx.MODE_OPENDMX:
+            return t("lights_mode_opendmx")
         return t("lights_mode_enttec")
 
     def _lights_mode_key(self):
@@ -5338,8 +5346,11 @@ class VideoPlayerGUI:
         if variable is None:
             output = getattr(self, "dmx_output", None)
             return dmx.normalize_mode(output.mode if output else dmx.DEFAULT_MODE)
-        if variable.get() == t("lights_mode_artnet"):
+        label = variable.get()
+        if label == t("lights_mode_artnet"):
             return dmx.MODE_ARTNET
+        if label == t("lights_mode_opendmx"):
+            return dmx.MODE_OPENDMX
         return dmx.MODE_ENTTEC
 
     def _fill_lights_devices(self):
@@ -5356,11 +5367,12 @@ class VideoPlayerGUI:
             self.lights_device_combo = None
 
     def _update_lights_mode_fields(self):
-        enttec = self._lights_mode_key() == dmx.MODE_ENTTEC
+        mode = self._lights_mode_key()
+        serial = mode in dmx.SERIAL_MODES
         widgets = (
-            (getattr(self, "lights_host_entry", None), not enttec),
-            (getattr(self, "lights_universe_entry", None), not enttec),
-            (getattr(self, "lights_device_combo", None), enttec),
+            (getattr(self, "lights_host_entry", None), not serial),
+            (getattr(self, "lights_universe_entry", None), not serial),
+            (getattr(self, "lights_device_combo", None), serial),
         )
         for widget, active in widgets:
             if widget is None:
@@ -5369,6 +5381,13 @@ class VideoPlayerGUI:
                 widget.config(state="normal" if active else "disabled")
             except tk.TclError:
                 pass
+        hint = getattr(self, "lights_device_hint", None)
+        if hint is not None:
+            key = "lights_device_hint_opendmx" if mode == dmx.MODE_OPENDMX else "lights_device_hint"
+            try:
+                hint.config(text=t(key))
+            except tk.TclError:
+                self.lights_device_hint = None
 
     def _on_lights_mode(self):
         self._update_lights_mode_fields()
@@ -5383,6 +5402,7 @@ class VideoPlayerGUI:
         self.lights_host_entry = None
         self.lights_universe_entry = None
         self.lights_device_combo = None
+        self.lights_device_hint = None
         if window is not None:
             try:
                 window.destroy()
@@ -5441,8 +5461,13 @@ class VideoPlayerGUI:
         if not self._dmx_ready():
             status = getattr(self, "lights_status", None)
             if status is not None:
-                enttec = self._lights_mode_key() == dmx.MODE_ENTTEC
-                status.set(t("lights_none_ready_enttec") if enttec else t("lights_none_ready"))
+                mode = self._lights_mode_key()
+                if mode == dmx.MODE_OPENDMX:
+                    status.set(t("lights_none_ready_opendmx"))
+                elif mode == dmx.MODE_ENTTEC:
+                    status.set(t("lights_none_ready_enttec"))
+                else:
+                    status.set(t("lights_none_ready"))
             return
         self._apply_lights(preset, force=True)
 
