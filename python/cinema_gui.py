@@ -1369,6 +1369,7 @@ class VideoPlayerGUI:
         self.program_volume = tk.DoubleVar(value=100)
         self.preview_volume = tk.DoubleVar(value=100)
         self.beamer_output = tk.StringVar(value=self.output_manager.video_output or "")
+        self.beamer_details_open = False
         self._volume_preview_key = None
         self._volume_program_key = None
 
@@ -2957,7 +2958,16 @@ class VideoPlayerGUI:
         )
         self.beamer_ok.pack(side="right")
 
-        device = tk.Frame(panel, bg=COLOR_PANEL)
+        self.beamer_summary = tk.Frame(panel, bg=COLOR_PANEL)
+        self.beamer_resolution = self._beamer_value_row(self.beamer_summary, "beamer_resolution")
+        self.beamer_rate = self._beamer_value_row(self.beamer_summary, "beamer_rate")
+        self.beamer_colorspace_value = self._beamer_value_row(
+            self.beamer_summary, "beamer_colorspace",
+        )
+
+        details = tk.Frame(panel, bg=COLOR_PANEL)
+        self.beamer_details = details
+        device = tk.Frame(details, bg=COLOR_PANEL)
         device.pack(fill="x", padx=8, pady=(0, 4))
         tk.Label(
             device, text=t("beamer_device"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
@@ -2967,7 +2977,7 @@ class VideoPlayerGUI:
         )
         self.beamer_device.pack(side="left", padx=(8, 0), fill="x", expand=True)
 
-        info = tk.Frame(panel, bg=COLOR_PANEL)
+        info = tk.Frame(details, bg=COLOR_PANEL)
         info.pack(fill="x", padx=8, pady=(0, 4))
         tk.Label(
             info, text=t("beamer_aspect"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
@@ -2981,7 +2991,7 @@ class VideoPlayerGUI:
         )
         self.beamer_clip_aspect.pack(side="left", padx=(12, 0))
 
-        decode = tk.Frame(panel, bg=COLOR_PANEL)
+        decode = tk.Frame(details, bg=COLOR_PANEL)
         decode.pack(fill="x", padx=8, pady=(0, 4))
         tk.Label(
             decode, text=t("beamer_hwdec"), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
@@ -3007,13 +3017,119 @@ class VideoPlayerGUI:
             decode, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
         )
         self.beamer_drops_decoder.pack(side="left", padx=(4, 0))
-        self.beamer_rates = BeamerChoiceLine(panel)
+        self.beamer_rates = BeamerChoiceLine(details)
         self.beamer_rates.pack(fill="x", padx=8, pady=(0, 4))
-        self.beamer_resolutions = BeamerChoiceLine(panel)
+        self.beamer_resolutions = BeamerChoiceLine(details)
         self.beamer_resolutions.pack(fill="x", padx=8, pady=(0, 4))
-        self.beamer_colorspaces = BeamerChoiceLine(panel)
-        self.beamer_colorspaces.pack(fill="x", padx=8, pady=(0, 8))
+        self.beamer_colorspaces = BeamerChoiceLine(details)
+        self.beamer_colorspaces.pack(fill="x", padx=8, pady=(0, 4))
+
+        fold = tk.Frame(panel, bg=COLOR_PANEL, cursor="hand2")
+        self.beamer_fold = fold
+        self._beamer_fold_hover = False
+        self.beamer_fold_arrow = tk.Canvas(
+            fold, height=22, highlightthickness=0, bd=0, bg=COLOR_PANEL, cursor="hand2",
+        )
+        self.beamer_fold_arrow.pack(fill="x", pady=(0, 2))
+        fold.pack(fill="x")
+        for widget in (fold, self.beamer_fold_arrow):
+            widget.bind("<Button-1>", self._toggle_beamer_details)
+            widget.bind("<Enter>", self._beamer_fold_enter)
+            widget.bind("<Leave>", self._beamer_fold_leave)
+        self.beamer_fold_arrow.bind("<Configure>", lambda _event: self._paint_beamer_fold_arrow())
+        self.beamer_fold_tip = IconTooltip(self.beamer_fold_arrow, t("beamer_show_details"))
+        self._apply_beamer_fold()
         self._beamer_caps_cache = None
+
+    def _beamer_value_row(self, parent, key):
+        row = tk.Frame(parent, bg=COLOR_PANEL)
+        row.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(
+            row, text=t(key), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left")
+        value = tk.Label(
+            row, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
+        )
+        value.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        return value
+
+    def _toggle_beamer_details(self, _event=None):
+        self.beamer_details_open = not bool(getattr(self, "beamer_details_open", False))
+        self._apply_beamer_fold()
+        return "break"
+
+    def _apply_beamer_fold(self):
+        open_details = bool(getattr(self, "beamer_details_open", False))
+        summary = getattr(self, "beamer_summary", None)
+        details = getattr(self, "beamer_details", None)
+        fold = getattr(self, "beamer_fold", None)
+        if summary is None or details is None or fold is None:
+            return
+        summary.pack_forget()
+        details.pack_forget()
+        if open_details:
+            details.pack(fill="x", before=fold)
+            tip = t("beamer_hide_details")
+        else:
+            summary.pack(fill="x", before=fold)
+            tip = t("beamer_show_details")
+        if getattr(self, "beamer_fold_tip", None):
+            self.beamer_fold_tip.text = tip
+        self._paint_beamer_fold_arrow()
+        if open_details:
+            for line in (self.beamer_rates, self.beamer_resolutions, self.beamer_colorspaces):
+                line._laid_width = 0
+                line._reflow()
+
+    def _beamer_fold_enter(self, _event=None):
+        self._beamer_fold_hover = True
+        self._paint_beamer_fold_arrow()
+
+    def _beamer_fold_leave(self, _event=None):
+        self._beamer_fold_hover = False
+        self._paint_beamer_fold_arrow()
+
+    def _paint_beamer_fold_arrow(self):
+        canvas = getattr(self, "beamer_fold_arrow", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 1)
+        height = max(canvas.winfo_height(), 1)
+        cx = width / 2
+        cy = height / 2
+        color = ACCENT if getattr(self, "_beamer_fold_hover", False) else COLOR_TEXT
+        if getattr(self, "beamer_details_open", False):
+            points = [cx, cy - 5, cx - 7, cy + 4, cx + 7, cy + 4]
+        else:
+            points = [cx - 7, cy - 4, cx + 7, cy - 4, cx, cy + 5]
+        canvas.create_polygon(points, fill=color, outline=color)
+
+    def _set_beamer_summary(self, resolution, rate, space, res_fg=None, rate_fg=None, space_fg=None):
+        labels = (
+            (getattr(self, "beamer_resolution", None), resolution, res_fg),
+            (getattr(self, "beamer_rate", None), rate, rate_fg),
+            (getattr(self, "beamer_colorspace_value", None), space, space_fg),
+        )
+        for widget, text, fg in labels:
+            if widget is None:
+                continue
+            widget.config(text=text or "--", fg=fg or COLOR_TEXT)
+
+    @staticmethod
+    def _marked_value_fg(token, program, preview):
+        def as_set(value):
+            if not value:
+                return set()
+            if isinstance(value, (set, frozenset, list, tuple)):
+                return {item for item in value if item}
+            return {value}
+
+        if token and token in as_set(program):
+            return ACCENT
+        if token and token in as_set(preview):
+            return COLOR_PREVIEW
+        return COLOR_TEXT
 
     def _build_preview(self, parent):
         header = self._group_frame(parent)
@@ -3646,6 +3762,7 @@ class VideoPlayerGUI:
             self.beamer_ok.config(text="--", bg=COLOR_BADGE_IDLE)
             self.beamer_aspect.config(text="--", fg=COLOR_TEXT)
             self.beamer_clip_aspect.config(text="")
+            self._set_beamer_summary("--", "--", "--")
             self._refresh_beamer_decode()
             self._refresh_beamer_device_name()
             self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
@@ -3772,6 +3889,16 @@ class VideoPlayerGUI:
             t("beamer_colorspaces", spaces=""),
             colorspaces,
             selected_space if selected_space in colorspaces else None,
+        )
+        resolution_text = selected_res or f"{mode.width}x{mode.height}"
+        rate_text = selected_rate or format_fps_label(mode.refresh)
+        space_text = selected_space or "--"
+        self._set_beamer_summary(
+            resolution_text,
+            rate_text,
+            space_text,
+            self._marked_value_fg(resolution_text, program_res, preview_res),
+            self._marked_value_fg(rate_text, program_rates, preview_rates),
         )
         self._refresh_beamer_device_name()
         self.refresh_beamer_outputs()
