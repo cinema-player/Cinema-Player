@@ -1,12 +1,15 @@
 """House lights over DMX512.
 
 Output is an Enttec DMX USB Pro compatible interface (57600 baud, label 6),
-or Art-Net (ArtDMX, UDP 6454). Open DMX (a raw 250 kBd RS485 break) is not
-supported. A missing interface does not stop playback.
+an Open DMX USB compatible interface (250000 baud, 8N2, break before each
+frame), or Art-Net (ArtDMX, UDP 6454). A missing interface does not stop
+playback.
 """
 
 from __future__ import annotations
 
+import ctypes
+import fcntl
 import glob
 import os
 import socket
@@ -34,11 +37,25 @@ ENTTEC_BAUD = 57600
 ENTTEC_INTERVAL = 0.12
 ARTNET_INTERVAL = 1.0 / 30.0
 ARTNET_HOLD_INTERVAL = 0.8
+# Open DMX is a bare RS485 line. The host sends the break; the widget does not
+# refresh on its own. A full 512-slot frame is about 23 ms at 250 kbaud.
+OPENDMX_BAUD = 250000
+OPENDMX_BREAK = 0.001
+OPENDMX_MAB = 0.0001
+OPENDMX_PERIOD = 0.025
+OPENDMX_INTERVAL = 0.001
 
 MODE_ARTNET = "artnet"
 MODE_ENTTEC = "enttec"
-MODES = (MODE_ARTNET, MODE_ENTTEC)
+MODE_OPENDMX = "opendmx"
+MODES = (MODE_ARTNET, MODE_ENTTEC, MODE_OPENDMX)
 DEFAULT_MODE = MODE_ENTTEC
+SERIAL_MODES = (MODE_ENTTEC, MODE_OPENDMX)
+
+# Linux termios2 ioctl numbers for a 44-byte struct (TCGETS2 / TCSETS2).
+_BOTHER = 0x00001000
+_TIOCSBRK = 0x5427
+_TIOCCBRK = 0x5428
 
 SERIAL_PATTERNS = ("/dev/serial/by-id/*", "/dev/ttyUSB*", "/dev/ttyACM*")
 
@@ -58,7 +75,7 @@ class DmxOutput:
         self.universe = clamp_universe(self.universe)
         self.mode = normalize_mode(self.mode)
         self.device = str(self.device or "").strip()
-        if self.mode == MODE_ENTTEC and not self.device:
+        if self.mode in SERIAL_MODES and not self.device:
             self.device = DEFAULT_DEVICE
         self.channels = parse_channels(self.channels) or [1]
 
@@ -87,7 +104,7 @@ class DmxOutput:
     def ready(self):
         if not self.channels:
             return False
-        if self.mode == MODE_ENTTEC:
+        if self.mode in SERIAL_MODES:
             return bool(self.device)
         return bool(self.host)
 
@@ -102,6 +119,14 @@ def normalize_mode(value):
         "usb-pro": MODE_ENTTEC,
         "pro": MODE_ENTTEC,
         "serial": MODE_ENTTEC,
+        "opendmx": MODE_OPENDMX,
+        "open-dmx": MODE_OPENDMX,
+        "open_dmx": MODE_OPENDMX,
+        "open dmx": MODE_OPENDMX,
+        "opendmxusb": MODE_OPENDMX,
+        "open-dmx-usb": MODE_OPENDMX,
+        "open_dmx_usb": MODE_OPENDMX,
+        "open dmx usb": MODE_OPENDMX,
         "artnet": MODE_ARTNET,
         "art-net": MODE_ARTNET,
         "lan": MODE_ARTNET,
@@ -355,6 +380,13 @@ def build_enttec(values):
     return struct.pack("<BBH", 0x7E, 0x06, len(payload)) + payload + b"\xE7"
 
 
+def build_opendmx(values):
+    """Open DMX slot bytes: start code 0x00 followed by 512 channels."""
+    if len(values) != DMX_CHANNELS:
+        raise ValueError(f"DMX frame must contain {DMX_CHANNELS} channels")
+    return b"\x00" + bytes(int(value) & 0xFF for value in values)
+
+
 def frame_for_level(channels, percent):
     frame = bytearray(DMX_CHANNELS)
     value = percent_to_dmx(percent)
@@ -379,6 +411,88 @@ def list_serial_devices():
             if path not in devices:
                 devices.append(path)
     return devices
+
+
+class _Termios2(ctypes.Structure):
+    """Linux `struct termios2` (44 bytes on x86_64). Custom baud rates need it."""
+
+    _fields_ = [
+        ("c_iflag", ctypes.c_uint),
+        ("c_oflag", ctypes.c_uint),
+        ("c_cflag", ctypes.c_uint),
+        ("c_lflag", ctypes.c_uint),
+        ("c_line", ctypes.c_ubyte),
+        ("c_cc", ctypes.c_ubyte * 19),
+        ("c_ispeed", ctypes.c_uint),
+        ("c_ospeed", ctypes.c_uint),
+    ]
+
+
+def _ioctl_type(direction, number, size):
+    return (direction << 30) | (size << 16) | (ord("T") << 8) | number
+
+
+_TCGETS2 = _ioctl_type(2, 0x2A, ctypes.sizeof(_Termios2))
+_TCSETS2 = _ioctl_type(1, 0x2B, ctypes.sizeof(_Termios2))
+
+
+def line_settings(fd):
+    """Return (baud, data bits, stop bits, parity) for an open serial port."""
+    settings = _Termios2()
+    fcntl.ioctl(fd, _TCGETS2, settings)
+    size = settings.c_cflag & termios.CSIZE
+    bits = {termios.CS5: 5, termios.CS6: 6, termios.CS7: 7, termios.CS8: 8}.get(size, 0)
+    stop_bits = 2 if settings.c_cflag & termios.CSTOPB else 1
+    parity = bool(settings.c_cflag & termios.PARENB)
+    return int(settings.c_ospeed), bits, stop_bits, parity
+
+
+def _configure_opendmx(fd):
+    """250000 baud, 8 data bits, no parity, 2 stop bits, no flow control."""
+    settings = _Termios2()
+    fcntl.ioctl(fd, _TCGETS2, settings)
+    settings.c_iflag = 0
+    settings.c_oflag = 0
+    settings.c_lflag = 0
+    settings.c_cflag = termios.CS8 | termios.CSTOPB | termios.CREAD | termios.CLOCAL | _BOTHER
+    settings.c_ispeed = OPENDMX_BAUD
+    settings.c_ospeed = OPENDMX_BAUD
+    settings.c_cc[termios.VMIN] = 0
+    settings.c_cc[termios.VTIME] = 0
+    fcntl.ioctl(fd, _TCSETS2, settings)
+
+
+def ftdi_latency_path(device):
+    """Sysfs latency timer for a tty such as /dev/ttyUSB0 or a by-id symlink."""
+    name = os.path.basename(os.path.realpath(str(device or "")))
+    if not name or name.startswith("."):
+        return ""
+    return f"/sys/class/tty/{name}/device/latency_timer"
+
+
+def set_ftdi_latency(device, milliseconds=1):
+    """Ask an FTDI adapter to release TX after 1 ms. Missing sysfs is ignored."""
+    path = ftdi_latency_path(device)
+    if not path:
+        return False
+    try:
+        milliseconds = max(1, min(16, int(milliseconds)))
+    except (TypeError, ValueError):
+        milliseconds = 1
+    try:
+        with open(path, "w", encoding="ascii") as handle:
+            handle.write(str(milliseconds))
+    except OSError:
+        return False
+    return True
+
+
+def _raise_rts(fd):
+    """Hold RTS so RS485 clones that use it as the driver enable can transmit."""
+    try:
+        fcntl.ioctl(fd, termios.TIOCMBIS, struct.pack("I", termios.TIOCM_RTS))
+    except OSError:
+        pass
 
 
 class EnttecPort:
@@ -423,6 +537,62 @@ class EnttecPort:
             pass
 
 
+class OpenDmxPort:
+    """Open DMX USB compatible interface.
+
+    The line is 250000 baud, 8N2. Each frame is a break, a short mark, start
+    code 0x00, and 512 channel slots. The host repeats the frame; this port
+    paces itself to about 40 Hz so a new break does not cut off the slots.
+    """
+
+    def __init__(self, device):
+        self.device = str(device or "").strip()
+        self.mode = MODE_OPENDMX
+        self.fd = None
+        try:
+            self.fd = os.open(self.device, os.O_RDWR | os.O_NOCTTY)
+            _configure_opendmx(self.fd)
+            _raise_rts(self.fd)
+            set_ftdi_latency(self.device)
+            termios.tcflush(self.fd, termios.TCIOFLUSH)
+        except OSError:
+            self.close()
+            raise
+
+    def write_frame(self, frame):
+        payload = build_opendmx(frame_for_level_bytes(frame))
+        started = time.monotonic()
+        self._send_break()
+        offset = 0
+        while offset < len(payload):
+            written = os.write(self.fd, payload[offset:])
+            if written <= 0:
+                raise OSError(f"short write on {self.device}")
+            offset += written
+        termios.tcdrain(self.fd)
+        remain = OPENDMX_PERIOD - (time.monotonic() - started)
+        if remain > 0:
+            time.sleep(remain)
+
+    def _send_break(self):
+        # USB serial cannot hold a 176 µs break precisely. 1 ms is inside
+        # DMX512 (92 µs to 1 s) and is what Enttec's Open DMX sample sends.
+        fcntl.ioctl(self.fd, _TIOCSBRK, 0)
+        time.sleep(OPENDMX_BREAK)
+        fcntl.ioctl(self.fd, _TIOCCBRK, 0)
+        time.sleep(OPENDMX_MAB)
+
+    def close(self):
+        fd = self.fd
+        self.fd = None
+        if fd is None:
+            return
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 def frame_for_level_bytes(frame):
     payload = bytes(frame or b"")[:DMX_CHANNELS]
     if len(payload) < DMX_CHANNELS:
@@ -433,9 +603,18 @@ def frame_for_level_bytes(frame):
 class DmxController:
     """Fade house-light levels and repeat the last DMX frame."""
 
-    def __init__(self, send=None, open_port=None, monotonic=None, sleep=None, start_thread=True):
+    def __init__(
+        self,
+        send=None,
+        open_port=None,
+        open_opendmx=None,
+        monotonic=None,
+        sleep=None,
+        start_thread=True,
+    ):
         self._send = send or self._send_udp
         self._open_port = open_port or EnttecPort
+        self._open_opendmx = open_opendmx or OpenDmxPort
         self._time = monotonic or time.monotonic
         self._sleep = sleep or time.sleep
         self._start_thread = start_thread
@@ -443,6 +622,7 @@ class DmxController:
         self._io_lock = threading.Lock()
         self._sock = None
         self._port = None
+        self._port_mode = ""
         self._output = DmxOutput()
         self.level = 0.0
         self._fade_start = 0.0
@@ -503,29 +683,35 @@ class DmxController:
         self._sequence = 1 if self._sequence >= 255 else self._sequence + 1
         return self._sequence
 
-    def _serial_port(self, device):
+    def _serial_port(self, output):
+        device = output.device
+        mode = output.mode
         port = self._port
-        if port is not None and getattr(port, "device", "") != device:
+        if port is not None and (getattr(port, "device", "") != device or self._port_mode != mode):
             try:
                 port.close()
             except OSError:
                 pass
             port = None
             self._port = None
+            self._port_mode = ""
         if port is None:
-            port = self._open_port(device)
+            opener = self._open_opendmx if mode == MODE_OPENDMX else self._open_port
+            port = opener(device)
             self._port = port
+            self._port_mode = mode
         return port
 
     def _emit(self, output, percent):
         frame = frame_for_level(output.channels, percent)
         with self._io_lock:
-            if output.mode == MODE_ENTTEC:
+            if output.mode in SERIAL_MODES:
                 try:
-                    self._serial_port(output.device).write_frame(frame)
+                    self._serial_port(output).write_frame(frame)
                 except OSError:
                     port = self._port
                     self._port = None
+                    self._port_mode = ""
                     if port is not None:
                         try:
                             port.close()
@@ -537,6 +723,8 @@ class DmxController:
             self._send(output.host, output.port, packet)
 
     def _interval(self, output, fading):
+        if output.mode == MODE_OPENDMX:
+            return OPENDMX_INTERVAL
         if output.mode == MODE_ENTTEC:
             return ENTTEC_INTERVAL
         return ARTNET_INTERVAL if fading else ARTNET_HOLD_INTERVAL
@@ -617,7 +805,7 @@ class DmxController:
 
     def _note_error(self, output, exc):
         detail = getattr(exc, "strerror", None) or str(exc)
-        if output.mode == MODE_ENTTEC and output.device:
+        if output.mode in SERIAL_MODES and output.device:
             self.last_error = f"{output.device}: {detail}"
         elif output.host:
             self.last_error = f"{output.host}:{output.port}: {detail}"

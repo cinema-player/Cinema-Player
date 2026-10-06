@@ -1,4 +1,4 @@
-"""DMX house lights: Enttec frames, Art-Net, fades, and preset cues."""
+"""DMX house lights: Enttec frames, Open DMX, Art-Net, fades, and preset cues."""
 
 import os
 import socket
@@ -108,6 +108,25 @@ class PacketTests(unittest.TestCase):
         self.assertEqual(packet[-1], 0xE7)
         self.assertEqual(len(packet), 4 + 513 + 1)
 
+    def test_opendmx_frame(self):
+        values = bytearray(512)
+        values[0] = 10
+        values[1] = 20
+        packet = dmx.build_opendmx(values)
+        self.assertEqual(packet[0], 0x00)
+        self.assertEqual(packet[1], 10)
+        self.assertEqual(packet[2], 20)
+        self.assertEqual(len(packet), 513)
+
+    def test_open_dmx_aliases(self):
+        self.assertEqual(dmx.normalize_mode("Open DMX"), dmx.MODE_OPENDMX)
+        self.assertEqual(dmx.normalize_mode("open-dmx-usb"), dmx.MODE_OPENDMX)
+        self.assertEqual(dmx.normalize_mode("usb-pro"), dmx.MODE_ENTTEC)
+        output = dmx.DmxOutput(mode="open dmx usb", device="", channels=[2])
+        self.assertEqual(output.mode, dmx.MODE_OPENDMX)
+        self.assertEqual(output.device, "/dev/ttyUSB0")
+        self.assertTrue(output.ready())
+
     def test_frame_for_level_maps_percent(self):
         frame = dmx.frame_for_level([1, 4], 40)
         self.assertEqual(frame[0], 102)
@@ -185,6 +204,99 @@ class FadeTests(unittest.TestCase):
         controller.close()
         self.assertTrue(port.closed)
 
+    def test_missing_opendmx_device_does_not_raise(self):
+        controller = dmx.DmxController(start_thread=False)
+        output = dmx.DmxOutput(mode="opendmx", device="/tmp/no-such-dmx-device", channels=[1])
+        error = controller.apply(output, 100, 0)
+        self.assertIn("/tmp/no-such-dmx-device", error)
+        self.assertIn("No such file", error)
+        self.assertFalse(controller.connected)
+        controller.close()
+
+    def test_opendmx_port_writes_slots(self):
+        port = RecordingPort("/dev/ttyUSB0")
+        controller = dmx.DmxController(open_opendmx=lambda device: port, start_thread=False)
+        output = dmx.DmxOutput(mode="opendmx", device="/dev/ttyUSB0", channels=[1])
+        self.assertEqual(controller.apply(output, 40, 0), "")
+        self.assertEqual(len(port.frames), 1)
+        self.assertEqual(port.frames[0][0], 102)
+        self.assertEqual(port.frames[0][1], 0)
+        controller.close()
+        self.assertTrue(port.closed)
+
+    def test_switching_serial_mode_reopens_the_port(self):
+        opened = []
+
+        class KindPort:
+            def __init__(self, device, kind):
+                self.device = device
+                self.kind = kind
+                self.frames = []
+                self.closed = False
+                opened.append(self)
+
+            def write_frame(self, frame):
+                self.frames.append(bytes(frame))
+
+            def close(self):
+                self.closed = True
+
+        controller = dmx.DmxController(
+            open_port=lambda device: KindPort(device, "enttec"),
+            open_opendmx=lambda device: KindPort(device, "opendmx"),
+            start_thread=False,
+        )
+        enttec = dmx.DmxOutput(mode="enttec", device="/dev/ttyUSB0", channels=[1])
+        opendmx = dmx.DmxOutput(mode="open-dmx", device="/dev/ttyUSB0", channels=[1])
+        self.assertEqual(controller.apply(enttec, 100, 0), "")
+        self.assertEqual(controller.apply(opendmx, 50, 0), "")
+        self.assertTrue(opened[0].closed)
+        self.assertEqual(opened[0].kind, "enttec")
+        self.assertEqual(opened[1].kind, "opendmx")
+        self.assertFalse(opened[1].closed)
+        self.assertEqual(opened[1].frames[0][0], dmx.percent_to_dmx(50))
+        controller.close()
+        self.assertTrue(opened[1].closed)
+
+    def test_opendmx_pty_frame(self):
+        import pty
+        import select
+
+        master, slave = pty.openpty()
+        period, break_s, mab = dmx.OPENDMX_PERIOD, dmx.OPENDMX_BREAK, dmx.OPENDMX_MAB
+        dmx.OPENDMX_PERIOD = 0
+        dmx.OPENDMX_BREAK = 0
+        dmx.OPENDMX_MAB = 0
+        try:
+            port = dmx.OpenDmxPort(os.ttyname(slave))
+            baud, bits, stop_bits, parity = dmx.line_settings(port.fd)
+            self.assertEqual(baud, 250000)
+            self.assertEqual(bits, 8)
+            self.assertEqual(stop_bits, 2)
+            self.assertFalse(parity)
+            port.write_frame(dmx.frame_for_level([1, 2], 40))
+            port.close()
+            ready, _, _ = select.select([master], [], [], 1)
+            self.assertTrue(ready)
+            data = os.read(master, 2048)
+        finally:
+            dmx.OPENDMX_PERIOD = period
+            dmx.OPENDMX_BREAK = break_s
+            dmx.OPENDMX_MAB = mab
+            os.close(master)
+            os.close(slave)
+        self.assertEqual(data[0], 0x00)
+        self.assertEqual(data[1], 102)
+        self.assertEqual(data[2], 102)
+        self.assertEqual(len(data), 513)
+
+    def test_ftdi_latency_path_uses_the_tty_name(self):
+        self.assertEqual(
+            dmx.ftdi_latency_path("/dev/ttyUSB0"),
+            "/sys/class/tty/ttyUSB0/device/latency_timer",
+        )
+        self.assertFalse(dmx.set_ftdi_latency("/tmp/no-such-dmx-device"))
+
 
 class ArtNetSendTests(unittest.TestCase):
     def test_apply_reaches_the_socket(self):
@@ -245,6 +357,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(start_lead, 200)
         self.assertEqual(end_lead, 300)
 
+    def test_round_trip_opendmx(self):
+        dumped = dmx.dump_lights_config(
+            dmx.DmxOutput(mode="open dmx", device="/dev/ttyUSB1", channels="2-3"),
+            {"bright": 70, "medium": 20, "dark": 0},
+            500,
+            True,
+        )
+        output, presets, transition, enabled, _start_lead, _end_lead = dmx.load_lights_config(dumped)
+        self.assertTrue(enabled)
+        self.assertEqual(output.mode, "opendmx")
+        self.assertEqual(output.device, "/dev/ttyUSB1")
+        self.assertEqual(output.channels, [2, 3])
+        self.assertEqual(presets["bright"], 70)
+        self.assertEqual(transition, 500)
+
     def test_light_strings_in_english_and_german(self):
         keys = (
             "lights",
@@ -252,15 +379,18 @@ class ConfigTests(unittest.TestCase):
             "lights_mode",
             "lights_mode_artnet",
             "lights_mode_enttec",
+            "lights_mode_opendmx",
             "lights_host",
             "lights_universe",
             "lights_device",
             "lights_device_hint",
+            "lights_device_hint_opendmx",
             "lights_channels",
             "lights_channels_hint",
             "lights_close",
             "lights_none_ready",
             "lights_none_ready_enttec",
+            "lights_none_ready_opendmx",
             "lights_control",
             "lights_control_off",
             "lights_transition",
@@ -281,6 +411,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(language.STRINGS["de"]["light_dark"], "Dunkel")
         self.assertIn("Enttec", language.STRINGS["en"]["lights_mode_enttec"])
         self.assertIn("Enttec", language.STRINGS["de"]["lights_mode_enttec"])
+        self.assertIn("Open DMX", language.STRINGS["en"]["lights_mode_opendmx"])
+        self.assertIn("Open DMX", language.STRINGS["de"]["lights_mode_opendmx"])
+        self.assertNotIn("not supported", language.STRINGS["en"]["lights_hint"].lower())
+        self.assertNotIn("nicht unterstützt", language.STRINGS["de"]["lights_hint"].lower())
 
 
 if __name__ == "__main__":

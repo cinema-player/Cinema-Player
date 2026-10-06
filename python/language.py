@@ -40,26 +40,32 @@ STRINGS = {
         "remote_control_off": "The network API is switched off.",
         "lights": "Light control",
         "lights_hint": (
-            "House lights are sent as DMX512, either to an Enttec DMX USB Pro "
-            "or as Art-Net on the LAN. Open DMX is not supported. "
+            "House lights are sent as DMX512 to an Enttec DMX USB Pro, an Open DMX USB "
+            "interface, or as Art-Net on the LAN. "
             "Set the interface or the node, plus the dimmer channels (1–512). "
             "Bright, Medium, and Dark are levels in percent."
         ),
         "lights_mode": "Connection",
         "lights_mode_artnet": "Art-Net (LAN)",
         "lights_mode_enttec": "Enttec DMX USB Pro",
+        "lights_mode_opendmx": "Open DMX USB",
         "lights_host": "Art-Net node",
         "lights_universe": "Universe",
         "lights_device": "Serial port",
         "lights_device_hint": (
             "Enttec DMX USB Pro, for example /dev/ttyUSB0, at 57600 baud. "
-            "Open DMX is not supported. The user needs access to the port (group dialout)."
+            "The user needs access to the port (group dialout)."
+        ),
+        "lights_device_hint_opendmx": (
+            "Open DMX USB, for example /dev/ttyUSB0, at 250000 baud with two stop bits "
+            "and a break before each frame. The user needs access to the port (group dialout)."
         ),
         "lights_channels": "Channels",
         "lights_channels_hint": "1–512, for example 1 or 1, 2, 5-7",
         "lights_close": "Close",
         "lights_none_ready": "Set an Art-Net node and at least one DMX channel.",
         "lights_none_ready_enttec": "Select an Enttec port and at least one DMX channel.",
+        "lights_none_ready_opendmx": "Select an Open DMX port and at least one DMX channel.",
         "lights_control": "House lights",
         "lights_control_off": "House lights are switched off.",
         "lights_transition": "Fade",
@@ -334,26 +340,32 @@ STRINGS = {
         "remote_control_off": "Die Netzwerk-API ist ausgeschaltet.",
         "lights": "Lichtsteuerung",
         "lights_hint": (
-            "Das Saallicht wird als DMX512 gesendet, über ein Enttec DMX USB Pro "
-            "oder als Art-Net im Netzwerk. Open DMX wird nicht unterstützt. "
+            "Das Saallicht wird als DMX512 gesendet, über ein Enttec DMX USB Pro, "
+            "ein Open DMX USB oder als Art-Net im Netzwerk. "
             "Schnittstelle bzw. Node und die Dimmerkanäle (1–512) eintragen. "
             "Hell, Mittel und Dunkel sind Pegel in Prozent."
         ),
         "lights_mode": "Anschluss",
         "lights_mode_artnet": "Art-Net (LAN)",
         "lights_mode_enttec": "Enttec DMX USB Pro",
+        "lights_mode_opendmx": "Open DMX USB",
         "lights_host": "Art-Net-Node",
         "lights_universe": "Universe",
         "lights_device": "Schnittstelle",
         "lights_device_hint": (
             "Enttec DMX USB Pro, z. B. /dev/ttyUSB0, mit 57600 Baud. "
-            "Open DMX wird nicht unterstützt. Der Benutzer braucht Zugriff auf die Schnittstelle (Gruppe dialout)."
+            "Der Benutzer braucht Zugriff auf die Schnittstelle (Gruppe dialout)."
+        ),
+        "lights_device_hint_opendmx": (
+            "Open DMX USB, z. B. /dev/ttyUSB0, mit 250000 Baud, zwei Stoppbits "
+            "und einem Break vor jedem Frame. Der Benutzer braucht Zugriff auf die Schnittstelle (Gruppe dialout)."
         ),
         "lights_channels": "Kanäle",
         "lights_channels_hint": "1–512, z. B. 1 oder 1, 2, 5-7",
         "lights_close": "Schließen",
         "lights_none_ready": "Art-Net-Node und mindestens einen DMX-Kanal eintragen.",
         "lights_none_ready_enttec": "Enttec-Schnittstelle und mindestens einen DMX-Kanal wählen.",
+        "lights_none_ready_opendmx": "Open-DMX-Schnittstelle und mindestens einen DMX-Kanal wählen.",
         "lights_control": "Lichtsteuerung",
         "lights_control_off": "Die Lichtsteuerung ist ausgeschaltet.",
         "lights_transition": "Überblendung",
