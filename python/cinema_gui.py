@@ -317,6 +317,8 @@ class RangeProgressBar(tk.Canvas):
         return start, end
 
     def redraw(self):
+        if self.winfo_width() <= 1:
+            return
         self.delete("all")
         x0, y0, x1, y1 = self._track_box()
         self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
@@ -481,6 +483,8 @@ class EnvelopeCanvas(tk.Canvas):
         return left, top, left + width, top + height
 
     def redraw(self):
+        if self.winfo_width() <= 1:
+            return
         self.delete("all")
         x0, y0, x1, y1 = self._track_box()
         self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
@@ -508,6 +512,21 @@ class EnvelopeCanvas(tk.Canvas):
             ratio = max(0.0, min(1.0, self.position / self.duration))
             px = x0 + ratio * (x1 - x0)
             self.create_line(px, y0, px, y1, fill=COLOR_WHITE, width=2)
+
+
+def program_clock_drives_playhead(waiting_to_roll, playing, idle, file_matches):
+    """The playhead follows mpv only for the clip that is actually on the projector.
+
+    During a light fade the next title is already armed, but the projector is
+    still showing the previous file. That clock must not move the program bar.
+    """
+    if waiting_to_roll:
+        return False
+    if idle:
+        return True
+    if playing and not file_matches:
+        return False
+    return True
 
 
 def format_delay_ms(ms):
@@ -1990,6 +2009,7 @@ class VideoPlayerGUI:
         volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.program_audio_bitrate = self._bitrate_readout(progress, "audio_bitrate")
         self.program_audio_bitrate.grid(row=1, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
+        self._pin_bitrate_column(progress, self.program_video_bitrate)
 
         self.audiosync_frame = tk.Frame(progress, bg=COLOR_PANEL)
         delay_row = tk.Frame(self.audiosync_frame, bg=COLOR_PANEL)
@@ -2081,6 +2101,14 @@ class VideoPlayerGUI:
         )
         label.tooltip = IconTooltip(label, t(tooltip_key))
         return label
+
+    @staticmethod
+    def _pin_bitrate_column(frame, label):
+        """Keep the readout column, so the bar beside it does not change length."""
+        try:
+            frame.columnconfigure(1, minsize=label.winfo_reqwidth() + 16)
+        except tk.TclError:
+            pass
 
     def _build_volume_row(self, parent, variable, on_change, bg, save=False, accent=None):
         accent = COLOR_VOLUME if accent is None else accent
@@ -3467,6 +3495,7 @@ class VideoPlayerGUI:
         self.preview_volume_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.preview_audio_bitrate = self._bitrate_readout(controls, "audio_bitrate")
         self.preview_audio_bitrate.grid(row=2, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
+        self._pin_bitrate_column(controls, self.preview_video_bitrate)
 
         marks = tk.Frame(controls, bg=COLOR_PANEL)
         marks.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 4))
@@ -5647,9 +5676,17 @@ class VideoPlayerGUI:
             lit = active and (not fading or blink_on)
             bg = ACCENT if lit else COLOR_BUTTON
             fg = COLOR_WHITE if lit else COLOR_TEXT
+            style = (
+                "normal" if enabled else "disabled",
+                bg,
+                fg,
+            )
+            if getattr(button, "_light_style", None) == style:
+                continue
+            button._light_style = style
             try:
                 button.config(
-                    state="normal" if enabled else "disabled",
+                    state=style[0],
                     bg=bg,
                     fg=fg,
                     activebackground=bg,
@@ -5657,7 +5694,7 @@ class VideoPlayerGUI:
                     disabledforeground=COLOR_MUTED,
                 )
             except tk.TclError:
-                pass
+                button._light_style = None
 
     def _iter_light_buttons(self):
         for group in (
@@ -8343,9 +8380,31 @@ class VideoPlayerGUI:
             self._release_preview_range()
         self.preview_mpv.set_position(position)
 
+    def _apply_program_clock(self, mpv):
+        """Keep silent clips at speed 1 when HDMI audio has to be fed at speed 2."""
+        entry = self.current_entry()
+        on_program = (
+            self.program_state == "PLAYING"
+            and not self.idle_showing
+            and entry
+            and mpv.has_file(entry.path)
+        )
+        if not on_program:
+            has_audio = None
+        elif entry.audio_codec or entry.audio_tracks:
+            has_audio = True
+        elif entry.video_codec or entry.container:
+            has_audio = False
+        else:
+            has_audio = None
+        for prop, value in self.output_manager.program_clock_properties(has_audio):
+            mpv.command("set_property", prop, value)
+
     def main_mpv_event(self, mpv, message):
         event = message.get("event")
         if event == "file-loaded":
+            if not mpv.is_audio_keepalive():
+                self._apply_program_clock(mpv)
             mpv.apply_pending_range()
             self.program_video_bps = 0
             self.program_audio_bps = 0
@@ -8376,6 +8435,8 @@ class VideoPlayerGUI:
                 return
             if self.hdmi_audio_keepalive or mpv.is_audio_keepalive():
                 return
+            if getattr(self, "lights_play_after", None):
+                return
             if (
                 message.get("reason") == "eof"
                 and not self.still_active()
@@ -8401,8 +8462,15 @@ class VideoPlayerGUI:
                 return
             if self.program_state != "PLAYING" and not self.idle_showing:
                 return
-            self.position = position
             entry = self.current_entry()
+            if not program_clock_drives_playhead(
+                bool(getattr(self, "lights_play_after", None)),
+                self.program_state == "PLAYING",
+                bool(self.idle_showing),
+                bool(entry and mpv.has_file(entry.path)),
+            ):
+                return
+            self.position = position
             if (
                 self.program_state == "PLAYING"
                 and entry
@@ -8426,6 +8494,8 @@ class VideoPlayerGUI:
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)
         elif name == "eof-reached" and value:
+            if getattr(self, "lights_play_after", None):
+                return
             if (
                 not self.beamer_test_active
                 and not self._program_loop_active()
@@ -8536,6 +8606,7 @@ class VideoPlayerGUI:
         return format_bitrate(bps) or "--"
 
     def _apply_bitrate_text(self, label, text):
+        """Replace the readout text. The label stays in the grid at a fixed width."""
         if label is None:
             return
         if getattr(label, "_shown_bitrate", None) == text:
@@ -8543,10 +8614,6 @@ class VideoPlayerGUI:
         label._shown_bitrate = text
         try:
             label.config(text=text)
-            if text in ("", "--"):
-                label.grid_remove()
-            else:
-                label.grid()
         except (tk.TclError, AttributeError):
             pass
 

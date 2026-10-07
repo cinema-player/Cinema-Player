@@ -204,5 +204,53 @@ class BeamerSummaryTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_drop_summary.master, self.app.beamer_summary)
 
 
+class ProgramClockTests(unittest.TestCase):
+    def test_fade_wait_ignores_the_projector_clock(self):
+        self.assertFalse(cinema_gui.program_clock_drives_playhead(True, True, False, False))
+        self.assertFalse(cinema_gui.program_clock_drives_playhead(True, True, False, True))
+
+    def test_previous_file_does_not_move_the_armed_clip(self):
+        self.assertFalse(cinema_gui.program_clock_drives_playhead(False, True, False, False))
+
+    def test_loaded_program_and_idle_follow_the_clock(self):
+        self.assertTrue(cinema_gui.program_clock_drives_playhead(False, True, False, True))
+        self.assertTrue(cinema_gui.program_clock_drives_playhead(False, False, True, False))
+
+
+class ProgressBarLayoutTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tk.Tk()
+        self.root.geometry("900x160+20+20")
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_missing_bitrate_keeps_the_bar_width(self):
+        frame = tk.Frame(self.root)
+        frame.pack(fill="x")
+        frame.columnconfigure(0, weight=1)
+        bar = cinema_gui.RangeProgressBar(frame, on_seek=lambda *_args: None, height=32)
+        bar.grid(row=0, column=0, sticky="ew")
+        video = cinema_gui.VideoPlayerGUI._bitrate_readout(self.app, frame, "video_bitrate")
+        video.grid(row=0, column=1, sticky="e", padx=(8, 8))
+        audio = cinema_gui.VideoPlayerGUI._bitrate_readout(self.app, frame, "audio_bitrate")
+        audio.grid(row=1, column=1, sticky="e", padx=(8, 8))
+        cinema_gui.VideoPlayerGUI._pin_bitrate_column(frame, video)
+        bar.set_state(duration=100, position=40)
+        self.root.update()
+        width = bar.winfo_width()
+        playhead = bar._x_for_time(40)
+        self.assertGreater(width, 1)
+        for text in ("--", "", "25 Mbps", "--"):
+            cinema_gui.VideoPlayerGUI._apply_bitrate_text(self.app, video, text)
+            cinema_gui.VideoPlayerGUI._apply_bitrate_text(self.app, audio, text)
+            self.root.update()
+            self.assertEqual(video.winfo_manager(), "grid")
+            self.assertEqual(audio.winfo_manager(), "grid")
+            self.assertEqual(bar.winfo_width(), width)
+            self.assertEqual(bar._x_for_time(40), playhead)
+
+
 if __name__ == "__main__":
     unittest.main()

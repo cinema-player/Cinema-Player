@@ -24,7 +24,7 @@ The header shows the Cinema Player logo, the program version beside the mpv vers
 
 **Right**
 
-- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. The expanded list says so. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing). While frames are dropped, the short form shows the drop count. Entering **PROGRAM** or **PLAYING** folds the list back to the short form.
+- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. The expanded list says so. **OK** means a listed rate can show the clip (including 2×, so 25 fps is shown at 50 Hz and 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing). While frames are dropped, the short form shows the drop count. Entering **PROGRAM** or **PLAYING** folds the list back to the short form.
 - Preview header with the Live/Preview badge and clip metadata.
 - Clip settings in two groups: **Playback** (autoplay, loop) and **Safety** (settings warning, played), or the still display time. The groups fold away while the show is **PROGRAM** or **PLAYING**.
 - Preview video with a VU meter and optional integrated LUFS readout.
@@ -246,10 +246,10 @@ To achieve smooth, flicker-free playback, the graphics card’s refresh rate is 
 
 1. The video’s metadata is read.
 2. The refresh rates supported by the projector are checked (shown as **Rates** / **Frequenzen** in the beamer panel).
-3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**. For 50 and 60 fps, if the projector has no 50/60 Hz mode, Cinema Player uses 25/30 Hz instead.
+3. The output is set to the video’s frame rate or an integer multiple of it, preferring the **video resolution**. 24/25/30 fps are shown at 48/50/60 Hz so each frame is flashed twice; a native 25 Hz mode on this projector plays that material at half speed and flickers. For 50 and 60 fps, if the projector has no 50/60 Hz mode, Cinema Player uses 25/30 Hz instead.
 4. If no matching mode exists, a custom xrandr mode can be created at playback time by scaling the native modeline (X11 only; GNOME/KWin Wayland is limited to EDID modes).
 
-If a listed rate can show the clip (native, 2× refresh, or the 25/30 Hz fallback for 50/60 fps), the projector status shows **OK** (green). 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz. 50 fps is **OK** when 25 Hz is listed and 50 Hz is not.
+If a listed rate can show the clip (native, 2× refresh, or the 25/30 Hz fallback for 50/60 fps), the projector status shows **OK** (green). 25 fps is shown at 50 Hz when that rate is listed. 30 fps is **OK** when 60 Hz is in the list, even if the projector is not yet switched to 60 Hz. 50 fps is **OK** when 25 Hz is listed and 50 Hz is not.
 
 If no matching refresh rate is found, the status changes to **Mismatch** (red). The clip’s unsupported rate or resolution is then added to the list in blue (program) or yellow (preview). The video can still be displayed, but frame-dropping artifacts may occur.
 

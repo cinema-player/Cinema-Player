@@ -296,6 +296,130 @@ def audio_keepalive_path(directory=None):
     return os.path.join(folder, f"cinema-player-hdmi-keepalive-{suffix}.wav")
 
 
+def audio_clock_compensation(media_per_wall):
+    """Speed factor that puts a slow HDMI audio clock back on wall time.
+
+    One media second per wall second needs no change. About half a media
+    second per wall second is the AMD HDMI clock on this machine: the device
+    consumes samples at half the rate mpv requested, and display sync then
+    slows the picture to match. Playing the file at speed 2 feeds the device
+    twice as fast, so both land on realtime.
+    """
+    try:
+        ratio = float(media_per_wall)
+    except (TypeError, ValueError):
+        return 1
+    if ratio != ratio:
+        return 1
+    if 0.35 <= ratio <= 0.65:
+        return 2
+    return 1
+
+
+def measure_audio_clock_ratio(mpv_path, audio_device, wav_path):
+    """Media seconds advanced per wall second while `audio_device` is the clock.
+
+    Returns None when the device cannot be timed. A healthy clock is about 1.
+    """
+    if not mpv_path or not audio_device or not wav_path:
+        return None
+    sock_path = os.path.join(
+        tempfile.gettempdir(), f"cinema-player-clock-{os.getpid()}.sock",
+    )
+    try:
+        os.remove(sock_path)
+    except OSError:
+        pass
+    command = [
+        mpv_path, "--no-config", "--no-terminal", "--vo=null", "--no-video",
+        f"--audio-device={audio_device}",
+        "--video-sync=audio",
+        f"--input-ipc-server={sock_path}",
+        wav_path,
+    ]
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+
+    pending = b""
+    request_id = 0
+
+    def ipc_get(sock, prop):
+        nonlocal pending, request_id
+        request_id += 1
+        current = request_id
+        sock.sendall((
+            json.dumps({"command": ["get_property", prop], "request_id": current}) + "\n"
+        ).encode())
+        while True:
+            while b"\n" not in pending:
+                chunk = sock.recv(8192)
+                if not chunk:
+                    return None
+                pending += chunk
+            line, pending = pending.split(b"\n", 1)
+            if not line.strip():
+                continue
+            message = json.loads(line)
+            # Playback events arrive on the same socket and are not a reply.
+            if message.get("event") or message.get("request_id") != current:
+                continue
+            if message.get("error") != "success":
+                return None
+            value = message.get("data")
+            # bool is an int, and `eof-reached: false` must not look like time 0.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return float(value)
+
+    ratio = None
+    try:
+        deadline = time.monotonic() + 2.0
+        while not os.path.exists(sock_path) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.4)
+        sock.connect(sock_path)
+        start_pos = None
+        start_at = None
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end and start_pos is None:
+            pos = ipc_get(sock, "time-pos")
+            if pos is not None and pos > 0.05:
+                start_pos = pos
+                start_at = time.monotonic()
+                break
+            time.sleep(0.05)
+        if start_pos is not None:
+            time.sleep(0.4)
+            end_pos = ipc_get(sock, "time-pos")
+            elapsed = time.monotonic() - start_at
+            if end_pos is not None and elapsed > 0:
+                ratio = (end_pos - start_pos) / elapsed
+        try:
+            sock.sendall((json.dumps({"command": ["quit"]}) + "\n").encode())
+        except OSError:
+            pass
+        sock.close()
+    except (OSError, json.JSONDecodeError, TimeoutError):
+        ratio = None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        try:
+            os.remove(sock_path)
+        except OSError:
+            pass
+    return ratio
+
+
 def ensure_audio_keepalive_wav(path=None):
     """Write a silent stereo WAV that can loop on the projector HDMI jack."""
     path = path or audio_keepalive_path()
@@ -2331,6 +2455,7 @@ class VideoOutputManager:
         self._color_info_cache = None
         self.color_format = COLOR_FMT_RGB
         self._original_color_format = None
+        self._audio_clock_scale = None
 
     @staticmethod
     def desktop_env():
@@ -2696,6 +2821,39 @@ class VideoOutputManager:
         self._preview_audio_device = device
         self._preview_audio_key = key
         return device
+
+    def program_audio_clock_scale(self, mpv_path):
+        """1, or 2 when the projector HDMI clock runs at half the requested rate."""
+        try:
+            device = self.program_audio_device(mpv_path)
+        except Exception:
+            return 1
+        if not device or "hdmi" not in device.lower():
+            return 1
+        cached = self._audio_clock_scale
+        if cached and cached[0] == device:
+            return cached[1]
+        wav_path = ensure_audio_keepalive_wav()
+        ratio = measure_audio_clock_ratio(mpv_path, device, wav_path)
+        scale = audio_clock_compensation(ratio)
+        self._audio_clock_scale = (device, scale)
+        return scale
+
+    def program_clock_properties(self, has_audio):
+        """Property updates for one clip. Empty when the audio clock is healthy.
+
+        Speed 2 is only for clips that actually open the slow HDMI device.
+        A silent clip would otherwise run at double speed, because nothing
+        holds the clock back. None leaves the launch setting alone when the
+        file has not been probed yet.
+        """
+        cached = self._audio_clock_scale
+        scale = cached[1] if cached else 1
+        if scale != 2 or has_audio is None:
+            return []
+        if has_audio:
+            return [("speed", 2), ("video-sync", "audio")]
+        return [("speed", 1), ("video-sync", "display-resample")]
 
     def audio_launch_args(self, role, mpv_path):
         """mpv arguments that connect one player to its patched sound output."""
@@ -3142,9 +3300,12 @@ class VideoOutputManager:
     def target_refresh_rates(fps):
         """Rates that give judder-free playback, best first.
 
-        For 24/25 fps prefer 48/50 Hz over 24/25 Hz (less flicker).
+        24/25/30 fps are shown at 48/50/60 Hz, each frame twice. A 25 Hz
+        scan on this projector plays those frames at half speed and flickers.
         For 50/60 fps prefer 50/60 Hz, then 100/120 Hz, then 25/30 Hz.
         """
+        if not fps or fps <= 0:
+            return []
         candidates = []
         for multiplier in range(1, 5):
             rate = fps * multiplier
@@ -3607,6 +3768,19 @@ class VideoOutputManager:
         # Offsets are relative to --screen-name, not the virtual desktop.
         return f"{mode.width}x{mode.height}+0+0"
 
+    def _clock_sync_arguments(self, mpv_path, mode):
+        """Lock 25p to the projector unless the HDMI audio clock runs at half rate.
+
+        display-resample then mistimes every frame, because it plans a 50 Hz
+        cadence while the audio device only accepts samples at half speed and
+        drags the picture with it. Speed 2 plus the audio clock lands both on
+        realtime; the probe result is cached for the rest of the session.
+        """
+        refresh = f"--override-display-fps={mode.refresh:.3f}"
+        if self.program_audio_clock_scale(mpv_path) == 2:
+            return ["--video-sync=audio", "--speed=2", refresh]
+        return ["--video-sync=display-resample", refresh]
+
     def get_mpv_arguments(self, mpv_path=None):
         mode = self.effective_mode()
         if not mode:
@@ -3617,8 +3791,7 @@ class VideoOutputManager:
             "--no-border",
             "--fullscreen=yes" if wayland else "--fullscreen=no",
             "--keepaspect=yes",
-            "--video-sync=display-resample",
-            f"--override-display-fps={mode.refresh:.3f}",
+            *self._clock_sync_arguments(mpv_path, mode),
             "--hwdec=auto-safe",
             "--vo=gpu-next",
             f"--gpu-context={gpu_context_for_mpv(mpv_path)}",

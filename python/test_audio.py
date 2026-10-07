@@ -20,6 +20,48 @@ sys.modules.setdefault("font_setup", MagicMock())
 import cinema_player as player
 
 
+class AudioClockTests(unittest.TestCase):
+    def test_half_rate_hdmi_clock_is_fed_at_double_speed(self):
+        self.assertEqual(player.audio_clock_compensation(0.5), 2)
+        self.assertEqual(player.audio_clock_compensation(0.48), 2)
+        self.assertEqual(player.audio_clock_compensation(0.62), 2)
+
+    def test_healthy_clock_is_left_alone(self):
+        self.assertEqual(player.audio_clock_compensation(1.0), 1)
+        self.assertEqual(player.audio_clock_compensation(0.97), 1)
+        self.assertEqual(player.audio_clock_compensation(None), 1)
+        self.assertEqual(player.audio_clock_compensation("nope"), 1)
+
+    def test_half_rate_launch_follows_the_audio_clock(self):
+        hdmi = "alsa/hdmi:CARD=HDMI,DEV=0"
+        manager = player.VideoOutputManager("HDMI-1")
+        mode = player.DisplayMode("HDMI-1", 1920, 1080, 50.0, name="1920x1080")
+        with patch.object(manager, "effective_mode", return_value=mode), patch(
+            "cinema_player.session_is_wayland", return_value=True,
+        ), patch(
+            "cinema_player.gpu_context_for_mpv", return_value="wayland",
+        ), patch(
+            "cinema_player.mpv_has_option", return_value=True,
+        ), patch.object(manager, "program_audio_device", return_value=hdmi), patch(
+            "cinema_player.measure_audio_clock_ratio", return_value=0.5,
+        ), patch(
+            "cinema_player.ensure_audio_keepalive_wav", return_value="/tmp/silence.wav",
+        ):
+            args = manager.get_mpv_arguments("/usr/bin/mpv")
+        self.assertIn("--video-sync=audio", args)
+        self.assertIn("--speed=2", args)
+        self.assertNotIn("--video-sync=display-resample", args)
+        self.assertEqual(
+            manager.program_clock_properties(True),
+            [("speed", 2), ("video-sync", "audio")],
+        )
+        self.assertEqual(
+            manager.program_clock_properties(False),
+            [("speed", 1), ("video-sync", "display-resample")],
+        )
+        self.assertEqual(manager.program_clock_properties(None), [])
+
+
 class EnvelopeHelpersTests(unittest.TestCase):
     def test_resample_keeps_bin_count_and_peaks(self):
         values = [0.0, 0.5, 1.0, 0.25]
