@@ -16,18 +16,19 @@ The header shows the Cinema Player logo, the program version beside the mpv vers
 
 **Left**
 
-- A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, and the playlist position.
-- The program block: progress bar with live video bitrate, volume with live audio bitrate, In/Out times, transport buttons, the four clocks, and a VU meter.
-- Playlist tools (name, import/new/load/save, house lights).
-- The playlist itself.
+- A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, the playlist position, and the next clip (including a zoom or format warning when one is waiting).
+- House lights (**Dark** / **Medium** / **Bright**) and the clip **Dimmer**, with the idle-media name and the settings-warning hint beside them.
+- The program block: progress bar with live video bitrate (hidden until a clip is rolling), volume with live audio bitrate, In/Out times, labelled transport buttons, the four clocks (**Remaining** and **End** larger than **Total** and **Elapsed**), and a VU meter.
+- Playlist tools (name, import/new/load/save). Import and the other file buttons fold away while the show is **PROGRAM** or **PLAYING**. Calibration keeps them.
+- The playlist itself, with a column header and one folder heading per location.
 
 **Right**
 
-- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing).
+- Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. The expanded list says so. **OK** means a listed rate can show the clip (including 2×, so 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing). While frames are dropped, the short form shows the drop count. Entering **PROGRAM** or **PLAYING** folds the list back to the short form.
 - Preview header with the Live/Preview badge and clip metadata.
-- Clip settings (autoplay, settings warning, loop, dimmer, or still display time).
+- Clip settings in two groups: **Playback** (autoplay, loop) and **Safety** (settings warning, played), or the still display time. The groups fold away while the show is **PROGRAM** or **PLAYING**.
 - Preview video with a VU meter and optional integrated LUFS readout.
-- Preview transport, volume, live bitrates, In/Out marks, audio track and subtitles.
+- Preview transport and In/Out marks, then audio track and subtitles on the next line. Preview volume is yellow; program volume stays cyan. Live bitrates appear only while that player is rolling.
 
 In **OFF**, the status title reads as program not started and the program clocks show `--:--`. Transport buttons that cannot be used in the current state are shown disabled.
 
@@ -68,7 +69,7 @@ The playlist menu offers:
 
 - Check video files
 - Reset playlist (clears played flags and moves the program pointer to the first entry)
-- **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show red **setting!** in the right-hand playlist column. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
+- **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
 - **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `idle` at startup.
@@ -78,8 +79,8 @@ The playlist menu offers:
 
 These settings control the behavior of the playlist.
 
-- **Dark / Medium / Bright** – Manual house-light presets. They are disabled until **House lights** is on in Settings → System settings → Light control (or on the phone).
-- **Idle media name** – If an idle file is set, its name is shown here. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Playlist. When **Settings warning** is on, red **Settings warning on** appears beside it.
+- **Dark / Medium / Bright** – Manual house-light presets under the status bar, next to the clip dimmer. They are disabled until **House lights** is on in Settings → System settings → Light control (or on the phone).
+- **Idle media name** – If an idle file is set, its name is shown on that same strip. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Playlist. When **Settings warning** is on, red **Settings warning on** appears beside it.
 
 ### Playback Controls
 
@@ -105,7 +106,7 @@ Cinema Player listens on the LAN (default port **8765**) so a smartphone can run
 - `POST /api/program` — body `{"index": 0…}` sets the program pointer (not while **PLAYING**)
 - `POST /api/lights` — body `{"preset": "dark"|"medium"|"bright"}` and/or `{"enabled": true|false}`
 
-The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. Dark / Medium / Bright sit on the playlist tools row and above the progress bar on the phone.
+The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. **Remaining** and **End** are the large clocks. Dark / Medium / Bright, transport, and volume stay pinned at the bottom of the phone page. The token field hides after the first successful connection.
 
 ### Lights
 
@@ -117,7 +118,7 @@ Cinema Player sends house lights as DMX512. Settings → System settings → **L
 
 **Channels** are the dimmer slots (1–512), as a list or a range such as `1` or `1, 2, 5-7`. The default is channel 1. Other slots stay at 0. **Bright**, **Medium**, and **Dark** are percentages (defaults 100 / 40 / 0) mapped to DMX 0–255. Fade is the software crossfade in seconds. A missing interface does not stop playback; the light window reports the error.
 
-**Dark**, **Medium**, and **Bright** sit on the playlist tools row and on the smartphone remote so the house lights can be set by hand. The chosen button blinks while the fade runs. **House lights** in Settings → System settings → Light control (and on the phone) switches DMX cues off: no manual buttons, no playlist cues, no film-start or film-end fades. The choice is saved. Saved Shelly device lists are ignored; preset levels and fade times are kept, and house lights stay off until they are switched on again. Launching Cinema Player with house lights on sends **Bright**.
+**Dark**, **Medium**, and **Bright** sit under the status bar and on the smartphone remote so the house lights can be set by hand. The chosen button blinks while the fade runs. **House lights** in Settings → System settings → Light control (and on the phone) switches DMX cues off: no manual buttons, no playlist cues, no film-start or film-end fades. The choice is saved. Saved Shelly device lists are ignored; preset levels and fade times are kept, and house lights stay off until they are switched on again. Launching Cinema Player with house lights on sends **Bright**.
 
 In Settings → System settings → **Light control**, **Start film** is how many seconds before the dim-down finishes the clip starts (0 waits until the fade is done). **Lights up** is how many seconds before the clip ends the house lights come up. With Autoplay to the next clip the lights stay dark.
 
@@ -135,8 +136,8 @@ When a clip is on air, four time values are shown. They follow the **clip** leng
 
 - **Total** – The length of the clip (from In to Out when marks are set).
 - **Elapsed** – The time that has already been played.
-- **Remaining** – The remaining playback time.
-- **End** – The absolute time at which the clip will end.
+- **Remaining** – The remaining playback time. Shown larger than Total and Elapsed.
+- **End** – The absolute time at which the clip will end. Shown larger than Total and Elapsed.
 
 In **OFF**, these clocks stay at `--:--`.
 
