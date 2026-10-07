@@ -1331,7 +1331,7 @@ class VideoPlayerGUI:
         lights_cfg = self.settings.get("lights") if isinstance(self.settings.get("lights"), dict) else {}
         (
             self.dmx_output,
-            self.lights_presets,
+            self.lights_scenes,
             self.lights_transition_ms,
             lights_on,
             self.lights_start_lead_ms,
@@ -1350,6 +1350,16 @@ class VideoPlayerGUI:
         self._light_error_lock = threading.Lock()
         self.program_light_buttons = {}
         self.settings_light_buttons = {}
+        self.program_light_bar = None
+        self.settings_light_bar = None
+        self._scene_draft = None
+        self._scene_edit_id = ""
+        self._scene_guard = False
+        self._scene_listbox = None
+        self._scene_name_var = None
+        self._scene_level_vars = {}
+        self._scene_levels_frame = None
+        self._scene_delete_button = None
         self._remote_action = False
         self._windowed_geometry = None
         self._fullscreen_applied = False
@@ -1697,6 +1707,13 @@ class VideoPlayerGUI:
 
     def rebuild_gui(self):
         """Rebuild the window for the current design and re-embed the preview player."""
+        if getattr(self, "lights_window", None) is not None:
+            self._commit_lights_settings()
+            self._scene_draft = None
+            self._scene_listbox = None
+            self._scene_levels_frame = None
+            self._scene_delete_button = None
+            self.settings_light_bar = None
         self.preview_mpv.quit()
         self._close_menus()
         self._close_patch_window()
@@ -2857,20 +2874,10 @@ class VideoPlayerGUI:
         settings = tk.Frame(parent, bg=COLOR_PANEL)
         settings.grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 6))
 
+        self.program_light_bar = tk.Frame(settings, bg=COLOR_PANEL)
+        self.program_light_bar.pack(side="left")
         self.program_light_buttons = {}
-        for key, label_key in (
-            ("dark", "light_dark"),
-            ("medium", "light_medium"),
-            ("bright", "light_bright"),
-        ):
-            button = tk.Button(
-                settings,
-                text=t(label_key),
-                font=FONT_SMALL,
-                command=lambda preset=key: self._on_light_preset(preset),
-            )
-            button.pack(side="left", padx=(0, 0) if key == "dark" else (8, 0))
-            self.program_light_buttons[key] = button
+        self._fill_light_buttons(self.program_light_bar, self.program_light_buttons, self._on_light_preset)
         self._refresh_light_buttons()
         status = tk.Frame(settings, bg=COLOR_PANEL)
         status.pack(side="left", padx=(16, 0))
@@ -3201,7 +3208,7 @@ class VideoPlayerGUI:
             side="left", padx=(16, 4),
         )
         self.light_start_combo = ttk.Combobox(
-            dimmer, textvariable=self.light_start_var, width=10, state="readonly",
+            dimmer, textvariable=self.light_start_var, width=16, state="readonly",
         )
         self.light_start_combo.pack(side="left")
         self.light_start_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
@@ -3592,11 +3599,9 @@ class VideoPlayerGUI:
                 badges.append(t("auto_badge"))
             if entry.loop and not entry.is_image:
                 badges.append(t("loop_badge"))
-            play = dmx.play_preset(entry.light_start)
-            if play == "medium":
-                badges.append(t("light_medium_badge"))
-            elif play == "bright":
-                badges.append(t("light_bright_badge"))
+            scene = dmx.find_scene(self.lights_scenes, entry.light_start)
+            if scene is not None and scene.id != dmx.SCENE_DARK:
+                badges.append(self._scene_badge(scene))
             widgets["autoplay"].config(
                 text="\n".join(badges),
                 bg=bg, fg=fg if fg == COLOR_WHITE else ACCENT,
@@ -5098,77 +5103,144 @@ class VideoPlayerGUI:
             except tk.TclError:
                 pass
 
-    def _play_light_labels(self):
-        return [t("light_dark"), t("light_medium"), t("light_bright")]
+    def _default_scene_name(self, scene):
+        if scene is None:
+            return ""
+        if scene.id == dmx.SCENE_DARK:
+            return t("light_dark")
+        if scene.id == dmx.SCENE_BRIGHT:
+            return t("light_bright")
+        if scene.id == "medium":
+            return t("light_medium")
+        return ""
 
-    def _light_choice_labels(self):
-        return [t("light_auto"), t("light_bright"), t("light_medium"), t("light_dark")]
+    def _scene_label(self, scene):
+        if scene is None:
+            return ""
+        if scene.name:
+            return scene.name
+        return self._default_scene_name(scene) or scene.id
 
-    def _light_choice_keys(self):
-        return ("", "bright", "medium", "dark")
+    def _scene_badge(self, scene):
+        label = self._scene_label(scene).upper()
+        if len(label) > 12:
+            return label[:11] + "…"
+        return label
+
+    def _scene_choices(self, scenes=None):
+        catalog = self.lights_scenes if scenes is None else scenes
+        used = set()
+        choices = []
+        for scene in catalog or []:
+            label = self._scene_label(scene)
+            unique = label
+            number = 2
+            while unique.casefold() in used:
+                unique = f"{label} {number}"
+                number += 1
+            used.add(unique.casefold())
+            choices.append((scene, unique))
+        return choices
+
+    def _fresh_scene_name(self, scenes):
+        base = t("scene_new")
+        used = {self._scene_label(scene).casefold() for scene in scenes}
+        if base.casefold() not in used:
+            return base
+        number = 2
+        while f"{base} {number}".casefold() in used:
+            number += 1
+        return f"{base} {number}"
+
+    def _fill_light_buttons(self, parent, group, command):
+        if parent is None:
+            return
+        try:
+            if not parent.winfo_exists():
+                return
+            for child in list(parent.winfo_children()):
+                child.destroy()
+        except tk.TclError:
+            return
+        group.clear()
+        for index, (scene, label) in enumerate(self._scene_choices()):
+            button = tk.Button(
+                parent,
+                text=label,
+                font=FONT_SMALL,
+                command=lambda scene_id=scene.id: command(scene_id),
+            )
+            button.pack(side="left", padx=(0 if index == 0 else 8, 0))
+            group[scene.id] = button
+
+    def _rebuild_light_buttons(self):
+        self._fill_light_buttons(
+            getattr(self, "program_light_bar", None),
+            self.program_light_buttons,
+            self._on_light_preset,
+        )
+        self._fill_light_buttons(
+            getattr(self, "settings_light_bar", None),
+            self.settings_light_buttons,
+            self._test_lights,
+        )
+        self._fill_light_combos()
+        if getattr(self, "light_start_var", None) is not None:
+            entry = self.selected_entry() if self.playlist else None
+            self._set_play_light_combo(entry.light_start if entry else "")
+        self._refresh_light_buttons()
 
     def _fill_light_combos(self):
         start = getattr(self, "light_start_combo", None)
-        if start is not None:
-            start["values"] = self._play_light_labels()
-
-    def _light_label_for_key(self, key):
-        key = dmx.normalize_preset(key)
-        for item, label in zip(self._light_choice_keys(), self._light_choice_labels()):
-            if item == key:
-                return label
-        return t("light_auto")
-
-    def _light_key_from_label(self, label):
-        for item, text in zip(self._light_choice_keys(), self._light_choice_labels()):
-            if text == label:
-                return item
-        return dmx.normalize_preset(label)
+        if start is None:
+            return
+        try:
+            start["values"] = [label for _scene, label in self._scene_choices()]
+        except tk.TclError:
+            self.light_start_combo = None
 
     def _set_play_light_combo(self, key):
-        shown = dmx.play_preset(key)
-        if shown == "medium":
-            label = t("light_medium")
-        elif shown == "bright":
-            label = t("light_bright")
-        else:
-            label = t("light_dark")
+        scene = dmx.find_scene(self.lights_scenes, key) if key else None
+        if scene is None:
+            scene = dmx.find_scene(self.lights_scenes, dmx.SCENE_DARK)
+        label = ""
+        if scene is not None:
+            for item, text in self._scene_choices():
+                if item.id == scene.id:
+                    label = text
+                    break
         self.light_start_var.set(label)
 
     def _play_light_from_label(self, label):
-        if label == t("light_medium"):
-            return "medium"
-        if label == t("light_bright"):
-            return "bright"
-        return ""
-
-    def _set_light_combo(self, variable, key):
-        if variable is None:
-            return
-        variable.set(self._light_label_for_key(key))
+        for scene, text in self._scene_choices():
+            if text == label:
+                return scene.id
+        found = dmx.find_scene(self.lights_scenes, label)
+        return found.id if found is not None else dmx.SCENE_DARK
 
     def _apply_lights(self, preset, force=False):
         if self.calibration_mode:
             return
         if not bool(self.lights_control.get()):
             return
-        key = dmx.normalize_preset(preset)
-        if not key:
+        key = dmx.scene_key(preset, self.lights_scenes)
+        scene = dmx.find_scene(self.lights_scenes, key) if key else None
+        if scene is None:
             return
-        if not force and dmx.already_at_preset(self.lights_current, key):
+        if not force and dmx.already_at_preset(self.lights_current, scene.id, self.lights_scenes):
             return
-        self.lights_current = key
+        self.lights_current = scene.id
         output = getattr(self, "dmx_output", None)
         if output is None or not output.ready():
             self._stop_light_fade()
             self._refresh_light_buttons()
             return
-        presets = dict(self.lights_presets)
+        scenes = [item.copy() for item in self.lights_scenes]
         transition = self.lights_transition_ms
         self._start_light_fade(transition)
 
         def worker():
-            error = dmx.apply_preset(output, key, presets, transition)
+            error = dmx.apply_scene(output, scene.id, scenes, transition)
             with self._light_error_lock:
                 self._light_errors.append(error)
 
@@ -5266,7 +5338,7 @@ class VideoPlayerGUI:
 
     def _refresh_light_buttons(self):
         enabled = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
-        current = dmx.normalize_preset(getattr(self, "lights_current", "")) if enabled else ""
+        current = dmx.scene_key(getattr(self, "lights_current", ""), self.lights_scenes) if enabled else ""
         fading = bool(enabled and current and getattr(self, "lights_fading", False))
         blink_on = bool(getattr(self, "lights_blink_on", False))
         for key, button in self._iter_light_buttons():
@@ -5300,7 +5372,7 @@ class VideoPlayerGUI:
         enabled = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else True
         self.settings["lights"] = dmx.dump_lights_config(
             getattr(self, "dmx_output", None) or dmx.DmxOutput(),
-            self.lights_presets,
+            self.lights_scenes,
             self.lights_transition_ms,
             enabled,
             self.lights_start_lead_ms,
@@ -5310,6 +5382,190 @@ class VideoPlayerGUI:
             save_settings(self.settings)
         except OSError:
             pass
+
+    def _build_scene_editor(self, parent):
+        """Name a scene and set a brightness for every global DMX channel."""
+        self._scene_draft = [scene.copy() for scene in self.lights_scenes]
+        self._scene_edit_id = self._scene_draft[0].id if self._scene_draft else ""
+        self._scene_level_vars = {}
+        editor = tk.Frame(parent, bg=COLOR_PANEL)
+        editor.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        left = tk.Frame(editor, bg=COLOR_PANEL)
+        left.pack(side="left", fill="y")
+        tk.Label(left, text=t("lights_scenes"), bg=COLOR_PANEL, font=FONT_SMALL).pack(anchor="w")
+        self._scene_listbox = self._styled_listbox(left)
+        self._scene_listbox.configure(height=6, width=18)
+        self._scene_listbox.pack(fill="y", expand=True, pady=(2, 4))
+        self._scene_listbox.bind("<<ListboxSelect>>", self._on_scene_select)
+        actions = tk.Frame(left, bg=COLOR_PANEL)
+        actions.pack(fill="x")
+        tk.Button(
+            actions, text=t("lights_scene_add"), font=FONT_SMALL, command=self._add_edited_scene,
+        ).pack(side="left")
+        self._scene_delete_button = tk.Button(
+            actions, text=t("lights_scene_delete"), font=FONT_SMALL, command=self._delete_edited_scene,
+        )
+        self._scene_delete_button.pack(side="left", padx=(8, 0))
+        right = tk.Frame(editor, bg=COLOR_PANEL)
+        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        name_row = tk.Frame(right, bg=COLOR_PANEL)
+        name_row.pack(fill="x")
+        tk.Label(name_row, text=t("lights_scene_name"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        self._scene_name_var = tk.StringVar(value="")
+        name_entry = tk.Entry(name_row, textvariable=self._scene_name_var, width=22, font=FONT_UI)
+        name_entry.pack(side="left", padx=(4, 0))
+        name_entry.bind("<FocusOut>", self._on_scene_name_changed)
+        name_entry.bind("<Return>", self._on_scene_name_changed)
+        self._scene_levels_frame = tk.Frame(right, bg=COLOR_PANEL)
+        self._scene_levels_frame.pack(fill="x", pady=(6, 0))
+        tk.Label(
+            right, text=t("lights_scene_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=360, justify="left",
+        ).pack(fill="x", pady=(6, 0))
+        self._refresh_scene_editor()
+
+    def _draft_channels(self):
+        text = self.lights_channels.get() if getattr(self, "lights_channels", None) else ""
+        return dmx.parse_channels(text) or [1]
+
+    def _flush_scene_form(self):
+        if not self._scene_draft or not self._scene_edit_id or self._scene_name_var is None:
+            return
+        scene = dmx.find_scene(self._scene_draft, self._scene_edit_id)
+        if scene is None:
+            return
+        name = self._scene_name_var.get().strip()
+        default = self._default_scene_name(scene)
+        if default and (not name or name == default):
+            scene.name = ""
+        elif name:
+            scene.name = name[:dmx.SCENE_NAME_LIMIT]
+        channels = self._draft_channels()
+        for channel, variable in list(self._scene_level_vars.items()):
+            if channel not in channels:
+                continue
+            scene.levels[channel] = dmx.clamp_percent(variable.get(), scene.levels.get(channel, 0))
+        self._scene_draft = dmx.align_scenes(self._scene_draft, channels)
+
+    def _refresh_scene_editor(self):
+        if self._scene_listbox is None:
+            return
+        if not self._scene_draft:
+            return
+        if dmx.find_scene(self._scene_draft, self._scene_edit_id) is None:
+            self._scene_edit_id = self._scene_draft[0].id
+        self._refresh_scene_list_labels()
+        self._load_scene_form(self._scene_edit_id)
+
+    def _refresh_scene_list_labels(self):
+        box = self._scene_listbox
+        if box is None:
+            return
+        self._scene_guard = True
+        try:
+            selected = 0
+            for index, scene in enumerate(self._scene_draft):
+                if scene.id == self._scene_edit_id:
+                    selected = index
+            box.delete(0, "end")
+            for scene in self._scene_draft:
+                box.insert("end", self._scene_label(scene))
+            if self._scene_draft:
+                box.selection_set(selected)
+                box.activate(selected)
+                box.see(selected)
+        except tk.TclError:
+            self._scene_listbox = None
+        finally:
+            self._scene_guard = False
+
+    def _load_scene_form(self, scene_id):
+        scene = dmx.find_scene(self._scene_draft, scene_id)
+        if scene is None and self._scene_draft:
+            scene = self._scene_draft[0]
+        if scene is None or self._scene_levels_frame is None:
+            return
+        self._scene_edit_id = scene.id
+        self._scene_guard = True
+        try:
+            self._scene_name_var.set(self._scene_label(scene))
+            for child in list(self._scene_levels_frame.winfo_children()):
+                child.destroy()
+            self._scene_level_vars = {}
+            for channel in self._draft_channels():
+                row = tk.Frame(self._scene_levels_frame, bg=COLOR_PANEL)
+                row.pack(fill="x", pady=1)
+                tk.Label(
+                    row, text=t("lights_scene_channel", channel=channel),
+                    bg=COLOR_PANEL, font=FONT_SMALL, width=12, anchor="w",
+                ).pack(side="left")
+                variable = tk.StringVar(value=str(scene.levels.get(channel, 0)))
+                self._scene_level_vars[channel] = variable
+                tk.Entry(row, textvariable=variable, width=4, font=FONT_UI).pack(side="left", padx=4)
+                tk.Label(row, text="%", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
+            if self._scene_delete_button is not None:
+                state = "disabled" if dmx.scene_locked(scene.id) else "normal"
+                self._scene_delete_button.config(state=state)
+        except tk.TclError:
+            self._scene_levels_frame = None
+        finally:
+            self._scene_guard = False
+
+    def _on_scene_select(self, _event=None):
+        if self._scene_guard or self._scene_listbox is None or not self._scene_draft:
+            return
+        try:
+            selection = self._scene_listbox.curselection()
+        except tk.TclError:
+            return
+        if not selection:
+            return
+        index = selection[0]
+        if not 0 <= index < len(self._scene_draft):
+            return
+        scene_id = self._scene_draft[index].id
+        if scene_id == self._scene_edit_id:
+            return
+        self._flush_scene_form()
+        self._scene_edit_id = scene_id
+        self._load_scene_form(scene_id)
+
+    def _on_scene_name_changed(self, _event=None):
+        if self._scene_guard:
+            return
+        self._flush_scene_form()
+        self._refresh_scene_list_labels()
+
+    def _on_scene_channels_changed(self, _event=None):
+        if self._scene_guard or self._scene_draft is None:
+            return
+        self._flush_scene_form()
+        channels = self._draft_channels()
+        self._scene_draft = dmx.align_scenes(self._scene_draft, channels)
+        if getattr(self, "lights_channels", None) is not None:
+            self.lights_channels.set(dmx.format_channels(channels))
+        self._refresh_scene_editor()
+        if _event is not None and getattr(_event, "keysym", "") == "Return":
+            return "break"
+
+    def _add_edited_scene(self):
+        if self._scene_draft is None:
+            return
+        self._flush_scene_form()
+        channels = self._draft_channels()
+        name = self._fresh_scene_name(self._scene_draft)
+        self._scene_draft = dmx.add_scene(self._scene_draft, channels, name)
+        self._scene_edit_id = self._scene_draft[-1].id
+        self._refresh_scene_editor()
+
+    def _delete_edited_scene(self):
+        scene = dmx.find_scene(self._scene_draft, self._scene_edit_id)
+        if scene is None or dmx.scene_locked(scene.id):
+            return
+        channels = self._draft_channels()
+        self._scene_draft = dmx.delete_scene(self._scene_draft, scene.id, channels)
+        self._scene_edit_id = self._scene_draft[0].id
+        self._refresh_scene_editor()
 
     def show_lights(self):
         """Configure DMX house lights over Enttec, Open DMX, or Art-Net."""
@@ -5327,7 +5583,7 @@ class VideoPlayerGUI:
         window = tk.Toplevel(self.root)
         window.title(t("lights"))
         window.configure(bg=COLOR_BG)
-        window.minsize(640, 420)
+        window.minsize(680, 560)
         if self.icon_image is not None:
             try:
                 window.iconphoto(True, self.icon_image)
@@ -5388,7 +5644,12 @@ class VideoPlayerGUI:
         self.lights_device_combo.pack(side="left", padx=(4, 12))
         self._fill_lights_devices()
         tk.Label(cable, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(cable, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
+        self.lights_channels_entry = tk.Entry(
+            cable, textvariable=self.lights_channels, width=16, font=FONT_UI,
+        )
+        self.lights_channels_entry.pack(side="left", padx=4)
+        self.lights_channels_entry.bind("<FocusOut>", self._on_scene_channels_changed)
+        self.lights_channels_entry.bind("<Return>", self._on_scene_channels_changed)
         self.lights_device_hint = tk.Label(
             holder, text=t("lights_device_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
             wraplength=620, justify="left",
@@ -5403,23 +5664,13 @@ class VideoPlayerGUI:
             holder, textvariable=self.lights_status, bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
         ).pack(fill="x", padx=8)
         self._sync_lights_control(save=False)
-        presets = tk.Frame(holder, bg=COLOR_PANEL)
-        presets.pack(fill="x", padx=8, pady=(8, 4))
-        self.lights_bright = tk.StringVar(value=str(self.lights_presets.get("bright", 100)))
-        self.lights_medium = tk.StringVar(value=str(self.lights_presets.get("medium", 40)))
-        self.lights_dark = tk.StringVar(value=str(self.lights_presets.get("dark", 0)))
+        self._build_scene_editor(holder)
+        fade = tk.Frame(holder, bg=COLOR_PANEL)
+        fade.pack(fill="x", padx=8, pady=(8, 4))
         self.lights_transition = tk.StringVar(value=self._lights_transition_text())
-        for label_key, variable in (
-            ("light_dark", self.lights_dark),
-            ("light_medium", self.lights_medium),
-            ("light_bright", self.lights_bright),
-        ):
-            tk.Label(presets, text=t(label_key), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-            tk.Entry(presets, textvariable=variable, width=4, font=FONT_UI).pack(side="left", padx=(4, 12))
-            tk.Label(presets, text="%", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left", padx=(0, 8))
-        tk.Label(presets, text=t("lights_transition"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(presets, textvariable=self.lights_transition, width=4, font=FONT_UI).pack(side="left", padx=4)
-        tk.Label(presets, text=t("seconds_short"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
+        tk.Label(fade, text=t("lights_transition"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        tk.Entry(fade, textvariable=self.lights_transition, width=4, font=FONT_UI).pack(side="left", padx=4)
+        tk.Label(fade, text=t("seconds_short"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
         timing = tk.Frame(holder, bg=COLOR_PANEL)
         timing.pack(fill="x", padx=8, pady=(0, 4))
         self.lights_start_lead = tk.StringVar(value=dmx.ms_to_seconds_text(self.lights_start_lead_ms))
@@ -5436,20 +5687,10 @@ class VideoPlayerGUI:
         ).pack(side="left")
         tests = tk.Frame(holder, bg=COLOR_PANEL)
         tests.pack(fill="x", padx=8, pady=(0, 4))
+        self.settings_light_bar = tk.Frame(tests, bg=COLOR_PANEL)
+        self.settings_light_bar.pack(side="left")
         self.settings_light_buttons = {}
-        for key, label_key in (
-            ("dark", "light_dark"),
-            ("medium", "light_medium"),
-            ("bright", "light_bright"),
-        ):
-            button = tk.Button(
-                tests,
-                text=t(label_key),
-                font=FONT_SMALL,
-                command=lambda preset=key: self._test_lights(preset),
-            )
-            button.pack(side="left", padx=(0, 8))
-            self.settings_light_buttons[key] = button
+        self._fill_light_buttons(self.settings_light_bar, self.settings_light_buttons, self._test_lights)
         self._refresh_light_buttons()
         buttons = tk.Frame(holder, bg=COLOR_PANEL)
         buttons.pack(fill="x", padx=8, pady=(4, 8))
@@ -5458,7 +5699,7 @@ class VideoPlayerGUI:
             side="right", padx=(0, 8),
         )
         self.lights_window = window
-        self._place_on_control_monitor(window, 760, 460)
+        self._place_on_control_monitor(window, 820, 640)
 
     def _lights_mode_label(self, key):
         mode = dmx.normalize_mode(key)
@@ -5525,11 +5766,19 @@ class VideoPlayerGUI:
         window = getattr(self, "lights_window", None)
         self.lights_window = None
         self.settings_light_buttons = {}
+        self.settings_light_bar = None
         self.settings_lights_check = None
         self.lights_host_entry = None
         self.lights_universe_entry = None
         self.lights_device_combo = None
         self.lights_device_hint = None
+        self.lights_channels_entry = None
+        self._scene_draft = None
+        self._scene_listbox = None
+        self._scene_name_var = None
+        self._scene_level_vars = {}
+        self._scene_levels_frame = None
+        self._scene_delete_button = None
         if window is not None:
             try:
                 window.destroy()
@@ -5553,12 +5802,14 @@ class VideoPlayerGUI:
             self.lights_universe.set(str(self.dmx_output.universe))
             self.lights_device.set(self.dmx_output.device)
             self.lights_channels.set(dmx.format_channels(self.dmx_output.channels) or "1")
-        if getattr(self, "lights_bright", None) is not None:
-            self.lights_presets = {
-                "bright": dmx.clamp_percent(self.lights_bright.get(), 100),
-                "medium": dmx.clamp_percent(self.lights_medium.get(), 40),
-                "dark": dmx.clamp_percent(self.lights_dark.get(), 0),
-            }
+        if self._scene_draft is not None:
+            self._flush_scene_form()
+            channels = self.dmx_output.channels if getattr(self, "dmx_output", None) else [1]
+            self.lights_scenes = dmx.align_scenes(self._scene_draft, channels)
+            self._scene_draft = [scene.copy() for scene in self.lights_scenes]
+            self._refresh_scene_editor()
+            self._rebuild_light_buttons()
+        if getattr(self, "lights_transition", None) is not None:
             try:
                 seconds = float(self.lights_transition.get())
             except (TypeError, ValueError):
@@ -5570,9 +5821,6 @@ class VideoPlayerGUI:
             self.lights_end_lead_ms = dmx.seconds_to_ms(
                 self.lights_end_lead.get(), self.lights_end_lead_ms,
             )
-            self.lights_bright.set(str(self.lights_presets["bright"]))
-            self.lights_medium.set(str(self.lights_presets["medium"]))
-            self.lights_dark.set(str(self.lights_presets["dark"]))
             self.lights_transition.set(self._lights_transition_text())
             self.lights_start_lead.set(dmx.ms_to_seconds_text(self.lights_start_lead_ms))
             self.lights_end_lead.set(dmx.ms_to_seconds_text(self.lights_end_lead_ms))
@@ -5667,7 +5915,11 @@ class VideoPlayerGUI:
             "volume": clamp_volume(self.program_volume.get()),
             "lights": {
                 "enabled": bool(self.lights_control.get()),
-                "preset": dmx.normalize_preset(self.lights_current) or "",
+                "preset": dmx.scene_key(self.lights_current, self.lights_scenes) if self.lights_current else "",
+                "scenes": [
+                    {"id": scene.id, "name": self._scene_label(scene)}
+                    for scene in self.lights_scenes
+                ],
                 "fading": bool(self.lights_fading),
                 "output": self.dmx_output.mode if getattr(self, "dmx_output", None) else "",
                 "connected": dmx.connected(),
@@ -5755,8 +6007,8 @@ class VideoPlayerGUI:
             if enabled and not bool(self.lights_control.get()):
                 return self._remote_result(False, "lights_disabled")
         if preset is not None and str(preset).strip() != "":
-            key = dmx.normalize_preset(preset)
-            if not key:
+            key = dmx.scene_key(preset, self.lights_scenes)
+            if not key or dmx.find_scene(self.lights_scenes, key) is None:
                 return self._remote_result(False, "invalid_preset")
             if not bool(self.lights_control.get()):
                 return self._remote_result(False, "lights_disabled")
@@ -7347,8 +7599,8 @@ class VideoPlayerGUI:
         self.duration = entry.duration
         self.position = entry.in_point if entry.in_point is not None else 0
         self.program_state = "PLAYING"
-        preset = dmx.resolve_start_preset(entry.light_start)
-        self._apply_lights(preset, force=bool(dmx.play_preset(entry.light_start)))
+        preset = dmx.resolve_start_preset(entry.light_start, self.lights_scenes)
+        self._apply_lights(preset, force=bool(dmx.play_preset(entry.light_start, self.lights_scenes)))
         delay = self._lights_play_delay_ms()
         if delay > 0:
             self.refresh_all()
@@ -7536,7 +7788,7 @@ class VideoPlayerGUI:
         self._reset_preview_meter()
         self._skip_to_playable(inclusive=False)
         self.lights_end_sent = False
-        self._apply_lights(dmx.resolve_end_preset("", False))
+        self._apply_lights(dmx.resolve_end_preset("", False, self.lights_scenes))
         self.refresh_all()
         self.confirm_projection_zoom(prompt=not self._remote_action)
         return True
@@ -7580,7 +7832,7 @@ class VideoPlayerGUI:
         self.blank_output(show_idle=not (autoplay and has_next))
         if not self.lights_end_sent:
             self._apply_lights(
-                dmx.resolve_end_preset("", autoplay and has_next)
+                dmx.resolve_end_preset("", autoplay and has_next, self.lights_scenes)
             )
         self.lights_end_sent = False
         self.refresh_all()
@@ -8126,7 +8378,7 @@ class VideoPlayerGUI:
             entry and entry.autoplay and self._has_playable_after(self.program_index)
         )
         self.lights_end_sent = True
-        preset = dmx.resolve_end_preset("", autoplay_continues)
+        preset = dmx.resolve_end_preset("", autoplay_continues, self.lights_scenes)
         if autoplay_continues and preset == "dark":
             return
         self._apply_lights(preset)

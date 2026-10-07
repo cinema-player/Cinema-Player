@@ -91,7 +91,7 @@ class RemotePageTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn(b"text/html", (response.getheader("Content-Type") or "").encode())
             self.assertIn(b"Cinema Player", body)
-            self.assertIn(b"light-dark", body)
+            self.assertIn(b"light-scenes", body)
             self.assertIn(b"/api/lights", body)
             self.assertIn(b"fading", body)
             self.assertGreater(len(body), 100)

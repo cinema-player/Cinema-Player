@@ -43,7 +43,7 @@ STRINGS = {
             "House lights are sent as DMX512 to an Enttec DMX USB Pro, an Open DMX USB "
             "interface, or as Art-Net on the LAN. "
             "Set the interface or the node, plus the dimmer channels (1–512). "
-            "Bright, Medium, and Dark are levels in percent."
+            "A scene stores a brightness for each of those channels."
         ),
         "lights_mode": "Connection",
         "lights_mode_artnet": "Art-Net (LAN)",
@@ -73,6 +73,13 @@ STRINGS = {
         "lights_start_lead_hint": "s before fade ends",
         "lights_end_lead": "Lights up",
         "lights_end_lead_hint": "s before clip ends",
+        "lights_scenes": "Scenes",
+        "lights_scene_add": "Add scene",
+        "lights_scene_delete": "Delete",
+        "lights_scene_name": "Name",
+        "lights_scene_channel": "Channel {channel}",
+        "lights_scene_hint": "Dark and Bright stay. Every channel above belongs to every scene. The default is channel 1.",
+        "scene_new": "Scene",
         "light_play": "Dimmer",
         "light_start": "Lights at start",
         "light_end": "Lights at end",
@@ -348,7 +355,7 @@ STRINGS = {
             "Das Saallicht wird als DMX512 gesendet, über ein Enttec DMX USB Pro, "
             "ein Open DMX USB oder als Art-Net im Netzwerk. "
             "Schnittstelle bzw. Node und die Dimmerkanäle (1–512) eintragen. "
-            "Hell, Mittel und Dunkel sind Pegel in Prozent."
+            "Eine Szene speichert für jeden dieser Kanäle eine Helligkeit."
         ),
         "lights_mode": "Anschluss",
         "lights_mode_artnet": "Art-Net (LAN)",
@@ -378,6 +385,13 @@ STRINGS = {
         "lights_start_lead_hint": "s vor Ende der Überblendung",
         "lights_end_lead": "Licht an",
         "lights_end_lead_hint": "s vor Clipende",
+        "lights_scenes": "Szenen",
+        "lights_scene_add": "Szene hinzufügen",
+        "lights_scene_delete": "Löschen",
+        "lights_scene_name": "Name",
+        "lights_scene_channel": "Kanal {channel}",
+        "lights_scene_hint": "Dunkel und Hell bleiben. Jeder Kanal oben gehört zu jeder Szene. Der Standard ist Kanal 1.",
+        "scene_new": "Szene",
         "light_play": "Dimmer",
         "light_start": "Licht Start",
         "light_end": "Licht Ende",
