@@ -60,6 +60,8 @@ from cinema_player import (
     media_file_available,
     parse_bitrate_bps,
     parse_mpv_count,
+    list_removable_volumes,
+    merge_import_directories,
     normalize_media_directories,
     playlist_location_label,
     probe_audio,
@@ -1178,6 +1180,231 @@ def save_settings(settings):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(settings, handle, indent=2)
+
+
+_DRIVE_ICON_ROWS = (
+    "                        ",
+    "                        ",
+    "         ##  ##         ",
+    "         ##  ##         ",
+    "         ##  ##         ",
+    "       ##########       ",
+    "      ############      ",
+    "      ############      ",
+    "      ###  ##  ###      ",
+    "      ###  ##  ###      ",
+    "      ###  ##  ###      ",
+    "      ############      ",
+    "      ############      ",
+    "      ###      ###      ",
+    "      ###      ###      ",
+    "      ############      ",
+    "      ############      ",
+    "       ##########       ",
+    "                        ",
+    "                        ",
+    "                        ",
+    "                        ",
+    "                        ",
+    "                        ",
+)
+
+
+def removable_drive_photo(color):
+    """Small USB-stick icon. Transparent pixels let the row colour show through."""
+    import base64
+    import struct
+    import zlib
+
+    red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
+    width = len(_DRIVE_ICON_ROWS[0])
+    height = len(_DRIVE_ICON_ROWS)
+    raw = bytearray()
+    for line in _DRIVE_ICON_ROWS:
+        raw.append(0)
+        for pixel in line:
+            if pixel == "#":
+                raw.extend((red, green, blue, 255))
+            else:
+                raw.extend((0, 0, 0, 0))
+
+    def chunk(tag, data):
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b"")
+    )
+    return tk.PhotoImage(data=base64.b64encode(png))
+
+
+class ImportFolderList(tk.Frame):
+    """Chooser rows for saved folders and plugged-in drives.
+
+    Removable volumes keep a drive icon, including while the row is selected.
+    """
+
+    def __init__(self, master):
+        super().__init__(master, bg=COLOR_PANEL)
+        self.canvas = tk.Canvas(
+            self, bg=COLOR_FIELD, highlightthickness=1,
+            highlightbackground=COLOR_BORDER, highlightcolor=COLOR_PROGRAM,
+            bd=0, takefocus=True,
+        )
+        self.scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scroll.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scroll.grid(row=0, column=1, sticky="ns")
+        self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.inner = tk.Frame(self.canvas, bg=COLOR_FIELD)
+        self._window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.canvas.bind("<Configure>", self._stretch)
+        self.inner.bind("<Configure>", self._scrollregion)
+        self.canvas.bind("<Up>", lambda _event: self._move(-1))
+        self.canvas.bind("<Down>", lambda _event: self._move(1))
+        self.canvas.bind("<Return>", self._activate)
+        self.canvas.bind("<Button-4>", lambda _event: self.canvas.yview_scroll(-3, "units"))
+        self.canvas.bind("<Button-5>", lambda _event: self.canvas.yview_scroll(3, "units"))
+        self._icon_idle = None
+        self._icon_selected = None
+        self._rows = []
+        self._selected = 0
+        self.on_activate = None
+
+    def focus_set(self):
+        self.canvas.focus_set()
+
+    def set_items(self, items):
+        for child in self.inner.winfo_children():
+            child.destroy()
+        self._rows = []
+        try:
+            if self._icon_idle is None:
+                self._icon_idle = removable_drive_photo(COLOR_TEXT)
+                self._icon_selected = removable_drive_photo(COLOR_WHITE)
+        except tk.TclError:
+            self._icon_idle = None
+            self._icon_selected = None
+        icon_width = self._icon_idle.width() if self._icon_idle is not None else 24
+        for index, item in enumerate(items):
+            row = tk.Frame(self.inner, bg=COLOR_FIELD)
+            row.pack(fill="x")
+            slot = tk.Frame(row, bg=COLOR_FIELD, width=icon_width, height=icon_width)
+            slot.pack(side="left", fill="y", padx=(8, 0), pady=4)
+            slot.pack_propagate(False)
+            icon = None
+            if item.get("removable") and self._icon_idle is not None:
+                icon = tk.Label(slot, image=self._icon_idle, bg=COLOR_FIELD, bd=0)
+                icon.place(relx=0.5, rely=0.5, anchor="center")
+            label = tk.Label(
+                row, text=item.get("text") or item.get("path") or "",
+                anchor="w", justify="left", font=FONT_UI,
+                bg=COLOR_FIELD, fg=COLOR_TEXT,
+            )
+            label.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=4)
+            widgets = [row, slot, label]
+            if icon is not None:
+                widgets.append(icon)
+            for widget in widgets:
+                widget.bind("<Button-1>", lambda _event, row_index=index: self._click(row_index))
+                widget.bind("<Double-Button-1>", lambda _event, row_index=index: self._activate_index(row_index))
+                widget.bind("<Button-4>", lambda _event: self.canvas.yview_scroll(-3, "units"))
+                widget.bind("<Button-5>", lambda _event: self.canvas.yview_scroll(3, "units"))
+            self._rows.append({
+                "path": item.get("path") or "",
+                "frame": row,
+                "slot": slot,
+                "label": label,
+                "icon": icon,
+            })
+        self._selected = 0 if self._rows else -1
+        self._paint()
+        self._scrollregion()
+
+    def select(self, index):
+        if not self._rows:
+            self._selected = -1
+            return
+        self._selected = max(0, min(int(index), len(self._rows) - 1))
+        self._paint()
+        self._see(self._selected)
+
+    def selected_path(self):
+        if not 0 <= self._selected < len(self._rows):
+            return ""
+        return self._rows[self._selected]["path"]
+
+    def has_icon(self, index):
+        if not 0 <= index < len(self._rows):
+            return False
+        return self._rows[index]["icon"] is not None
+
+    def icon_label(self, index):
+        if not 0 <= index < len(self._rows):
+            return None
+        return self._rows[index]["icon"]
+
+    def _click(self, index):
+        self.select(index)
+        self.focus_set()
+
+    def _activate(self, _event=None):
+        self._activate_index(self._selected)
+        return "break"
+
+    def _activate_index(self, index):
+        self.select(index)
+        if self.on_activate is not None:
+            self.on_activate(index)
+
+    def _move(self, delta):
+        if self._rows:
+            self.select(self._selected + delta)
+        return "break"
+
+    def _paint(self):
+        for index, row in enumerate(self._rows):
+            selected = index == self._selected
+            background = COLOR_PROGRAM if selected else COLOR_FIELD
+            foreground = COLOR_WHITE if selected else COLOR_TEXT
+            row["frame"].configure(bg=background)
+            row["slot"].configure(bg=background)
+            row["label"].configure(bg=background, fg=foreground)
+            icon = row["icon"]
+            if icon is None:
+                continue
+            image = self._icon_selected if selected else self._icon_idle
+            icon.configure(bg=background, image=image)
+
+    def _see(self, index):
+        if not 0 <= index < len(self._rows):
+            return
+        self.inner.update_idletasks()
+        row = self._rows[index]["frame"]
+        y = row.winfo_y()
+        height = max(row.winfo_height(), 1)
+        total = max(self.inner.winfo_height(), 1)
+        top = self.canvas.canvasy(0)
+        bottom = top + max(self.canvas.winfo_height(), 1)
+        if y < top:
+            self.canvas.yview_moveto(y / total)
+        elif y + height > bottom:
+            self.canvas.yview_moveto(max(0, y + height - (bottom - top)) / total)
+
+    def _stretch(self, event):
+        self.canvas.itemconfigure(self._window, width=event.width)
+
+    def _scrollregion(self, _event=None):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
 
 class VideoPlayerGUI:
@@ -6065,10 +6292,50 @@ class VideoPlayerGUI:
             options["initialdir"] = directory
         return options
 
+    def _import_folder_choices(self):
+        """Saved folders that exist, plus mounted drives that are not saved yet."""
+        saved = [item for item in self.media_directories if os.path.isdir(item["path"])]
+        try:
+            volumes = list_removable_volumes()
+        except OSError:
+            volumes = []
+        return merge_import_directories(saved, volumes)
+
+    def _import_choice_text(self, row):
+        index = self._media_directory_index(row["path"])
+        if index >= 0:
+            return self._media_directory_label(self.media_directories[index])
+        name = (row.get("name") or "").strip()
+        if name:
+            return f"{name}  —  {row['path']}"
+        return row["path"]
+
+    def _import_choice_index(self, choices):
+        """Row whose folder contains the last import, or the first row."""
+        last = self.last_import_dir
+        if last and os.path.isdir(last):
+            try:
+                abs_last = os.path.abspath(last)
+            except (OSError, ValueError):
+                abs_last = last
+            best = -1
+            best_len = -1
+            for index, row in enumerate(choices):
+                folder = row["path"]
+                try:
+                    if os.path.commonpath([abs_last, folder]) == folder and len(folder) > best_len:
+                        best = index
+                        best_len = len(folder)
+                except ValueError:
+                    continue
+            if best >= 0:
+                return best
+        return 0
+
     def import_media(self):
-        directories = self._existing_media_directories()
-        if directories:
-            choice = self._choose_import_action(directories)
+        choices = self._import_folder_choices()
+        if choices:
+            choice = self._choose_import_action(choices)
             if not choice:
                 return
             mode, directory = choice
@@ -6082,8 +6349,8 @@ class VideoPlayerGUI:
             return
         self._import_files_or_directory(self._preferred_import_dir())
 
-    def _choose_import_action(self, directories):
-        """Let the operator pick a saved media folder, or another location."""
+    def _choose_import_action(self, choices):
+        """Let the operator pick a saved folder or a plugged-in drive."""
         result = {"choice": None}
         window = tk.Toplevel(self.root)
         window.title(t("media_directories_choose"))
@@ -6097,8 +6364,9 @@ class VideoPlayerGUI:
         window.transient(self.root)
 
         tk.Label(
-            window, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
-            font=FONT_SMALL, wraplength=600, justify="left",
+            window,
+            text=t("media_directories_hint") + "\n" + t("media_directories_drives"),
+            bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_SMALL, wraplength=600, justify="left",
         ).pack(fill="x", padx=10, pady=(10, 6))
 
         holder = tk.Frame(window, bg=COLOR_PANEL)
@@ -6106,21 +6374,13 @@ class VideoPlayerGUI:
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
 
-        listbox = self._styled_listbox(holder)
-        scroll = ttk.Scrollbar(holder, orient="vertical", command=listbox.yview)
-        listbox.configure(yscrollcommand=scroll.set)
-        listbox.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        for path in directories:
-            listbox.insert("end", self._media_directory_choice_label(path))
-        selected = self._media_directory_for_path(self.last_import_dir)
-        if selected in directories:
-            index = directories.index(selected)
-        else:
-            index = 0
-        listbox.selection_set(index)
-        listbox.see(index)
-        listbox.focus_set()
+        folder_list = ImportFolderList(holder)
+        folder_list.grid(row=0, column=0, sticky="nsew")
+        folder_list.set_items([
+            {"path": row["path"], "text": self._import_choice_text(row), "removable": row["removable"]}
+            for row in choices
+        ])
+        folder_list.select(self._import_choice_index(choices))
 
         copy_row = tk.Frame(window, bg=COLOR_BG)
         copy_row.pack(fill="x", padx=10, pady=(0, 8))
@@ -6176,10 +6436,7 @@ class VideoPlayerGUI:
             window.destroy()
 
         def selected_directory():
-            selection = listbox.curselection()
-            if not selection:
-                return ""
-            return directories[selection[0]]
+            return folder_list.selected_path()
 
         def import_files(_event=None):
             directory = selected_directory()
@@ -6201,9 +6458,14 @@ class VideoPlayerGUI:
             result["choice"] = None
             window.destroy()
 
-        listbox.bind("<Double-Button-1>", import_files)
-        listbox.bind("<Return>", import_files)
+        def activate_row(_index):
+            import_files()
+
+        folder_list.on_activate = activate_row
         window.bind("<Escape>", lambda _event: cancel())
+        window.bind("<Up>", lambda _event: folder_list._move(-1))
+        window.bind("<Down>", lambda _event: folder_list._move(1))
+        window.bind("<Return>", import_files)
         window.protocol("WM_DELETE_WINDOW", cancel)
 
         buttons = tk.Frame(window, bg=COLOR_BG)
@@ -6226,6 +6488,7 @@ class VideoPlayerGUI:
         ).pack(side="right")
 
         self._place_on_control_monitor(window, 680, 380)
+        folder_list.focus_set()
         window.grab_set()
         self.root.wait_window(window)
         return result["choice"]
