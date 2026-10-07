@@ -682,6 +682,23 @@ def playlist_location_label(file_path, directories):
     return match["name"] + " / " + " / ".join(parts)
 
 
+def playlist_location_short(file_path, directories):
+    """Folder name used as a playlist group heading.
+
+    A named media directory keeps that label, including subfolders after it.
+    A raw directory path keeps only its last segment. The full path stays on
+    the clip tooltip.
+    """
+    label = playlist_location_label(file_path, directories)
+    if not label:
+        return ""
+    if os.path.isabs(label):
+        trimmed = label.rstrip("\\/")
+        name = os.path.basename(trimmed)
+        return name or label
+    return label
+
+
 def clamp_volume(value, default=100):
     """Keep playlist and fader values in the 0–100 range used by mpv."""
     try:
