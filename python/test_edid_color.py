@@ -95,5 +95,101 @@ class ChooseColorFormatTests(unittest.TestCase):
         )
 
 
+class AmdColorFormatTests(unittest.TestCase):
+    def test_prefers_ycbcr444_when_the_sink_advertises_it(self):
+        info = player.EdidColorInfo(
+            formats=[
+                player.COLOR_FMT_RGB,
+                player.COLOR_FMT_444,
+                player.COLOR_FMT_422,
+            ],
+            max_tmds_mhz=225.0,
+        )
+        self.assertEqual(
+            player.choose_amd_color_format(1920, 1080, 50.0, info),
+            player.COLOR_FMT_444,
+        )
+
+    def test_rgb_only_sink_stays_rgb(self):
+        info = player.EdidColorInfo(formats=[player.COLOR_FMT_RGB], max_tmds_mhz=225.0)
+        self.assertEqual(
+            player.choose_amd_color_format(1920, 1080, 50.0, info),
+            player.COLOR_FMT_RGB,
+        )
+
+    def test_property_request_for_ycbcr_and_rgb(self):
+        ycc = player.amd_output_color(player.COLOR_FMT_444)
+        self.assertEqual(ycc["colorspace"], "BT709_YCC")
+        self.assertEqual(ycc["broadcast_rgb"], "Limited 16:235")
+        self.assertEqual(ycc["pixel_encoding"], "ycbcr444")
+        self.assertEqual(player.gdctl_color_args(player.COLOR_FMT_422), ["--rgb-range", "limited"])
+        rgb = player.amd_output_color(player.COLOR_FMT_RGB)
+        self.assertEqual(rgb["colorspace"], "Default")
+        self.assertEqual(rgb["broadcast_rgb"], "Full")
+        self.assertEqual(player.gdctl_color_args(player.COLOR_FMT_RGB), ["--rgb-range", "full"])
+
+    def test_parse_colorspace_and_pixel_encoding(self):
+        self.assertEqual(player.parse_amd_color_format("BT709_YCC"), player.COLOR_FMT_444)
+        self.assertEqual(player.parse_amd_color_format("Default"), player.COLOR_FMT_RGB)
+        self.assertEqual(
+            player.parse_amd_color_format("Default", "ycbcr420"),
+            player.COLOR_FMT_420,
+        )
+        self.assertEqual(player.parse_amd_color_format("BT2020_YCC", "ycbcr422"), player.COLOR_FMT_422)
+
+    def test_drm_info_matches_hdmi_connector(self):
+        payload = {
+            "/dev/dri/card1": {
+                "connectors": [
+                    {
+                        "type": 10,
+                        "properties": {
+                            "Colorspace": {
+                                "value": 0,
+                                "spec": [{"name": "Default", "value": 0}],
+                            },
+                        },
+                    },
+                    {
+                        "type": 11,
+                        "properties": {
+                            "Colorspace": {
+                                "value": 2,
+                                "spec": [
+                                    {"name": "Default", "value": 0},
+                                    {"name": "BT709_YCC", "value": 2},
+                                ],
+                            },
+                        },
+                    },
+                ],
+            },
+        }
+        self.assertEqual(
+            player.amd_color_format_from_drm_info(payload, "HDMI-A-1"),
+            player.COLOR_FMT_444,
+        )
+        self.assertEqual(
+            player.amd_color_format_from_drm_info(payload, "DP-1"),
+            player.COLOR_FMT_RGB,
+        )
+
+    def test_xrandr_property_names_for_one_output(self):
+        text = """\
+DP-1 connected 1920x1200+0+0
+\tColorspace: Default
+\t\tsupported: Default, BT709_YCC
+HDMI-A-1 connected 1920x1080+1920+0
+\tBroadcast RGB: Automatic
+\t\tsupported: Automatic, Full, Limited 16:235
+\tColorspace: Default
+\t\tsupported: Default, BT709_YCC
+"""
+        self.assertEqual(
+            player.xrandr_output_property_names(text, "HDMI-1"),
+            ["Broadcast RGB", "Colorspace"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

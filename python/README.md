@@ -1,6 +1,6 @@
 # Linux MPV Video Player
 
-Two-instance mpv video player for X11, GNOME Wayland, or KWin/Plasma Wayland with NVIDIA.
+Two-instance mpv video player for X11, GNOME Wayland, or KWin/Plasma Wayland with AMD (amdgpu, VAAPI).
 
 ## Features
 
