@@ -1210,11 +1210,17 @@ PLAYLIST_META_COLUMNS = (
     ("fps", "col_fps", 13),
     ("aspect", "col_format", 12),
     ("par", "col_par", 10),
-    ("colorspace", "col_color", 16),
+    ("colorspace", "col_color", 25),
     ("volume", "col_volume", 5),
     ("loudness", "col_lufs", 9),
     ("notes", "col_notes", 16),
 )
+
+
+def source_color_label(entry):
+    """Source status only; do not assume mpv output conversion."""
+    status = getattr(entry, "hdr_status", "Unknown")
+    return {"HDR": "HDR (output unverified)", "SDR": "Native SDR"}.get(status, "HDR/SDR unknown")
 
 
 def playlist_warning_keys(entry):
@@ -3855,7 +3861,7 @@ class VideoPlayerGUI:
             bg=bg, fg=COLOR_WARNING if entry.par_warning else fg,
         )
         widgets["colorspace"].config(
-            text=format_colorspace_label(entry),
+            text=format_colorspace_label(entry) + " · " + source_color_label(entry),
             bg=bg, fg=COLOR_WARNING if entry.colorspace_warning else fg,
         )
         notes = playlist_note_text(entry, self.projection_zoom.get())
@@ -4012,7 +4018,7 @@ class VideoPlayerGUI:
                     height=entry.height,
                     aspect=entry.aspect,
                     pixel_aspect=entry.pixel_aspect,
-                    colorspace=format_colorspace_label(entry),
+                    colorspace=format_colorspace_label(entry) + " · " + source_color_label(entry),
                 )
             )
             self.autoplay_var.set(entry.autoplay)
@@ -4031,7 +4037,7 @@ class VideoPlayerGUI:
                 audio=format_codec_rate(entry.audio_codec, entry.audio_bitrate),
                 aspect=entry.aspect,
                 pixel_aspect=entry.pixel_aspect,
-                colorspace=format_colorspace_label(entry),
+                colorspace=format_colorspace_label(entry) + " · " + source_color_label(entry),
             )
         )
         self.autoplay_var.set(entry.autoplay)
@@ -4693,7 +4699,7 @@ class VideoPlayerGUI:
                 filename=entry.filename,
                 aspect=entry.aspect,
                 pixel_aspect=entry.pixel_aspect,
-                colorspace=format_colorspace_label(entry),
+                colorspace=format_colorspace_label(entry) + " · " + source_color_label(entry),
             ),
         )
         if ok:
