@@ -2964,6 +2964,16 @@ class VideoPlayerGUI:
         menu.add_cascade(label=t("playlist"), menu=playlist)
         menu.add_separator()
 
+        menu.add_command(
+            label=t("remote_control"),
+            command=self.show_remote_control,
+        )
+        menu.add_command(
+            label=t("lights"),
+            command=self.show_lights,
+        )
+        menu.add_separator()
+
         system = self._menu(menu)
         system.add_command(
             label=t("theme_to_light") if self.theme == "dark" else t("theme_to_dark"),
@@ -2988,15 +2998,6 @@ class VideoPlayerGUI:
                 foreground=self._menu_check_fg() if delta == current else COLOR_TEXT,
             )
         system.add_cascade(label=t("text_size"), menu=sizes)
-        system.add_separator()
-        system.add_command(
-            label=t("remote_control"),
-            command=self.show_remote_control,
-        )
-        system.add_command(
-            label=t("lights"),
-            command=self.show_lights,
-        )
         system.add_separator()
         outputs = self._menu(system)
         self._fill_beamer_output_menu(outputs)
