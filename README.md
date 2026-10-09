@@ -61,7 +61,7 @@ If only one display is connected at startup, a warning asks the projectionist to
 
 ## Playlist
 
-The playlist is the central user interface of the player. It displays a scrollable list of the files in the order in which they will be played. Videos, images, or entire directories can be added to the list. Folders saved under **Media directories** are offered when importing. If **Copy files** is enabled there, imports are copied into a chosen folder and the playlist links those copies. A popup shows copy progress. The position of an entry in the list can be changed by dragging it.
+The playlist is the central user interface of the player. It displays a scrollable list of the files in the order in which they will be played. Videos, images, or entire directories can be added to the list. Folders saved under **Media directories** are offered when importing. Mounted removable drives appear in that same list automatically and are marked with a drive icon; they are not stored as media directories. If **Copy files** is enabled there, imports are copied into a chosen folder and the playlist links those copies. A popup shows copy progress. The position of an entry in the list can be changed by dragging it.
 
 Missing files stay in the list and are marked. They are skipped during the program. An entry can be relinked from its context menu.
 

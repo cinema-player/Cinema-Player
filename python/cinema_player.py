@@ -762,6 +762,228 @@ def normalize_media_directories(items):
     return result
 
 
+_PSEUDO_FILESYSTEMS = frozenset({
+    "autofs", "binfmt_misc", "bpf", "cgroup", "cgroup2", "configfs", "debugfs",
+    "devpts", "devtmpfs", "efivarfs", "fusectl", "hugetlbfs", "mqueue", "nsfs",
+    "overlay", "proc", "pstore", "ramfs", "rpc_pipefs", "securityfs", "squashfs",
+    "sysfs", "tmpfs", "tracefs",
+})
+
+_SYSTEM_MOUNTS = frozenset({
+    "/", "/boot", "/boot/efi", "/efi", "/home", "/mnt", "/opt", "/root",
+    "/snap", "/tmp", "/usr", "/var",
+})
+
+_SKIP_MOUNT_ROOTS = ("/boot", "/dev", "/proc", "/run/credentials", "/run/lock",
+                     "/run/systemd", "/run/user", "/snap", "/sys")
+
+_GENERIC_VOLUME_NAMES = frozenset({
+    "cdrom", "disk", "dvd", "media", "mnt", "run", "usb", "volume",
+})
+
+_SKIP_DEVICE_PREFIXES = ("/dev/dm-", "/dev/fd", "/dev/loop", "/dev/mapper/",
+                         "/dev/nbd", "/dev/ram", "/dev/zram")
+
+
+def unescape_mount_field(field):
+    """Decode the octal escapes used in ``/proc/mounts``."""
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        field or "",
+    )
+
+
+def parse_mount_table(text):
+    """Return ``(source, mountpoint, fstype)`` rows from a mount table."""
+    rows = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        source, target, fstype = (unescape_mount_field(part) for part in parts[:3])
+        rows.append((source, target, fstype))
+    return rows
+
+
+def block_disk_name(device):
+    """Base disk for a partition node: ``sda1`` → ``sda``, ``nvme0n1p1`` → ``nvme0n1``."""
+    name = os.path.basename(device or "")
+    if re.fullmatch(r"nvme\d+n\d+p\d+", name):
+        return re.sub(r"p\d+$", "", name)
+    if re.fullmatch(r"mmcblk\d+p\d+", name):
+        return re.sub(r"p\d+$", "", name)
+    if re.fullmatch(r"(?:sd|vd|hd|xvd)[a-z]+\d+", name):
+        return re.sub(r"\d+$", "", name)
+    return name
+
+
+def _path_is_within(path, root):
+    try:
+        return os.path.commonpath([path, root]) == root and path != root
+    except ValueError:
+        return False
+
+
+def _mount_is_system(path):
+    if path in _SYSTEM_MOUNTS:
+        return True
+    return any(_path_is_within(path, root) for root in _SKIP_MOUNT_ROOTS)
+
+
+def _mount_is_udisks(path):
+    """Volumes udisks places under ``/media`` or ``/run/media``."""
+    return _path_is_within(path, "/media") or _path_is_within(path, "/run/media")
+
+
+def _disk_transport(disk, sys_block):
+    """Whether ``disk`` is removable media or attached over USB.
+
+    ``sys_block`` may be a mapping ``{disk: {"removable": bool, "usb": bool}}``
+    so tests can describe a machine without reading sysfs.
+    """
+    if isinstance(sys_block, dict):
+        info = sys_block.get(disk) or {}
+        return bool(info.get("removable")), bool(info.get("usb"))
+    removable = False
+    flag_path = os.path.join("/sys/block", disk, "removable")
+    try:
+        with open(flag_path, encoding="utf-8") as handle:
+            removable = handle.read().strip() == "1"
+    except OSError:
+        pass
+    usb = False
+    device = os.path.join("/sys/block", disk, "device")
+    try:
+        parts = os.path.realpath(device).split("/")
+    except OSError:
+        parts = []
+    for part in parts:
+        if part == "usb" or (part.startswith("usb") and part[3:].isdigit()):
+            usb = True
+            break
+    return removable, usb
+
+
+def _label_from_by_label(device, labels):
+    """Volume label for a device node.
+
+    ``labels`` is either ``None`` (read ``/dev/disk/by-label``) or a mapping
+    from device basename to label.
+    """
+    dev_name = os.path.basename(device)
+    if isinstance(labels, dict):
+        return labels.get(dev_name) or labels.get(device) or ""
+    directory = "/dev/disk/by-label"
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return ""
+    for name in names:
+        link = os.path.join(directory, name)
+        try:
+            target = os.path.basename(os.path.realpath(link))
+        except OSError:
+            continue
+        if target == dev_name:
+            return name.replace("\\x20", " ")
+    return ""
+
+
+def _volume_display_name(device, mountpoint, label):
+    if label:
+        return label
+    base = os.path.basename(mountpoint.rstrip("/"))
+    if base and base not in _GENERIC_VOLUME_NAMES:
+        return base
+    return os.path.basename(device)
+
+
+def list_removable_volumes(mounts_text=None, *, sys_block=None, isdir=None, labels=None):
+    """Mounted removable disks, USB drives, and udisks volumes.
+
+    Each item is ``{"path", "name"}``. System mounts such as ``/``, ``/home``
+    and ``/boot`` are left out. Results are not saved as media directories.
+    """
+    if mounts_text is None:
+        try:
+            with open("/proc/mounts", encoding="utf-8", errors="replace") as handle:
+                mounts_text = handle.read()
+        except OSError:
+            return []
+    if isdir is None:
+        isdir = os.path.isdir
+    volumes = []
+    seen = set()
+    for source, target, fstype in parse_mount_table(mounts_text):
+        if fstype in _PSEUDO_FILESYSTEMS or fstype.startswith("fuse."):
+            continue
+        if not source.startswith("/dev/") or source.startswith(_SKIP_DEVICE_PREFIXES):
+            continue
+        try:
+            target = os.path.abspath(target)
+        except (OSError, ValueError):
+            continue
+        if _mount_is_system(target):
+            continue
+        disk = block_disk_name(source)
+        removable, usb = _disk_transport(disk, sys_block)
+        if not (removable or usb or _mount_is_udisks(target)):
+            continue
+        try:
+            mounted = bool(isdir(target))
+        except OSError:
+            mounted = False
+        if not mounted or target in seen:
+            continue
+        seen.add(target)
+        label = _label_from_by_label(source, labels)
+        volumes.append({
+            "path": target,
+            "name": _volume_display_name(source, target, label),
+        })
+    volumes.sort(key=lambda item: (item["name"].casefold(), item["path"]))
+    return volumes
+
+
+def merge_import_directories(saved, volumes):
+    """Saved media folders, plus mounted drives that are not already saved.
+
+    A drive that is already a media directory stays a single row and is marked
+    removable. Saved order is kept; extra drives follow, sorted by name.
+    """
+    removable_names = {}
+    for volume in volumes or []:
+        if not isinstance(volume, dict):
+            continue
+        path = volume.get("path") or ""
+        if not isinstance(path, str) or not path.strip():
+            continue
+        try:
+            path = os.path.abspath(path)
+        except (OSError, ValueError):
+            continue
+        name = volume.get("name") or ""
+        removable_names[path] = name if isinstance(name, str) else ""
+    rows = []
+    seen = set()
+    for item in normalize_media_directories(saved):
+        path = item["path"]
+        seen.add(path)
+        rows.append({
+            "path": path,
+            "name": item["name"],
+            "removable": path in removable_names,
+        })
+    extras = [
+        {"path": path, "name": name or "", "removable": True}
+        for path, name in removable_names.items()
+        if path not in seen
+    ]
+    extras.sort(key=lambda row: ((row["name"] or os.path.basename(row["path"])).casefold(), row["path"]))
+    return rows + extras
+
+
 def playlist_location_label(file_path, directories):
     """Folder line for a playlist row.
 
