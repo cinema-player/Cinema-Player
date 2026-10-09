@@ -8,4 +8,5 @@ Icon=cinema-player
 Path=
 Terminal=false
 StartupNotify=true
+StartupWMClass=Cinema-player
 Categories=AudioVideo;Player;Video;

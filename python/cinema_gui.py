@@ -155,6 +155,14 @@ COLOR_PREVIEW = "#c9a227"
 COLOR_CALIBRATION = "#500070"
 COLOR_WARNING = "#d32f2f"
 COLOR_WHITE = "#ffffff"
+# Same warm light-control card as the phone remote.
+LIGHT_PANEL = "#241c14"
+LIGHT_BORDER = "#6a4a22"
+LIGHT_CAPTION = "#e0b060"
+LIGHT_BUTTON = "#3a2a18"
+LIGHT_BUTTON_TEXT = "#f3e2c4"
+LIGHT_ACTIVE = "#c9a227"
+LIGHT_ACTIVE_TEXT = "#1a1408"
 
 PALETTES = {
     "light": {
@@ -1205,6 +1213,108 @@ def save_settings(settings):
         json.dump(settings, handle, indent=2)
 
 
+# Playlist metadata columns. Widths are in characters so the header and the
+# rows share one alignment.
+PLAYLIST_META_COLUMNS = (
+    ("duration", "col_duration", 8),
+    ("fps", "col_fps", 13),
+    ("aspect", "col_format", 12),
+    ("par", "col_par", 10),
+    ("colorspace", "col_color", 16),
+    ("volume", "col_volume", 5),
+    ("loudness", "col_lufs", 9),
+    ("notes", "col_notes", 16),
+)
+
+
+def playlist_warning_keys(entry):
+    """Which technical values on a row need a short warning word."""
+    keys = []
+    if (
+        not getattr(entry, "is_image", False)
+        and getattr(entry, "fps", 0)
+        and not getattr(entry, "refresh_ok", True)
+    ):
+        keys.append("rate")
+    if getattr(entry, "aspect_warning", False):
+        keys.append("zoom")
+    if getattr(entry, "par_warning", False):
+        keys.append("par")
+    if getattr(entry, "colorspace_warning", False):
+        keys.append("color")
+    return keys
+
+
+def playlist_note_text(entry, projection_zoom):
+    """Badges and the warnings that do not fit beside a value."""
+    notes = []
+    if getattr(entry, "missing", False):
+        notes.append(t("missing_badge"))
+    if getattr(entry, "colorspace_warning", False):
+        notes.append(t("warn_color"))
+    specific = (
+        getattr(entry, "aspect_warning", False)
+        or getattr(entry, "par_warning", False)
+        or getattr(entry, "colorspace_warning", False)
+    )
+    if clip_needs_settings_warning(entry, projection_zoom) and not specific:
+        notes.append(t("setting_badge"))
+    if not getattr(entry, "missing", False):
+        if getattr(entry, "autoplay", False):
+            notes.append(t("auto_badge"))
+        if getattr(entry, "loop", False) and not getattr(entry, "is_image", False):
+            notes.append(t("loop_badge"))
+        play = dmx.play_preset(getattr(entry, "light_start", ""))
+        if play == "medium":
+            notes.append(t("light_medium_badge"))
+        elif play == "bright":
+            notes.append(t("light_bright_badge"))
+    return " ".join(notes)
+
+
+def warned_meta_text(value, warning, word):
+    """Keep a warning word in the same cell as the value it belongs to."""
+    text = value or "--"
+    if warning and word:
+        return f"{text} {word}"
+    return text
+
+
+def next_program_label(playlist, program_index, program_state, projection_zoom):
+    """Status-line hint for the clip that follows the program pointer."""
+    if program_state not in ("PROGRAM", "PLAYING") or not playlist:
+        return ""
+    try:
+        index = int(program_index) + 1
+    except (TypeError, ValueError):
+        return ""
+    if index < 0 or index >= len(playlist):
+        return ""
+    entry = playlist[index]
+    name = getattr(entry, "filename", "") or os.path.basename(getattr(entry, "path", "") or "")
+    if not name:
+        return ""
+    text = t("next_clip", name=name)
+    extras = []
+    if "rate" in playlist_warning_keys(entry):
+        extras.append(t("warn_rate"))
+    if getattr(entry, "aspect_warning", False) and getattr(entry, "aspect", "") not in ("", "--", None):
+        extras.append(t("next_zoom", aspect=entry.aspect))
+    if getattr(entry, "par_warning", False):
+        extras.append(t("warn_par"))
+    if getattr(entry, "colorspace_warning", False):
+        extras.append(t("warn_color"))
+    if clip_needs_settings_warning(entry, projection_zoom) and not (
+        getattr(entry, "aspect_warning", False)
+        or getattr(entry, "par_warning", False)
+        or getattr(entry, "colorspace_warning", False)
+    ):
+        extras.append(t("setting_badge"))
+    if extras:
+        text = f"{text} · {' · '.join(extras)}"
+    return text
+
+
 _DRIVE_ICON_ROWS = (
     "                        ",
     "                        ",
@@ -1783,6 +1893,27 @@ class VideoPlayerGUI:
             background=[("active", COLOR_BUTTON_ACTIVE)],
         )
         style.configure(
+            "BoothLight.TCombobox",
+            fieldbackground=LIGHT_BUTTON,
+            background=LIGHT_BUTTON,
+            foreground=LIGHT_BUTTON_TEXT,
+            arrowcolor=LIGHT_CAPTION,
+            bordercolor=LIGHT_BORDER,
+            lightcolor=LIGHT_BORDER,
+            darkcolor=LIGHT_BORDER,
+            selectbackground=LIGHT_BUTTON,
+            selectforeground=LIGHT_BUTTON_TEXT,
+        )
+        style.map(
+            "BoothLight.TCombobox",
+            fieldbackground=[("readonly", LIGHT_BUTTON), ("disabled", LIGHT_PANEL)],
+            foreground=[("readonly", LIGHT_BUTTON_TEXT), ("disabled", "#8a7a66")],
+            background=[("readonly", LIGHT_BUTTON), ("active", LIGHT_ACTIVE)],
+            arrowcolor=[("disabled", "#8a7a66")],
+            selectbackground=[("readonly", LIGHT_BUTTON)],
+            selectforeground=[("readonly", LIGHT_BUTTON_TEXT)],
+        )
+        style.configure(
             "Vertical.TScrollbar", background=COLOR_BUTTON, troughcolor=COLOR_BG,
             arrowcolor=COLOR_TEXT, bordercolor=COLOR_BORDER, lightcolor=COLOR_BUTTON,
             darkcolor=COLOR_BUTTON,
@@ -2077,27 +2208,22 @@ class VideoPlayerGUI:
         strip.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         self.show_strip = strip
 
-        self.program_light_bar = tk.Frame(strip, bg=COLOR_BG)
-        self.program_light_bar.pack(side="left")
+        panel = tk.Frame(
+            strip, bg=LIGHT_PANEL, padx=10, pady=4,
+            highlightthickness=1, highlightbackground=LIGHT_BORDER, highlightcolor=LIGHT_BORDER,
+        )
+        panel.pack(side="left")
+        self.program_light_bar = panel
+        scenes = tk.Frame(panel, bg=LIGHT_PANEL)
+        scenes.pack(anchor="w")
+        self.program_light_scenes = scenes
         self.program_light_buttons = {}
         self._fill_light_buttons(
-            self.program_light_bar, self.program_light_buttons, self._on_light_preset,
+            scenes, self.program_light_buttons, self._on_light_preset, face="booth",
         )
-
-        dimmer = tk.Frame(strip, bg=COLOR_BG)
-        dimmer.pack(side="left", padx=(16, 0))
-        tk.Label(
-            dimmer, text=t("light_play"), bg=COLOR_BG, fg=COLOR_TEXT, font=FONT_UI,
-        ).pack(side="left", padx=(0, 4))
-        self.light_start_combo = ttk.Combobox(
-            dimmer, textvariable=self.light_start_var, width=10, state="readonly",
-        )
-        self.light_start_combo.pack(side="left")
-        self.light_start_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
-        self._fill_light_combos()
-        self._set_play_light_combo("")
 
         status = tk.Frame(strip, bg=COLOR_BG)
+        self.show_status = status
         status.pack(side="left", padx=(16, 0))
         self.idle_status = tk.Label(status, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT)
         self.settings_warning_status = tk.Label(
@@ -2105,6 +2231,7 @@ class VideoPlayerGUI:
         )
         self._refresh_light_buttons()
         self._refresh_idle_status()
+        self._apply_program_light_block()
 
     def _build_program_block(self, parent):
         group = self._group_frame(parent)
@@ -2787,13 +2914,6 @@ class VideoPlayerGUI:
         menu.add_separator()
 
         system = self._menu(menu)
-        outputs = self._menu(system)
-        self._fill_beamer_output_menu(outputs)
-        system.add_cascade(label=t("beamer_output"), menu=outputs)
-        system.add_command(
-            label=t("patch"),
-            command=self.show_patch,
-        )
         system.add_command(
             label=t("theme_to_light") if self.theme == "dark" else t("theme_to_dark"),
             command=self.toggle_theme,
@@ -2817,6 +2937,7 @@ class VideoPlayerGUI:
                 foreground=self._menu_check_fg() if delta == current else COLOR_TEXT,
             )
         system.add_cascade(label=t("text_size"), menu=sizes)
+        system.add_separator()
         system.add_command(
             label=t("remote_control"),
             command=self.show_remote_control,
@@ -2824,6 +2945,14 @@ class VideoPlayerGUI:
         system.add_command(
             label=t("lights"),
             command=self.show_lights,
+        )
+        system.add_separator()
+        outputs = self._menu(system)
+        self._fill_beamer_output_menu(outputs)
+        system.add_cascade(label=t("beamer_output"), menu=outputs)
+        system.add_command(
+            label=t("patch"),
+            command=self.show_patch,
         )
         menu.add_cascade(label=t("system_settings"), menu=system)
 
@@ -3670,6 +3799,7 @@ class VideoPlayerGUI:
         self.subtitle_combo = ttk.Combobox(tracks, textvariable=self.subtitle_var, width=12, state="readonly")
         self.subtitle_combo.pack(side="left")
         self.subtitle_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
+        self._build_light_dimmer(tracks)
 
     def state_color(self):
         if self.calibration_mode:
@@ -5607,7 +5737,7 @@ class VideoPlayerGUI:
             number += 1
         return f"{base} {number}"
 
-    def _fill_light_buttons(self, parent, group, command):
+    def _fill_light_buttons(self, parent, group, command, face="plain"):
         if parent is None:
             return
         try:
@@ -5619,20 +5749,33 @@ class VideoPlayerGUI:
             return
         group.clear()
         for index, (scene, label) in enumerate(self._scene_choices()):
-            button = tk.Button(
-                parent,
-                text=label,
-                font=FONT_SMALL,
-                command=lambda scene_id=scene.id: command(scene_id),
-            )
+            options = {
+                "text": label,
+                "font": FONT_SMALL,
+                "command": lambda scene_id=scene.id: command(scene_id),
+            }
+            if face == "booth":
+                options.update(
+                    font=FONT_UI_BOLD,
+                    relief="flat",
+                    overrelief="flat",
+                    bd=0,
+                    padx=14,
+                    pady=8,
+                    highlightthickness=2,
+                    cursor="hand2",
+                )
+            button = tk.Button(parent, **options)
+            button._light_face = face
             button.pack(side="left", padx=(0 if index == 0 else 8, 0))
             group[scene.id] = button
 
     def _rebuild_light_buttons(self):
         self._fill_light_buttons(
-            getattr(self, "program_light_bar", None),
+            getattr(self, "program_light_scenes", None),
             self.program_light_buttons,
             self._on_light_preset,
+            face="booth",
         )
         self._fill_light_buttons(
             getattr(self, "settings_light_bar", None),
@@ -5644,6 +5787,68 @@ class VideoPlayerGUI:
             entry = self.selected_entry() if self.playlist else None
             self._set_play_light_combo(entry.light_start if entry else "")
         self._refresh_light_buttons()
+
+    def _configure_light_combo_style(self, widget):
+        style = ttk.Style(widget)
+        style.configure(
+            "BoothLight.TCombobox",
+            fieldbackground=LIGHT_BUTTON,
+            background=LIGHT_BUTTON,
+            foreground=LIGHT_BUTTON_TEXT,
+            arrowcolor=LIGHT_CAPTION,
+            bordercolor=LIGHT_BORDER,
+            lightcolor=LIGHT_BORDER,
+            darkcolor=LIGHT_BORDER,
+            selectbackground=LIGHT_BUTTON,
+            selectforeground=LIGHT_BUTTON_TEXT,
+        )
+        style.map(
+            "BoothLight.TCombobox",
+            fieldbackground=[("readonly", LIGHT_BUTTON), ("disabled", LIGHT_PANEL)],
+            foreground=[("readonly", LIGHT_BUTTON_TEXT), ("disabled", "#8a7a66")],
+            background=[("readonly", LIGHT_BUTTON), ("active", LIGHT_ACTIVE)],
+            arrowcolor=[("disabled", "#8a7a66")],
+            selectbackground=[("readonly", LIGHT_BUTTON)],
+            selectforeground=[("readonly", LIGHT_BUTTON_TEXT)],
+        )
+
+    def _paint_light_combo_popup(self, combo):
+        """Colour the open list the same warm brown and gold as the scene buttons."""
+        try:
+            popdown = combo.tk.call("ttk::combobox::PopdownWindow", str(combo))
+            combo.tk.call(
+                f"{popdown}.f.l", "configure",
+                "-background", LIGHT_PANEL,
+                "-foreground", LIGHT_BUTTON_TEXT,
+                "-selectbackground", LIGHT_ACTIVE,
+                "-selectforeground", LIGHT_ACTIVE_TEXT,
+                "-relief", "flat",
+                "-highlightthickness", 0,
+                "-borderwidth", 0,
+            )
+        except tk.TclError:
+            pass
+
+    def _build_light_dimmer(self, parent):
+        """Clip dimmer beside the subtitle track, in the light-control colours."""
+        dimmer = tk.Frame(parent, bg=parent.cget("bg"))
+        self.program_light_dimmer = dimmer
+        tk.Label(
+            dimmer, text=t("light_play"), bg=parent.cget("bg"), fg=LIGHT_CAPTION, font=FONT_SMALL,
+        ).pack(side="left", padx=(0, 4))
+        self._configure_light_combo_style(parent)
+        self.light_start_combo = ttk.Combobox(
+            dimmer, textvariable=self.light_start_var, width=10, state="readonly",
+            style="BoothLight.TCombobox",
+        )
+        self.light_start_combo.pack(side="left")
+        self.light_start_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
+        self._paint_light_combo_popup(self.light_start_combo)
+        self._fill_light_combos()
+        self._set_play_light_combo("")
+        visible = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
+        if visible:
+            dimmer.pack(side="left", padx=(12, 0))
 
     def _fill_light_combos(self):
         start = getattr(self, "light_start_combo", None)
@@ -5735,6 +5940,7 @@ class VideoPlayerGUI:
             self._save_lights_settings()
         self._refresh_light_buttons()
         self._refresh_lights_indicator()
+        self._apply_program_light_block()
 
     def _on_lights_control(self):
         if bool(self.lights_control.get()) and not self._dmx_ready():
@@ -5744,6 +5950,56 @@ class VideoPlayerGUI:
         self._save_lights_settings()
         self._refresh_light_buttons()
         self._refresh_lights_indicator()
+        self._apply_program_light_block()
+
+    def _apply_program_light_block(self):
+        """Hide the program light buttons and dimmer while light control is off."""
+        visible = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
+        status = getattr(self, "show_status", None)
+        bar = getattr(self, "program_light_bar", None)
+        dimmer = getattr(self, "program_light_dimmer", None)
+        try:
+            if bar is not None:
+                if visible and not bar.winfo_manager():
+                    options = {"side": "left"}
+                    if status is not None:
+                        options["before"] = status
+                    bar.pack(**options)
+                elif not visible:
+                    bar.pack_forget()
+            if dimmer is not None:
+                if visible and not dimmer.winfo_manager():
+                    dimmer.pack(side="left", padx=(12, 0))
+                elif not visible:
+                    dimmer.pack_forget()
+        except tk.TclError:
+            pass
+        self._sync_show_strip()
+
+    def _sync_show_strip(self):
+        """Drop the show strip when neither lights nor a status note need it."""
+        strip = getattr(self, "show_strip", None)
+        if strip is None:
+            return
+        lights = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
+
+        def shown(widget):
+            try:
+                return widget is not None and bool(widget.winfo_manager())
+            except tk.TclError:
+                return False
+
+        visible = lights or shown(getattr(self, "idle_status", None)) or shown(
+            getattr(self, "settings_warning_status", None)
+        )
+        try:
+            if visible:
+                if not strip.winfo_manager():
+                    strip.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+            else:
+                strip.grid_remove()
+        except tk.TclError:
+            pass
 
     def _cancel_light_after(self, name):
         handle = getattr(self, name, None)
@@ -5799,12 +6055,22 @@ class VideoPlayerGUI:
         for key, button in self._iter_light_buttons():
             active = enabled and key == current
             lit = active and (not fading or blink_on)
-            bg = ACCENT if lit else COLOR_BUTTON
-            fg = COLOR_WHITE if lit else COLOR_TEXT
+            booth = getattr(button, "_light_face", "") == "booth"
+            if booth:
+                bg = LIGHT_ACTIVE if lit else LIGHT_BUTTON
+                fg = LIGHT_ACTIVE_TEXT if lit else LIGHT_BUTTON_TEXT
+                ring = COLOR_WHITE if active else bg
+                disabled = "#8a7a66"
+            else:
+                bg = ACCENT if lit else COLOR_BUTTON
+                fg = COLOR_WHITE if lit else COLOR_TEXT
+                ring = bg
+                disabled = COLOR_MUTED
             style = (
                 "normal" if enabled else "disabled",
                 bg,
                 fg,
+                ring,
             )
             if getattr(button, "_light_style", None) == style:
                 continue
@@ -5816,7 +6082,9 @@ class VideoPlayerGUI:
                     fg=fg,
                     activebackground=bg,
                     activeforeground=fg,
-                    disabledforeground=COLOR_MUTED,
+                    disabledforeground=disabled,
+                    highlightbackground=ring,
+                    highlightcolor=COLOR_WHITE,
                 )
             except tk.TclError:
                 button._light_style = None
@@ -7639,11 +7907,13 @@ class VideoPlayerGUI:
                 label.pack(side="left", padx=(8, 0) if idle_on else (0, 0))
             else:
                 label.pack_configure(padx=(8, 0) if idle_on else (0, 0))
+            self._sync_show_strip()
             return
         try:
             label.pack_forget()
         except tk.TclError:
             pass
+        self._sync_show_strip()
 
     def _on_use_default_idle_media(self):
         enabled = bool(self.use_default_idle_media.get())

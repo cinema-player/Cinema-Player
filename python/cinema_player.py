@@ -13,8 +13,10 @@ import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
 
 import tkinter as tk
 import array
+import fcntl
 import subprocess
 import socket
+import sys
 import json
 import os
 import re
@@ -4314,9 +4316,129 @@ class MPVController:
 
 
 
+APP_ID = "cinema-player"
+# Tk capitalises the class. GNOME matches this against StartupWMClass.
+APP_WINDOW_CLASS = "Cinema-player"
+
+
+def instance_runtime_dir(runtime=None):
+    """Per-session directory for the single-instance socket."""
+    if runtime:
+        os.makedirs(runtime, mode=0o700, exist_ok=True)
+        return runtime
+    candidate = os.environ.get("XDG_RUNTIME_DIR") or ""
+    if candidate and os.path.isdir(candidate):
+        return candidate
+    fallback = os.path.join(tempfile.gettempdir(), f"cinema-player-{os.getuid()}")
+    os.makedirs(fallback, mode=0o700, exist_ok=True)
+    return fallback
+
+
+def instance_socket_path(runtime=None):
+    return os.path.join(instance_runtime_dir(runtime), "cinema-player.sock")
+
+
+_instance_lock_handle = None
+_instance_activate = None
+
+
+def set_instance_activate(callback):
+    """Register the Tk callback used when a later launch asks to come forward."""
+    global _instance_activate
+    _instance_activate = callback
+
+
+def signal_running_instance(runtime=None, attempts=20):
+    """Ask the running player to come forward. True when it answered."""
+    path = instance_socket_path(runtime)
+    for _attempt in range(attempts):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(0.2)
+        try:
+            client.connect(path)
+            client.sendall(b"raise\n")
+            return True
+        except OSError:
+            time.sleep(0.05)
+        finally:
+            client.close()
+    return False
+
+
+def claim_single_instance(runtime=None):
+    """Hold the session lock and listen for later launches.
+
+    Returns False when another player already holds the lock. That call also
+    asks the running player to raise its window.
+    """
+    global _instance_lock_handle
+    directory = instance_runtime_dir(runtime)
+    lock_path = os.path.join(directory, "cinema-player.lock")
+    handle = open(lock_path, "a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        signal_running_instance(directory)
+        return False
+    _instance_lock_handle = handle
+    path = instance_socket_path(directory)
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    os.chmod(path, 0o600)
+    server.listen(2)
+
+    def serve():
+        while True:
+            try:
+                connection, _address = server.accept()
+            except OSError:
+                return
+            try:
+                connection.recv(16)
+            except OSError:
+                pass
+            finally:
+                try:
+                    connection.close()
+                except OSError:
+                    pass
+            callback = _instance_activate
+            if callback is None:
+                continue
+            try:
+                callback()
+            except Exception:
+                pass
+
+    threading.Thread(target=serve, name="cinema-player-instance", daemon=True).start()
+    return True
+
+
+def raise_main_window(root):
+    """Bring the existing player to the front."""
+    try:
+        if str(root.state()) == "iconic":
+            root.deiconify()
+        root.lift()
+        root.focus_force()
+        root.attributes("-topmost", True)
+        root.after(300, lambda: root.attributes("-topmost", False))
+    except tk.TclError:
+        pass
+
+
 def main():
     import cinema_gui
-    root = tk.Tk()
+    if not claim_single_instance():
+        print("Cinema Player läuft bereits.", file=sys.stderr)
+        return
+    root = tk.Tk(className=APP_ID)
+    set_instance_activate(lambda: root.after(0, lambda: raise_main_window(root)))
     cinema_gui.VideoPlayerGUI(root)
     root.mainloop()
 

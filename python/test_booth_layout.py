@@ -203,6 +203,61 @@ class BeamerSummaryTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_drop_summary.winfo_manager(), "pack")
         self.assertEqual(self.app.beamer_drop_summary.master, self.app.beamer_summary)
 
+    def test_program_light_block_hides_when_control_is_off(self):
+        parent = tk.Frame(self.root)
+        parent.pack(fill="x")
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=True)
+        self.app.lights_scenes = [cinema_gui.dmx.Scene("dark", "Dunkel", {})]
+        self.app.lights_current = ""
+        self.app.lights_fading = False
+        self.app.light_start_var = tk.StringVar(master=self.root, value="")
+        self.app.idle_media_path = ""
+        self.app.projection_zoom = tk.BooleanVar(master=self.root, value=False)
+        cinema_gui.VideoPlayerGUI._build_show_strip(self.app, parent)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.program_light_bar.winfo_manager(), "pack")
+        self.assertEqual(self.app.program_light_bar.cget("bg"), "#241c14")
+        self.assertFalse(hasattr(self.app, "program_light_caption"))
+        tracks = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
+        tracks.pack()
+        cinema_gui.VideoPlayerGUI._build_light_dimmer(self.app, tracks)
+        self.assertEqual(self.app.light_start_combo.cget("style"), "BoothLight.TCombobox")
+        popup = self.app.light_start_combo.tk.call(
+            "ttk::combobox::PopdownWindow", str(self.app.light_start_combo),
+        )
+        self.assertEqual(
+            self.app.light_start_combo.tk.call(f"{popup}.f.l", "cget", "-background"),
+            cinema_gui.LIGHT_PANEL,
+        )
+        scene = self.app.program_light_buttons["dark"]
+        self.assertEqual(scene.cget("bg"), "#3a2a18")
+        self.assertEqual(scene.cget("fg"), "#f3e2c4")
+        self.app.lights_current = "dark"
+        cinema_gui.VideoPlayerGUI._refresh_light_buttons(self.app)
+        self.assertEqual(scene.cget("bg"), "#c9a227")
+        self.assertEqual(scene.cget("fg"), "#1a1408")
+        self.app.lights_current = ""
+        cinema_gui.VideoPlayerGUI._refresh_light_buttons(self.app)
+        self.assertEqual(self.app.program_light_dimmer.winfo_manager(), "pack")
+        self.assertEqual(self.app.show_strip.winfo_manager(), "grid")
+        self.app.lights_control.set(False)
+        cinema_gui.VideoPlayerGUI._apply_program_light_block(self.app)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.program_light_bar.winfo_manager(), "")
+        self.assertEqual(self.app.program_light_dimmer.winfo_manager(), "")
+        self.assertEqual(self.app.show_strip.winfo_manager(), "")
+        self.app.idle_media_path = "/media/idle.mp4"
+        self.app.idle_showing = False
+        cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.show_strip.winfo_manager(), "grid")
+        self.assertEqual(self.app.program_light_bar.winfo_manager(), "")
+        self.app.lights_control.set(True)
+        cinema_gui.VideoPlayerGUI._apply_program_light_block(self.app)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.program_light_bar.winfo_manager(), "pack")
+        self.assertEqual(self.app.program_light_dimmer.winfo_manager(), "pack")
+
 
 class ProgramClockTests(unittest.TestCase):
     def test_fade_wait_ignores_the_projector_clock(self):

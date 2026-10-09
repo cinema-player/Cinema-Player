@@ -17,3 +17,16 @@ for size in 32 48 64 128; do
   mkdir -p "$dest"
   ln -sfn "$ICON_SRC" "$dest/cinema-player.png"
 done
+
+# The top bar matches the window class Cinema-player to this launcher.
+ensure_wm_class() {
+  local desktop="$1"
+  [[ -f "$desktop" ]] || return 0
+  if grep -q '^StartupWMClass=' "$desktop"; then
+    sed -i 's/^StartupWMClass=.*/StartupWMClass=Cinema-player/' "$desktop"
+  else
+    printf '\nStartupWMClass=Cinema-player\n' >> "$desktop"
+  fi
+}
+ensure_wm_class "${HOME}/.local/share/applications/cinema-player.desktop"
+ensure_wm_class "${HOME}/Desktop/cinema-player.desktop"

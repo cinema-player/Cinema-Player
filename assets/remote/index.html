@@ -57,15 +57,31 @@
     .clock.minor b { font-size: 1rem; color: #c8c8c8; }
     .lights {
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
       gap: 8px;
-      margin-bottom: 12px;
-      align-items: stretch;
+      margin-bottom: 22px;
+      padding: 10px 10px 12px;
+      border-radius: 14px;
+      background: #241c14;
+      border: 1px solid #6a4a22;
     }
-    .lights .scenes { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
-    .lights .scenes button { flex: 1 1 6rem; min-height: 48px; padding: 12px 6px; font-size: .92rem; }
-    #light-control { background: #2e9d3a; color: #fff; min-width: 7.5rem; }
-    #light-control.off { background: #555; color: #ddd; }
+    .lights[hidden] { display: none; }
+    .lights .caption {
+      color: #e0b060;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .lights .scenes { display: flex; flex-wrap: wrap; gap: 8px; }
+    .lights .scenes button {
+      flex: 1 1 6rem;
+      min-height: 52px;
+      padding: 12px 6px;
+      font-size: .92rem;
+      background: #3a2a18;
+      color: #f3e2c4;
+    }
     .bar {
       height: 8px;
       background: #333;
@@ -84,6 +100,7 @@
       grid-template-columns: 1fr 1fr;
       gap: 10px;
       margin-bottom: 16px;
+      padding-top: 4px;
     }
     #stop { background: var(--off); color: #fff; }
     button {
@@ -100,13 +117,14 @@
     button:disabled { opacity: .35; }
     button.active { outline: 3px solid #fff; }
     @keyframes light-blink {
-      0%, 100% { outline-color: #fff; background: #3b6ea8; }
-      50% { outline-color: transparent; background: var(--btn); }
+      0%, 100% { outline-color: #fff; background: #c9a227; color: #1a1408; }
+      50% { outline-color: transparent; background: #3a2a18; color: #f3e2c4; }
     }
     .lights button.fading {
       outline: 3px solid #fff;
       animation: light-blink .6s ease-in-out infinite;
     }
+    .lights button.active { background: #c9a227; color: #1a1408; }
     .vol { margin-bottom: 16px; }
     .vol label { display: flex; justify-content: space-between; font-size: .9rem; margin-bottom: 6px; }
     input[type=range] { width: 100%; }
@@ -193,9 +211,9 @@
   </div>
   <div class="list" id="playlist"></div>
   <div class="dock">
-  <div class="lights" id="lights">
+  <div class="lights" id="lights" hidden>
+    <div class="caption" id="light-caption">Lights</div>
     <div id="light-scenes" class="scenes"></div>
-    <button id="light-control" type="button">Lights</button>
   </div>
   <div class="actions">
     <button id="resume" type="button">Resume</button>
@@ -292,7 +310,7 @@
       document.getElementById("pause").textContent = table.pause;
       document.getElementById("still").textContent = table.still;
       document.getElementById("stop").textContent = table.stop;
-      document.getElementById("light-control").textContent = table.lights_control;
+      document.getElementById("light-caption").textContent = table.lights_control;
       document.querySelector('[data-i="volume"]').textContent = table.volume;
       document.querySelector('[data-i="total"]').textContent = table.total;
       document.querySelector('[data-i="elapsed"]').textContent = table.elapsed;
@@ -334,10 +352,9 @@
       document.getElementById("pause").classList.toggle("active", !!data.paused);
       document.getElementById("still").classList.toggle("active", !!data.still);
       const lights = data.lights || {};
-      const lightsOn = lights.enabled !== false;
+      const lightsOn = lights.enabled === true;
       const preset = lights.preset || "";
-      document.getElementById("light-control").classList.toggle("off", !lightsOn);
-      document.getElementById("light-control").classList.toggle("active", lightsOn);
+      document.getElementById("lights").hidden = !lightsOn;
       renderScenes(lights, lightsOn, preset);
       if (!dragging && typeof data.volume === "number") {
         lastVolume = data.volume;
@@ -432,10 +449,6 @@
     }
 
     document.getElementById("resume").onclick = () => command("/api/resume", "POST");
-    document.getElementById("light-control").onclick = () => {
-      const on = !document.getElementById("light-control").classList.contains("off");
-      command("/api/lights", "POST", { enabled: !on });
-    };
     document.getElementById("pause").onclick = () => askConfirm("pause", "/api/pause");
     document.getElementById("still").onclick = () => askConfirm("still", "/api/still");
     document.getElementById("stop").onclick = () => askConfirm("stop", "/api/stop");

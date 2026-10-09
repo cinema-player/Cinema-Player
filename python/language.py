@@ -128,11 +128,10 @@ STRINGS = {
         "beamer_status": "Beamer status",
         "beamer_output": "Beamer output",
         "beamer_output_busy": "Stop playback before changing the projector output.",
-        "patch": "Patch",
+        "patch": "Patchbay",
         "patch_hint": (
-            "Connect the Beamer and Preview players to an output. "
-            "Preview picture stays in this window. "
-            "Automatic sound follows the Beamer connector and keeps Preview off the projector."
+            "Connect the Beamer and Preview audio to an output. "
+            "Automatic sound follows the Beamer connector and keeps Preview audio off the projector."
         ),
         "patch_picture": "Picture",
         "patch_sound": "Sound",
@@ -461,11 +460,10 @@ STRINGS = {
         "beamer_status": "Beamer-Status",
         "beamer_output": "Beamerausgang",
         "beamer_output_busy": "Wiedergabe beenden, bevor der Beamerausgang gewechselt wird.",
-        "patch": "Patch",
+        "patch": "Audio-Steckfeld",
         "patch_hint": (
-            "Verbindet die Player Beamer und Vorschau mit einem Ausgang. "
-            "Das Bild der Vorschau bleibt in diesem Fenster. "
-            "Automatischer Ton folgt dem Beameranschluss und hält die Vorschau vom Projektor fern."
+            "Verbindet das Audio von Beamer und Vorschau mit einem Ausgang. "
+            "Automatischer Ton folgt dem Beameranschluss und hält den Vorschautom vom Projektor fern."
         ),
         "patch_picture": "Bild",
         "patch_sound": "Ton",

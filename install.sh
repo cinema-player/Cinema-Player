@@ -85,6 +85,7 @@ Icon=cinema-player
 Path=${ROOT}
 Terminal=false
 StartupNotify=true
+StartupWMClass=Cinema-player
 Categories=AudioVideo;Player;Video;
 EOF
   chmod +x "$dest"
