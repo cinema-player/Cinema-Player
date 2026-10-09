@@ -64,6 +64,7 @@ from cinema_player import (
     merge_import_directories,
     normalize_media_directories,
     playlist_location_label,
+    playlist_location_short,
     probe_audio,
     probe_media,
     refresh_entry_aspect,
@@ -88,13 +89,14 @@ FONT_BEAMER_PICK = (FONT_FAMILY, 13, "bold")
 FONT_TOOLTIP = (FONT_FAMILY, 11)
 FONT_EDID = ("DejaVu Sans Mono", 10)
 FONT_PLACEHOLDER = (FONT_FAMILY, 16)
+FONT_CLOCK = (FONT_FAMILY, 18, "bold")
 
 
 def sync_fonts():
     """Copy scaled fonts from cinema_player into this module's aliases."""
     global FONT_FAMILY, FONT_ROW, FONT_ROW_BOLD, FONT_SMALL, FONT_STATUS
     global FONT_UI, FONT_UI_BOLD, FONT_LOGO, FONT_LOGO_LIGHT
-    global FONT_BEAMER_PICK, FONT_TOOLTIP, FONT_EDID, FONT_PLACEHOLDER
+    global FONT_BEAMER_PICK, FONT_TOOLTIP, FONT_EDID, FONT_PLACEHOLDER, FONT_CLOCK
     import cinema_player as player
 
     FONT_FAMILY = player.FONT_FAMILY
@@ -111,6 +113,7 @@ def sync_fonts():
     FONT_TOOLTIP = (FONT_FAMILY, max(6, 11 + delta))
     FONT_EDID = ("DejaVu Sans Mono", max(6, 10 + delta))
     FONT_PLACEHOLDER = (FONT_FAMILY, max(6, 16 + delta))
+    FONT_CLOCK = (FONT_FAMILY, max(6, 18 + delta), "bold")
 
 
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
@@ -316,6 +319,8 @@ class RangeProgressBar(tk.Canvas):
         return start, end
 
     def redraw(self):
+        if self.winfo_width() <= 1:
+            return
         self.delete("all")
         x0, y0, x1, y1 = self._track_box()
         self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
@@ -372,7 +377,7 @@ class RangeProgressBar(tk.Canvas):
 class VolumeBar(tk.Canvas):
     """Filled bar from the left up to the current volume; click or drag to set it."""
 
-    def __init__(self, master, on_change, **kwargs):
+    def __init__(self, master, on_change, fill=None, **kwargs):
         kwargs.setdefault("height", 22)
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
@@ -380,6 +385,7 @@ class VolumeBar(tk.Canvas):
         kwargs.setdefault("cursor", "hand2")
         super().__init__(master, **kwargs)
         self.on_change = on_change
+        self.fill = COLOR_VOLUME if fill is None else fill
         self.volume = 100
         self.dragging = False
         self.bind("<Configure>", lambda e: self.redraw())
@@ -415,7 +421,7 @@ class VolumeBar(tk.Canvas):
         if self.volume > 0:
             self.create_rectangle(
                 x0 + 1, y0 + 1, max(x0 + 2, fill_x), y1 - 1,
-                fill=COLOR_VOLUME, outline="",
+                fill=self.fill, outline="",
             )
 
     def _set_at(self, event, dragging):
@@ -479,6 +485,8 @@ class EnvelopeCanvas(tk.Canvas):
         return left, top, left + width, top + height
 
     def redraw(self):
+        if self.winfo_width() <= 1:
+            return
         self.delete("all")
         x0, y0, x1, y1 = self._track_box()
         self.create_rectangle(x0, y0, x1, y1, fill=TRACK_BG, outline=TRACK_EDGE, width=1)
@@ -506,6 +514,21 @@ class EnvelopeCanvas(tk.Canvas):
             ratio = max(0.0, min(1.0, self.position / self.duration))
             px = x0 + ratio * (x1 - x0)
             self.create_line(px, y0, px, y1, fill=COLOR_WHITE, width=2)
+
+
+def program_clock_drives_playhead(waiting_to_roll, playing, idle, file_matches):
+    """The playhead follows mpv only for the clip that is actually on the projector.
+
+    During a light fade the next title is already armed, but the projector is
+    still showing the previous file. That clock must not move the program bar.
+    """
+    if waiting_to_roll:
+        return False
+    if idle:
+        return True
+    if playing and not file_matches:
+        return False
+    return True
 
 
 def format_delay_ms(ms):
@@ -1558,7 +1581,7 @@ class VideoPlayerGUI:
         lights_cfg = self.settings.get("lights") if isinstance(self.settings.get("lights"), dict) else {}
         (
             self.dmx_output,
-            self.lights_presets,
+            self.lights_scenes,
             self.lights_transition_ms,
             lights_on,
             self.lights_start_lead_ms,
@@ -1577,6 +1600,16 @@ class VideoPlayerGUI:
         self._light_error_lock = threading.Lock()
         self.program_light_buttons = {}
         self.settings_light_buttons = {}
+        self.program_light_bar = None
+        self.settings_light_bar = None
+        self._scene_draft = None
+        self._scene_edit_id = ""
+        self._scene_guard = False
+        self._scene_listbox = None
+        self._scene_name_var = None
+        self._scene_level_vars = {}
+        self._scene_levels_frame = None
+        self._scene_delete_button = None
         self._remote_action = False
         self._windowed_geometry = None
         self._fullscreen_applied = False
@@ -1644,7 +1677,7 @@ class VideoPlayerGUI:
         left = tk.Frame(self.root, bg=COLOR_BG)
         left.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 12))
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(3, weight=1)
+        left.rowconfigure(4, weight=1)
 
         right = tk.Frame(self.root, bg=COLOR_BG)
         right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(0, 12))
@@ -1652,6 +1685,7 @@ class VideoPlayerGUI:
         right.rowconfigure(3, weight=1)
 
         self._build_program_status(left)
+        self._build_show_strip(left)
         self._build_program_block(left)
         self._build_playlist_block(left)
         self._build_beamer(right)
@@ -1924,6 +1958,13 @@ class VideoPlayerGUI:
 
     def rebuild_gui(self):
         """Rebuild the window for the current design and re-embed the preview player."""
+        if getattr(self, "lights_window", None) is not None:
+            self._commit_lights_settings()
+            self._scene_draft = None
+            self._scene_listbox = None
+            self._scene_levels_frame = None
+            self._scene_delete_button = None
+            self.settings_light_bar = None
         self.preview_mpv.quit()
         self._close_menus()
         self._close_patch_window()
@@ -2024,9 +2065,50 @@ class VideoPlayerGUI:
         )
         self.program_times.grid(row=0, column=2, sticky="nse")
 
+        self.next_clip = tk.Label(
+            bar, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="w",
+        )
+        self.next_clip.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(4, 0))
+        self.next_clip.grid_remove()
+
+    def _build_show_strip(self, parent):
+        """House lights and the clip dimmer, clear of the playlist file tools."""
+        strip = tk.Frame(parent, bg=COLOR_BG)
+        strip.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        self.show_strip = strip
+
+        self.program_light_bar = tk.Frame(strip, bg=COLOR_BG)
+        self.program_light_bar.pack(side="left")
+        self.program_light_buttons = {}
+        self._fill_light_buttons(
+            self.program_light_bar, self.program_light_buttons, self._on_light_preset,
+        )
+
+        dimmer = tk.Frame(strip, bg=COLOR_BG)
+        dimmer.pack(side="left", padx=(16, 0))
+        tk.Label(
+            dimmer, text=t("light_play"), bg=COLOR_BG, fg=COLOR_TEXT, font=FONT_UI,
+        ).pack(side="left", padx=(0, 4))
+        self.light_start_combo = ttk.Combobox(
+            dimmer, textvariable=self.light_start_var, width=10, state="readonly",
+        )
+        self.light_start_combo.pack(side="left")
+        self.light_start_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
+        self._fill_light_combos()
+        self._set_play_light_combo("")
+
+        status = tk.Frame(strip, bg=COLOR_BG)
+        status.pack(side="left", padx=(16, 0))
+        self.idle_status = tk.Label(status, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT)
+        self.settings_warning_status = tk.Label(
+            status, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_WARNING,
+        )
+        self._refresh_light_buttons()
+        self._refresh_idle_status()
+
     def _build_program_block(self, parent):
         group = self._group_frame(parent)
-        group.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        group.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         group.columnconfigure(0, weight=1)
         self.program_group = group
 
@@ -2052,6 +2134,7 @@ class VideoPlayerGUI:
         volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.program_audio_bitrate = self._bitrate_readout(progress, "audio_bitrate")
         self.program_audio_bitrate.grid(row=1, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
+        self._pin_bitrate_column(progress, self.program_video_bitrate)
 
         self.audiosync_frame = tk.Frame(progress, bg=COLOR_PANEL)
         delay_row = tk.Frame(self.audiosync_frame, bg=COLOR_PANEL)
@@ -2108,17 +2191,26 @@ class VideoPlayerGUI:
             times.columnconfigure(col, weight=1)
         self.time_total = self._time_box(times, t("total"), 0)
         self.time_elapsed = self._time_box(times, t("elapsed"), 1)
-        self.time_remaining = self._time_box(times, t("remaining"), 2)
-        self.time_end = self._time_box(times, t("end"), 3)
+        self.time_remaining = self._time_box(times, t("remaining"), 2, primary=True)
+        self.time_end = self._time_box(times, t("end"), 3, primary=True)
 
         self.program_meter = LevelMeter(group, bg=COLOR_PANEL, height=1)
         self.program_meter.grid(row=0, column=1, sticky="ns", padx=(8, 8), pady=6)
 
-    def _time_box(self, parent, title, column):
+    def _time_box(self, parent, title, column, primary=False):
+        """Remaining and end stay larger than total and elapsed."""
         box = tk.Frame(parent, bg=COLOR_PANEL)
         box.grid(row=0, column=column, sticky="ew")
-        tk.Label(box, text=title, font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED).pack()
-        value = tk.Label(box, text="--:--", font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT)
+        tk.Label(
+            box, text=title,
+            font=FONT_UI_BOLD if primary else FONT_SMALL,
+            bg=COLOR_PANEL, fg=COLOR_TEXT if primary else COLOR_MUTED,
+        ).pack()
+        value = tk.Label(
+            box, text="--:--",
+            font=FONT_CLOCK if primary else FONT_UI,
+            bg=COLOR_PANEL, fg=COLOR_TEXT,
+        )
         value.pack()
         return value
 
@@ -2135,18 +2227,28 @@ class VideoPlayerGUI:
         label.tooltip = IconTooltip(label, t(tooltip_key))
         return label
 
-    def _build_volume_row(self, parent, variable, on_change, bg, save=False):
+    @staticmethod
+    def _pin_bitrate_column(frame, label):
+        """Keep the readout column, so the bar beside it does not change length."""
+        try:
+            frame.columnconfigure(1, minsize=label.winfo_reqwidth() + 16)
+        except tk.TclError:
+            pass
+
+    def _build_volume_row(self, parent, variable, on_change, bg, save=False, accent=None):
+        accent = COLOR_VOLUME if accent is None else accent
         row = tk.Frame(parent, bg=bg)
         tk.Label(row, text=t("volume"), bg=bg, fg=COLOR_TEXT, font=FONT_SMALL).pack(side="left")
-        bar = VolumeBar(row, on_change=on_change, bg=bg)
+        bar = VolumeBar(row, on_change=on_change, bg=bg, fill=accent)
         bar.pack(side="left", fill="x", expand=True, padx=8)
         bar.set_volume(variable.get())
         label = tk.Label(
             row, text=str(clamp_volume(variable.get())), width=3, anchor="e",
-            bg=bg, fg=COLOR_VOLUME, font=FONT_UI_BOLD,
+            bg=bg, fg=accent, font=FONT_UI_BOLD,
         )
+        label.accent = accent
         label.pack(side="left")
-        tk.Label(row, text="%", bg=bg, fg=COLOR_VOLUME, font=FONT_SMALL).pack(side="left", padx=(2, 0))
+        tk.Label(row, text="%", bg=bg, fg=accent, font=FONT_SMALL).pack(side="left", padx=(2, 0))
         if save:
             self.preview_volume_bar = bar
             self.preview_volume_label = label
@@ -2165,7 +2267,7 @@ class VideoPlayerGUI:
 
     def _set_volume_label(self, label, volume):
         if label is not None:
-            label.config(text=str(clamp_volume(volume)), fg=COLOR_VOLUME)
+            label.config(text=str(clamp_volume(volume)), fg=getattr(label, "accent", COLOR_VOLUME))
 
     def _on_program_volume(self, value):
         volume = clamp_volume(value)
@@ -2220,23 +2322,27 @@ class VideoPlayerGUI:
     def _build_transport(self, parent):
         row = tk.Frame(parent, bg=COLOR_PANEL)
         row.grid(row=0, column=0, sticky="w")
-        self.btn_stop = self._icon_button(row, "stop", self.confirm_stop, t("stop"))
-        self.btn_pause = self._icon_button(row, "pause", self.confirm_pause, t("pause"))
-        self.btn_still = self._icon_button(row, "still", self.confirm_still, t("still"))
-        self.btn_play = self._icon_button(row, "start_program", self.start_or_resume, t("start"))
+        self.btn_stop = self._icon_button(row, "stop", self.confirm_stop, t("stop"), caption=True)
+        self.btn_pause = self._icon_button(row, "pause", self.confirm_pause, t("pause"), caption=True)
+        self.btn_still = self._icon_button(row, "still", self.confirm_still, t("still"), caption=True)
+        self.btn_play = self._icon_button(row, "start_program", self.start_or_resume, t("start"), caption=True)
 
-    def _icon_button(self, parent, icon_name, command, fallback_text, tip=None):
+    def _icon_button(self, parent, icon_name, command, fallback_text, tip=None, caption=False):
+        host = parent
+        if caption:
+            host = tk.Frame(parent, bg=parent.cget("bg"))
+            host.pack(side="left", padx=(0, 4))
         image = self._transport_icon(icon_name)
         button = tk.Button(
-            parent,
+            host,
             text=fallback_text,
             image=image,
             compound="none" if image is not None else "center",
             bd=0,
             highlightthickness=0,
             relief="flat",
-            bg=parent.cget("bg"),
-            activebackground=parent.cget("bg"),
+            bg=host.cget("bg"),
+            activebackground=host.cget("bg"),
             cursor="hand2",
             padx=2,
             pady=2,
@@ -2252,7 +2358,16 @@ class VideoPlayerGUI:
         if image is None:
             button.config(font=FONT_SMALL, width=7)
         button.icon_name = icon_name
-        button.pack(side="left", padx=(0, 6))
+        if caption:
+            button.pack(side="top")
+            cap = tk.Label(
+                host, text=fallback_text, font=FONT_SMALL,
+                bg=host.cget("bg"), fg=COLOR_MUTED,
+            )
+            cap.pack(side="top")
+            button.caption = cap
+        else:
+            button.pack(side="left", padx=(0, 6))
         button.tooltip = IconTooltip(button, tip if tip is not None else fallback_text)
         return button
 
@@ -2277,6 +2392,12 @@ class VideoPlayerGUI:
             highlightthickness=0,
             cursor="arrow" if not enabled else "hand2",
         )
+        caption = getattr(button, "caption", None)
+        if caption is not None:
+            try:
+                caption.config(fg=COLOR_TEXT if enabled else COLOR_PLAYED)
+            except tk.TclError:
+                pass
 
     def refresh_transport(self):
         playing = self.program_state == "PLAYING"
@@ -2340,14 +2461,13 @@ class VideoPlayerGUI:
     def _build_playlist_block(self, parent):
         """Toolbar/settings and the entry list sit in separate frames with a gap."""
         controls = self._group_frame(parent)
-        controls.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        controls.grid(row=3, column=0, sticky="ew", pady=(0, 8))
         controls.columnconfigure(0, weight=1)
         self.playlist_group = controls
         self._build_playlist_header(controls)
-        self._build_playlist_settings(controls)
 
         entries = self._group_frame(parent)
-        entries.grid(row=3, column=0, sticky="nsew")
+        entries.grid(row=4, column=0, sticky="nsew")
         entries.columnconfigure(0, weight=1)
         entries.rowconfigure(0, weight=1)
         self._build_playlist(entries)
@@ -2367,6 +2487,7 @@ class VideoPlayerGUI:
 
         buttons = tk.Frame(header, bg=COLOR_PANEL)
         buttons.grid(row=0, column=2, sticky="e", padx=(8, 0))
+        self.playlist_tool_buttons = buttons
         self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
         self._icon_button(buttons, "playlist_new", self.new_playlist, t("new"), t("new_playlist"))
         self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
@@ -3080,41 +3201,29 @@ class VideoPlayerGUI:
             state="normal" if self.program_state == "OFF" else "disabled",
         )
 
-    def _build_playlist_settings(self, parent):
-        settings = tk.Frame(parent, bg=COLOR_PANEL)
-        settings.grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 6))
-
-        self.program_light_buttons = {}
-        for key, label_key in (
-            ("dark", "light_dark"),
-            ("medium", "light_medium"),
-            ("bright", "light_bright"),
-        ):
-            button = tk.Button(
-                settings,
-                text=t(label_key),
-                font=FONT_SMALL,
-                command=lambda preset=key: self._on_light_preset(preset),
-            )
-            button.pack(side="left", padx=(0, 0) if key == "dark" else (8, 0))
-            self.program_light_buttons[key] = button
-        self._refresh_light_buttons()
-        status = tk.Frame(settings, bg=COLOR_PANEL)
-        status.pack(side="left", padx=(16, 0))
-        self.idle_status = tk.Label(status, text="", font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_TEXT)
-        self.settings_warning_status = tk.Label(
-            status, text="", font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_WARNING,
+    def _fill_playlist_column_header(self, parent):
+        """Column titles sit in the same column as the list, above the scrollbar."""
+        header = tk.Frame(
+            parent, bg=COLOR_PANEL, padx=6, pady=2,
+            highlightthickness=2, highlightbackground=COLOR_PANEL,
         )
-        self._refresh_idle_status()
-        self._refresh_settings_warning_status()
-
-        self.playlist_settings = settings
+        header.grid(row=0, column=0, sticky="ew", padx=2, pady=(4, 0))
+        header.columnconfigure(1, weight=1, minsize=140)
+        tk.Label(header, text="", width=2, bg=COLOR_PANEL).grid(row=0, column=0)
+        tk.Label(header, text="", bg=COLOR_PANEL).grid(row=0, column=1, sticky="ew")
+        for offset, (_key, label_key, width) in enumerate(PLAYLIST_META_COLUMNS):
+            tk.Label(
+                header, text=t(label_key), width=width, anchor="e",
+                bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+            ).grid(row=0, column=2 + offset, sticky="e", padx=(6, 0))
+        self.playlist_column_header = header
 
     def _build_playlist(self, parent):
         holder = tk.Frame(parent, bg=COLOR_PANEL)
         holder.grid(row=0, column=0, sticky="nsew")
-        holder.rowconfigure(0, weight=1)
+        holder.rowconfigure(1, weight=1)
         holder.columnconfigure(0, weight=1)
+        self._fill_playlist_column_header(holder)
 
         self.playlist_canvas = tk.Canvas(holder, bg=COLOR_PANEL, highlightthickness=0)
         scroll = ttk.Scrollbar(holder, orient="vertical", command=self.playlist_canvas.yview)
@@ -3126,8 +3235,8 @@ class VideoPlayerGUI:
         self.playlist_window = self.playlist_canvas.create_window((0, 0), window=self.playlist_inner, anchor="nw")
         self.playlist_canvas.configure(yscrollcommand=scroll.set)
         self.playlist_canvas.bind("<Configure>", self._on_playlist_canvas_configure)
-        self.playlist_canvas.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
+        self.playlist_canvas.grid(row=1, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, rowspan=2, sticky="ns")
         self.playlist_canvas.bind("<Enter>", lambda e: self.playlist_canvas.bind_all("<MouseWheel>", self._on_mousewheel))
         self.playlist_canvas.bind("<Leave>", lambda e: self.playlist_canvas.unbind_all("<MouseWheel>"))
         self.playlist_canvas.bind("<Button-4>", self._on_mousewheel)
@@ -3150,12 +3259,12 @@ class VideoPlayerGUI:
             width = 0
         if width <= 1:
             width = 900
-        return max(220, width - 480)
+        return max(140, width - 720)
 
     def _apply_playlist_name_wrap(self, width=None):
         wrap = self._playlist_name_wrap(width)
         for widgets in self.row_widgets:
-            for key in ("filename", "location"):
+            for key in ("filename", "detail"):
                 label = widgets.get(key)
                 if label is None:
                     continue
@@ -3191,9 +3300,29 @@ class VideoPlayerGUI:
         self.beamer_colorspace_value = self._beamer_value_row(
             self.beamer_summary, "beamer_colorspace",
         )
+        self.beamer_drop_summary = tk.Label(
+            self.beamer_summary, text="", font=FONT_SMALL, bg=COLOR_PANEL,
+            fg=COLOR_OFF, anchor="w",
+        )
 
         details = tk.Frame(panel, bg=COLOR_PANEL)
         self.beamer_details = details
+        legend = tk.Frame(details, bg=COLOR_PANEL)
+        legend.pack(fill="x", padx=8, pady=(0, 6))
+        for color, key in (
+            (ACCENT, "beamer_legend_program"),
+            (COLOR_PREVIEW, "beamer_legend_preview"),
+        ):
+            tk.Label(
+                legend, text="●", fg=color, bg=COLOR_PANEL, font=FONT_SMALL,
+            ).pack(side="left")
+            tk.Label(
+                legend, text=t(key), fg=COLOR_TEXT, bg=COLOR_PANEL, font=FONT_SMALL,
+            ).pack(side="left", padx=(2, 10))
+        tk.Label(
+            legend, text=t("beamer_legend_set"), fg=COLOR_MUTED, bg=COLOR_PANEL, font=FONT_SMALL,
+        ).pack(side="left")
+        self.beamer_legend = legend
         device = tk.Frame(details, bg=COLOR_PANEL)
         device.pack(fill="x", padx=8, pady=(0, 4))
         tk.Label(
@@ -3385,27 +3514,43 @@ class VideoPlayerGUI:
         settings = self._group_frame(parent)
         settings.grid(row=2, column=0, sticky="ew", pady=(0, 8))
         settings.columnconfigure(0, weight=1)
+        self.preview_settings = settings
         footer = tk.Frame(settings, bg=COLOR_PANEL)
         footer.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 6))
+
+        flow = tk.Frame(footer, bg=COLOR_PANEL)
+        flow.pack(side="left")
+        tk.Label(
+            flow, text=t("group_playback"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(side="left", padx=(0, 6))
         self.autoplay_check = CheckLabel(
-            footer, t("autoplay"), self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
+            flow, t("autoplay"), self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
         )
         self.autoplay_check.pack(side="left")
-        self.clip_settings_warning_check = CheckLabel(
-            footer, t("clip_settings_warning"), self.clip_settings_warning_var,
-            self.apply_entry_settings, COLOR_PANEL,
-        )
-        self._sync_clip_settings_warning_option()
-
-        clip_settings = tk.Frame(footer, bg=COLOR_PANEL)
+        clip_settings = tk.Frame(flow, bg=COLOR_PANEL)
         clip_settings.pack(side="left")
         self.preview_clip_settings = clip_settings
         CheckLabel(
             clip_settings, t("loop"), self.loop_var, self.apply_entry_settings, COLOR_PANEL,
-        ).pack(side="left")
+        ).pack(side="left", padx=(8, 0))
+
+        safety = tk.Frame(footer, bg=COLOR_PANEL)
+        safety.pack(side="left", padx=(16, 0))
+        self.preview_safety = safety
+        tk.Label(
+            safety, text=t("group_safety"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(side="left", padx=(0, 6))
+        self.clip_settings_warning_check = CheckLabel(
+            safety, t("clip_settings_warning"), self.clip_settings_warning_var,
+            self.apply_entry_settings, COLOR_PANEL,
+        )
+        played = tk.Frame(safety, bg=COLOR_PANEL)
+        played.pack(side="left")
+        self.preview_played_box = played
         CheckLabel(
-            clip_settings, t("played"), self.played_var, self.apply_entry_settings, COLOR_PANEL,
-        ).pack(side="left")
+            played, t("played"), self.played_var, self.apply_entry_settings, COLOR_PANEL,
+        ).pack(side="left", padx=(8, 0))
+        self._sync_clip_settings_warning_option()
 
         image_settings = tk.Frame(footer, bg=COLOR_PANEL)
         self.preview_image_settings = image_settings
@@ -3420,20 +3565,6 @@ class VideoPlayerGUI:
             image_settings, text=t("display_time_hint"), bg=COLOR_PANEL, font=FONT_UI,
             fg=COLOR_MUTED,
         ).pack(side="left", padx=(4, 0))
-
-        dimmer = tk.Frame(footer, bg=COLOR_PANEL)
-        self.preview_dimmer = dimmer
-        dimmer.pack(side="left")
-        tk.Label(dimmer, text=t("light_play"), bg=COLOR_PANEL, font=FONT_UI).pack(
-            side="left", padx=(16, 4),
-        )
-        self.light_start_combo = ttk.Combobox(
-            dimmer, textvariable=self.light_start_var, width=10, state="readonly",
-        )
-        self.light_start_combo.pack(side="left")
-        self.light_start_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
-        self._fill_light_combos()
-        self._set_play_light_combo("")
 
         video_group = self._group_frame(parent)
         video_group.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
@@ -3484,11 +3615,12 @@ class VideoPlayerGUI:
 
         self.preview_volume_row = self._build_volume_row(
             controls, self.preview_volume, self._on_preview_volume, COLOR_PANEL,
-            save=True,
+            save=True, accent=COLOR_PREVIEW,
         )
         self.preview_volume_row.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.preview_audio_bitrate = self._bitrate_readout(controls, "audio_bitrate")
         self.preview_audio_bitrate.grid(row=2, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
+        self._pin_bitrate_column(controls, self.preview_video_bitrate)
 
         marks = tk.Frame(controls, bg=COLOR_PANEL)
         marks.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 4))
@@ -3503,7 +3635,7 @@ class VideoPlayerGUI:
         self.preview_out.grid(row=0, column=2, sticky="e")
 
         buttons = tk.Frame(controls, bg=COLOR_PANEL)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
+        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 4))
 
         transport = tk.Frame(buttons, bg=COLOR_PANEL)
         self.preview_transport = transport
@@ -3527,9 +3659,9 @@ class VideoPlayerGUI:
             "clear_in_out": self._icon_button(io, "clear_in_out", self.clear_in_out, t("clear_in_out")),
         }
 
-        tracks = tk.Frame(buttons, bg=COLOR_PANEL)
+        tracks = tk.Frame(controls, bg=COLOR_PANEL)
         self.preview_track_settings = tracks
-        tracks.pack(side="left", padx=(24, 0))
+        tracks.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
         tk.Label(tracks, text=t("audio_track"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(0, 4))
         self.audio_combo = ttk.Combobox(tracks, textvariable=self.audio_var, width=16, state="readonly")
         self.audio_combo.pack(side="left")
@@ -3594,14 +3726,19 @@ class VideoPlayerGUI:
                 out_point = entry.out_point
             times = clip_times(self.program_state, file_duration, self.position, in_point, out_point)
             self.program_times.config(text=f"{index} / {times['total']}")
+        self._refresh_next_clip()
         if stopped:
             self.btn_play.icon_name = "start_program"
             self.btn_play.config(text=t("start"))
             self.btn_play.tooltip.text = t("start")
+            if getattr(self.btn_play, "caption", None) is not None:
+                self.btn_play.caption.config(text=t("start"))
         else:
             self.btn_play.icon_name = "play"
             self.btn_play.config(text=t("resume"))
             self.btn_play.tooltip.text = t("resume")
+            if getattr(self.btn_play, "caption", None) is not None:
+                self.btn_play.caption.config(text=t("resume"))
         self._refresh_idle_status()
         self.refresh_transport()
         if stopped:
@@ -3622,13 +3759,70 @@ class VideoPlayerGUI:
             self._sync_audiosync_slider(entry)
         if getattr(self, "lights_fading", False):
             self._refresh_light_buttons()
+        self._apply_booth_chrome()
+
+    def _refresh_next_clip(self):
+        label = getattr(self, "next_clip", None)
+        if label is None:
+            return
+        text = next_program_label(
+            self.playlist,
+            self.program_index,
+            self.program_state,
+            bool(self.projection_zoom.get()) if getattr(self, "projection_zoom", None) else False,
+        )
+        try:
+            if not text:
+                label.grid_remove()
+                return
+            label.config(text=text)
+            if not label.winfo_manager():
+                label.grid(row=1, column=1, columnspan=2, sticky="ew", pady=(4, 0))
+        except tk.TclError:
+            pass
+
+    def _booth_show_mode(self):
+        """Armed or rolling show. Calibration keeps the preparation tools."""
+        if getattr(self, "calibration_mode", None):
+            return False
+        return self.program_state in ("PROGRAM", "PLAYING")
+
+    def _apply_booth_chrome(self):
+        """Fold preparation tools while a show is armed or playing."""
+        show = self._booth_show_mode()
+        previous = getattr(self, "_booth_chrome_show", None)
+        self._booth_chrome_show = show
+        if show and previous is not True and getattr(self, "beamer_details_open", False):
+            self.beamer_details_open = False
+            self._apply_beamer_fold()
+        self._set_grid_visible(getattr(self, "playlist_tool_buttons", None), not show)
+        self._set_grid_visible(getattr(self, "preview_settings", None), not show)
+
+    @staticmethod
+    def _set_grid_visible(widget, visible):
+        if widget is None:
+            return
+        try:
+            if visible:
+                widget.grid()
+            else:
+                widget.grid_remove()
+        except tk.TclError:
+            pass
 
     def refresh_playlist(self):
         for child in self.playlist_inner.winfo_children():
             child.destroy()
         self.row_widgets = []
         apply_playlist_warnings(self.playlist, self.projection_zoom.get())
+        last_group = None
         for index, entry in enumerate(self.playlist):
+            group = self._playlist_group_label(entry)
+            if group and group != last_group:
+                self._make_folder_header(group)
+                last_group = group
+            elif not group:
+                last_group = None
             self._make_row(index, entry)
         self._apply_playlist_name_wrap()
         self._sync_clip_settings_warning_option()
@@ -3661,6 +3855,25 @@ class VideoPlayerGUI:
             return format_clock(entry.display_time)
         return t("until_resume")
 
+    def _playlist_group_label(self, entry):
+        return playlist_location_short(getattr(entry, "path", ""), self.media_directories)
+
+    def _make_folder_header(self, text):
+        bar = tk.Frame(self.playlist_inner, bg=COLOR_PANEL)
+        bar.playlist_index = None
+        bar.pack(fill="x", padx=2, pady=(8, 0))
+        tk.Label(
+            bar, text=text, anchor="w", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(side="left", padx=(8, 4))
+        tk.Frame(bar, bg=COLOR_BORDER, height=1).pack(side="left", fill="x", expand=True, padx=(4, 8))
+
+    def _meta_column(self, row, column, width, bg, fg):
+        label = tk.Label(
+            row, text="", width=width, anchor="e", bg=bg, fg=fg, font=FONT_SMALL,
+        )
+        label.grid(row=0, column=column, rowspan=2, sticky="e", padx=(6, 0))
+        return label
+
     def _make_row(self, index, entry):
         bg, fg = self._row_colors(index, entry)
         border = COLOR_PREVIEW if self._row_is_preview(index) else COLOR_PANEL
@@ -3669,8 +3882,9 @@ class VideoPlayerGUI:
             self.playlist_inner, bg=bg, padx=6, pady=4,
             highlightthickness=2, highlightbackground=border, highlightcolor=border,
         )
+        row.playlist_index = index
         row.pack(fill="x", pady=1, padx=2)
-        row.columnconfigure(1, weight=1, minsize=220)
+        row.columnconfigure(1, weight=1, minsize=140)
 
         cursor = tk.Label(row, text="", width=2, bg=bg, fg=fg, font=FONT_ROW_BOLD)
         cursor.grid(row=0, column=0, rowspan=2)
@@ -3680,78 +3894,41 @@ class VideoPlayerGUI:
             row, text=entry.filename, anchor="w", justify="left",
             bg=bg, fg=fg, font=FONT_ROW_BOLD, wraplength=wrap,
         )
-        location = tk.Label(
-            row, text=self._playlist_location_text(entry), anchor="w", justify="left",
+        detail = tk.Label(
+            row, text="", anchor="w", justify="left",
             bg=bg, fg=self._location_fg(fg), font=FONT_SMALL, wraplength=wrap,
         )
         filename.grid(row=0, column=1, sticky="ew")
-        location.grid(row=1, column=1, sticky="ew", pady=(1, 0))
+        detail.grid(row=1, column=1, sticky="ew", pady=(1, 0))
+        filename.tooltip = IconTooltip(filename, getattr(entry, "path", "") or "")
 
-        duration = tk.Label(row, text="", bg=bg, fg=fg, font=FONT_ROW)
-        duration.grid(row=0, column=3, sticky="e")
-
-        codecs = " / ".join(part for part in (entry.video_codec, entry.audio_codec) if part) or "--"
-        codec_label = tk.Label(
-            row, text=f"{entry.container}   {codecs}", anchor="w",
-            bg=bg, fg=fg, font=FONT_SMALL,
-        )
-        codec_label.grid(row=0, column=2, sticky="nw", padx=8)
-        resolution = tk.Label(row, text=entry.resolution_label, bg=bg, fg=fg, font=FONT_SMALL)
-        resolution.grid(row=1, column=2, sticky="w", padx=8)
-        plain = [filename, duration, codec_label, resolution]
-
-        meta = tk.Frame(row, bg=bg)
-        meta.grid(row=1, column=3, sticky="e")
-        fps = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
-        slash_a = tk.Label(meta, text=" / ", bg=bg, fg=fg, font=FONT_SMALL)
-        aspect = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
-        slash_p = tk.Label(meta, text=" / ", bg=bg, fg=fg, font=FONT_SMALL)
-        par = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
-        slash_c = tk.Label(meta, text=" / ", bg=bg, fg=fg, font=FONT_SMALL)
-        colorspace = tk.Label(meta, text="", bg=bg, fg=fg, font=FONT_SMALL)
-        for widget in (fps, slash_a, aspect, slash_p, par, slash_c, colorspace):
-            widget.pack(side="left")
-
-        auto_badge = tk.Frame(row, bg=bg)
-        auto_badge.grid(row=0, column=5, rowspan=2, sticky="e", padx=(8, 0))
-        setting = tk.Label(auto_badge, text="", anchor="e", bg=bg, fg=COLOR_WARNING, font=FONT_SMALL)
-        autoplay = tk.Label(auto_badge, text="", width=8, bg=bg, fg=fg, font=FONT_SMALL)
-        autoplay.pack()
-
-        volume = tk.Label(row, text="", width=5, anchor="e", bg=bg, fg=COLOR_VOLUME, font=FONT_ROW)
-        volume.grid(row=0, column=4, sticky="e", padx=(8, 0))
-        loudness = tk.Label(row, text="", width=11, anchor="e", bg=bg, fg=COLOR_VOLUME, font=FONT_SMALL)
-        loudness.grid(row=1, column=4, sticky="e", padx=(8, 0))
+        columns = {}
+        for offset, (key, _label_key, width) in enumerate(PLAYLIST_META_COLUMNS):
+            columns[key] = self._meta_column(row, 2 + offset, width, bg, fg)
+        plain = [filename, *columns.values()]
 
         self.row_widgets.append({
             "row": row,
             "cursor": cursor,
             "plain": plain,
             "filename": filename,
-            "location": location,
-            "duration": duration,
-            "volume": volume,
-            "loudness": loudness,
-            "meta": meta,
-            "fps": fps,
-            "slash_a": slash_a,
-            "aspect": aspect,
-            "slash_p": slash_p,
-            "par": par,
-            "slash_c": slash_c,
-            "colorspace": colorspace,
-            "auto_badge": auto_badge,
-            "setting": setting,
-            "autoplay": autoplay,
+            "detail": detail,
+            **columns,
         })
         self._paint_row(index, entry)
 
-        bind_targets = [row, *row.winfo_children(), *meta.winfo_children(), *auto_badge.winfo_children()]
+        bind_targets = [row, *row.winfo_children()]
         for widget in bind_targets:
             widget.bind("<ButtonPress-1>", lambda e, i=index: self.on_row_press(i, e))
             widget.bind("<B1-Motion>", lambda e: self.on_row_drag(e))
             widget.bind("<ButtonRelease-1>", lambda e: self.on_row_release(e))
             widget.bind("<Button-3>", lambda e, i=index: self.on_row_menu(i, e))
+
+    def _row_detail_text(self, entry):
+        codecs = " / ".join(part for part in (entry.video_codec, entry.audio_codec) if part)
+        technical = " ".join(part for part in (entry.container, codecs) if part)
+        parts = [part for part in (entry.resolution_label, technical) if part]
+        return " · ".join(parts)
 
     def _paint_row(self, index, entry):
         widgets = self.row_widgets[index]
@@ -3762,15 +3939,25 @@ class VideoPlayerGUI:
         )
         for label in widgets["plain"]:
             label.config(bg=bg, fg=fg)
-        widgets["location"].config(
-            text=self._playlist_location_text(entry),
-            bg=bg,
-            fg=self._location_fg(fg),
-        )
+        detail = self._row_detail_text(entry)
+        widgets["detail"].config(text=detail, bg=bg, fg=self._location_fg(fg))
+        try:
+            if detail:
+                if not widgets["detail"].winfo_manager():
+                    widgets["detail"].grid(row=1, column=1, sticky="ew", pady=(1, 0))
+            else:
+                widgets["detail"].grid_remove()
+        except tk.TclError:
+            pass
+        path = getattr(entry, "path", "") or ""
+        tip = getattr(widgets["filename"], "tooltip", None)
+        if tip is not None:
+            tip.text = path
         widgets["cursor"].config(
             text=">" if index == self.program_index else " ", bg=bg, fg=fg
         )
-        widgets["duration"].config(text=self._row_duration_text(entry))
+        warnings = set(playlist_warning_keys(entry))
+        widgets["duration"].config(text=self._row_duration_text(entry), bg=bg, fg=fg)
         widgets["volume"].config(
             text=f"{clamp_volume(entry.volume)}%",
             bg=bg, fg=COLOR_VOLUME,
@@ -3779,88 +3966,100 @@ class VideoPlayerGUI:
             text=format_loudness(entry.loudness_lufs),
             bg=bg, fg=COLOR_VOLUME,
         )
-        widgets["meta"].config(bg=bg)
+        rate_bad = "rate" in warnings
         widgets["fps"].config(
-            text=format_fps_label(entry.fps),
-            bg=bg, fg=COLOR_WARNING if not entry.refresh_ok else fg,
+            text=warned_meta_text(format_fps_label(entry.fps), rate_bad, t("warn_rate")),
+            bg=bg, fg=COLOR_WARNING if rate_bad else fg,
         )
-        widgets["slash_a"].config(bg=bg, fg=fg)
         widgets["aspect"].config(
-            text=entry.aspect,
+            text=warned_meta_text(entry.aspect, entry.aspect_warning, t("warn_zoom")),
             bg=bg, fg=COLOR_WARNING if entry.aspect_warning else fg,
         )
-        widgets["slash_p"].config(bg=bg, fg=fg)
         widgets["par"].config(
-            text=entry.pixel_aspect,
+            text=warned_meta_text(entry.pixel_aspect, entry.par_warning, t("warn_par")),
             bg=bg, fg=COLOR_WARNING if entry.par_warning else fg,
         )
-        widgets["slash_c"].config(bg=bg, fg=fg)
         widgets["colorspace"].config(
             text=format_colorspace_label(entry),
             bg=bg, fg=COLOR_WARNING if entry.colorspace_warning else fg,
         )
-        widgets["auto_badge"].config(bg=bg)
-        setting_on = clip_needs_settings_warning(entry, self.projection_zoom.get())
-        widgets["setting"].config(
-            text=t("setting_badge") if setting_on else "",
+        notes = playlist_note_text(entry, self.projection_zoom.get())
+        if not getattr(entry, "missing", False):
+            scene = dmx.find_scene(self.lights_scenes, getattr(entry, "light_start", ""))
+            if scene is not None and scene.id != dmx.SCENE_DARK:
+                badge = self._scene_badge(scene)
+                if badge and badge not in notes.split():
+                    notes = f"{notes} {badge}".strip()
+        warning_tokens = {t("warn_color"), t("setting_badge"), t("missing_badge")}
+        note_warning = any(token in notes.split() for token in warning_tokens)
+        widgets["notes"].config(
+            text=notes,
             bg=bg,
-            fg=COLOR_WARNING,
+            fg=COLOR_WARNING if note_warning else (fg if fg == COLOR_WHITE else ACCENT),
         )
-        if setting_on:
-            if not widgets["setting"].winfo_manager():
-                widgets["setting"].pack(side="top", before=widgets["autoplay"])
-        else:
-            widgets["setting"].pack_forget()
-        if entry.missing:
-            widgets["autoplay"].config(text=t("missing_badge"), bg=bg, fg=COLOR_WARNING)
-        else:
-            badges = []
-            if entry.autoplay:
-                badges.append(t("auto_badge"))
-            if entry.loop and not entry.is_image:
-                badges.append(t("loop_badge"))
-            play = dmx.play_preset(entry.light_start)
-            if play == "medium":
-                badges.append(t("light_medium_badge"))
-            elif play == "bright":
-                badges.append(t("light_bright_badge"))
-            widgets["autoplay"].config(
-                text="\n".join(badges),
-                bg=bg, fg=fg if fg == COLOR_WHITE else ACCENT,
-            )
 
     def _sync_clip_settings_warning_option(self):
         """Preview force-warning is only offered while playlist-menu warnings are on."""
         box = getattr(self, "clip_settings_warning_check", None)
         if box is None:
             return
-        if bool(self.projection_zoom.get()):
-            options = {"side": "left", "padx": (8, 0)}
-            autoplay = getattr(self, "autoplay_check", None)
-            if autoplay is not None:
-                options["after"] = autoplay
-            try:
+        try:
+            if bool(self.projection_zoom.get()):
                 if not box.winfo_manager():
+                    played = getattr(self, "preview_played_box", None)
+                    options = {"side": "left", "padx": (8, 0)}
+                    if played is not None:
+                        options["before"] = played
                     box.pack(**options)
+            else:
+                box.pack_forget()
+        except tk.TclError:
+            pass
+        self._refresh_safety_group()
+
+    def _refresh_safety_group(self):
+        """Hide the safety heading when neither warning nor played is on screen."""
+        safety = getattr(self, "preview_safety", None)
+        if safety is None:
+            return
+        visible = False
+        for widget in (
+            getattr(self, "clip_settings_warning_check", None),
+            getattr(self, "preview_played_box", None),
+        ):
+            if widget is None:
+                continue
+            try:
+                if widget.winfo_manager():
+                    visible = True
             except tk.TclError:
                 pass
-            return
         try:
-            box.pack_forget()
+            if visible:
+                if not safety.winfo_manager():
+                    safety.pack(side="left", padx=(16, 0))
+            else:
+                safety.pack_forget()
         except tk.TclError:
             pass
 
     def apply_preview_layout(self, entry):
-        """Stills only need Autoplay and display time; Loop and clip controls stay hidden."""
+        """Stills only need Autoplay and display time; Loop and played stay hidden."""
         image = bool(entry and entry.is_image)
         if image:
             self.preview_controls.grid_remove()
             self.preview_clip_settings.pack_forget()
-            self.preview_image_settings.pack(side="left", before=self.preview_dimmer)
+            self.preview_played_box.pack_forget()
+            if not self.preview_image_settings.winfo_manager():
+                self.preview_image_settings.pack(side="left", padx=(16, 0))
         else:
             self.preview_controls.grid()
             self.preview_image_settings.pack_forget()
-            self.preview_clip_settings.pack(side="left", before=self.preview_dimmer)
+            if not self.preview_clip_settings.winfo_manager():
+                self.preview_clip_settings.pack(side="left")
+            if not self.preview_played_box.winfo_manager():
+                self.preview_played_box.pack(side="left")
+        self._refresh_safety_group()
 
     def repaint_playlist(self):
         """Update row colours and marks in place, keeping the widgets alive."""
@@ -4158,10 +4357,12 @@ class VideoPlayerGUI:
         decoder_drops = getattr(self, "beamer_drops_decoder", None)
         if hwdec is None or mpv_drops is None or decoder_drops is None:
             return
+        summary = getattr(self, "beamer_drop_summary", None)
         if not self._program_decode_active():
             hwdec.config(text="--", fg=COLOR_TEXT)
             mpv_drops.config(text="--", fg=COLOR_TEXT)
             decoder_drops.config(text="--", fg=COLOR_TEXT)
+            self._set_drop_summary(summary, "")
             return
         name = format_hwdec_current(self.program_hwdec) or "--"
         hwdec.config(text=name, fg=COLOR_TEXT)
@@ -4169,6 +4370,24 @@ class VideoPlayerGUI:
         decoder = parse_mpv_count(self.program_decoder_drops)
         mpv_drops.config(text=str(vo), fg=COLOR_OFF if vo else COLOR_TEXT)
         decoder_drops.config(text=str(decoder), fg=COLOR_OFF if decoder else COLOR_TEXT)
+        if frames_were_dropped(self.program_frame_drops, self.program_decoder_drops):
+            self._set_drop_summary(summary, t("beamer_drops_short", mpv=vo, decoder=decoder))
+        else:
+            self._set_drop_summary(summary, "")
+
+    def _set_drop_summary(self, summary, text):
+        """Show the drop count in the short beamer form while frames are lost."""
+        if summary is None:
+            return
+        try:
+            if not text:
+                summary.pack_forget()
+                return
+            summary.config(text=text)
+            if not summary.winfo_manager():
+                summary.pack(fill="x", padx=8, pady=(0, 4))
+        except tk.TclError:
+            pass
 
     def _reset_program_decode(self):
         self.program_hwdec = ""
@@ -4765,23 +4984,35 @@ class VideoPlayerGUI:
             return
         self.move_row(start, target)
 
+    def _playlist_row_frames(self):
+        """Entry rows only. Folder headings sit between them and are not slots."""
+        frames = []
+        inner = getattr(self, "playlist_inner", None)
+        if inner is None:
+            return frames
+        for child in inner.winfo_children():
+            index = getattr(child, "playlist_index", None)
+            if isinstance(index, int):
+                frames.append(child)
+        return frames
+
     def _row_index_at(self, y_root):
         """Playlist index of the row under the given screen position."""
-        rows = self.playlist_inner.winfo_children()
+        rows = self._playlist_row_frames()
         if not rows:
             return None
-        for index, row in enumerate(rows):
+        for row in rows:
             if y_root < row.winfo_rooty() + row.winfo_height():
-                return index
-        return len(rows) - 1
+                return row.playlist_index
+        return rows[-1].playlist_index
 
     def show_drop_marker(self, start, target):
         """Draw the insert line at the slot the dragged clip would land in."""
-        rows = self.playlist_inner.winfo_children()
-        if target is None or not 0 <= target < len(rows):
+        rows = self._playlist_row_frames()
+        row = next((item for item in rows if item.playlist_index == target), None)
+        if row is None:
             self.hide_drop_marker()
             return
-        row = rows[target]
         edge = row.winfo_rooty() + (row.winfo_height() if target > start else 0)
         y = edge - self.playlist_canvas.winfo_rooty()
         height = self.playlist_canvas.winfo_height()
@@ -4851,18 +5082,20 @@ class VideoPlayerGUI:
         return fg
 
     def _refresh_playlist_locations(self):
-        rows = getattr(self, "row_widgets", None)
-        playlist = getattr(self, "playlist", None)
-        if not rows or playlist is None or len(rows) != len(playlist):
-            return
-        for widgets, entry in zip(rows, playlist):
-            label = widgets.get("location")
-            if label is None:
-                continue
+        """Folder headings follow renamed media directories."""
+        canvas = getattr(self, "playlist_canvas", None)
+        view = None
+        if canvas is not None:
             try:
-                label.configure(text=self._playlist_location_text(entry))
+                view = canvas.yview()
             except tk.TclError:
-                return
+                view = None
+        self.refresh_playlist()
+        if canvas is not None and view:
+            try:
+                canvas.yview_moveto(view[0])
+            except tk.TclError:
+                pass
 
     def _existing_media_directories(self):
         return [item["path"] for item in self.media_directories if os.path.isdir(item["path"])]
@@ -5325,77 +5558,144 @@ class VideoPlayerGUI:
             except tk.TclError:
                 pass
 
-    def _play_light_labels(self):
-        return [t("light_dark"), t("light_medium"), t("light_bright")]
+    def _default_scene_name(self, scene):
+        if scene is None:
+            return ""
+        if scene.id == dmx.SCENE_DARK:
+            return t("light_dark")
+        if scene.id == dmx.SCENE_BRIGHT:
+            return t("light_bright")
+        if scene.id == "medium":
+            return t("light_medium")
+        return ""
 
-    def _light_choice_labels(self):
-        return [t("light_auto"), t("light_bright"), t("light_medium"), t("light_dark")]
+    def _scene_label(self, scene):
+        if scene is None:
+            return ""
+        if scene.name:
+            return scene.name
+        return self._default_scene_name(scene) or scene.id
 
-    def _light_choice_keys(self):
-        return ("", "bright", "medium", "dark")
+    def _scene_badge(self, scene):
+        label = self._scene_label(scene).upper()
+        if len(label) > 12:
+            return label[:11] + "…"
+        return label
+
+    def _scene_choices(self, scenes=None):
+        catalog = self.lights_scenes if scenes is None else scenes
+        used = set()
+        choices = []
+        for scene in catalog or []:
+            label = self._scene_label(scene)
+            unique = label
+            number = 2
+            while unique.casefold() in used:
+                unique = f"{label} {number}"
+                number += 1
+            used.add(unique.casefold())
+            choices.append((scene, unique))
+        return choices
+
+    def _fresh_scene_name(self, scenes):
+        base = t("scene_new")
+        used = {self._scene_label(scene).casefold() for scene in scenes}
+        if base.casefold() not in used:
+            return base
+        number = 2
+        while f"{base} {number}".casefold() in used:
+            number += 1
+        return f"{base} {number}"
+
+    def _fill_light_buttons(self, parent, group, command):
+        if parent is None:
+            return
+        try:
+            if not parent.winfo_exists():
+                return
+            for child in list(parent.winfo_children()):
+                child.destroy()
+        except tk.TclError:
+            return
+        group.clear()
+        for index, (scene, label) in enumerate(self._scene_choices()):
+            button = tk.Button(
+                parent,
+                text=label,
+                font=FONT_SMALL,
+                command=lambda scene_id=scene.id: command(scene_id),
+            )
+            button.pack(side="left", padx=(0 if index == 0 else 8, 0))
+            group[scene.id] = button
+
+    def _rebuild_light_buttons(self):
+        self._fill_light_buttons(
+            getattr(self, "program_light_bar", None),
+            self.program_light_buttons,
+            self._on_light_preset,
+        )
+        self._fill_light_buttons(
+            getattr(self, "settings_light_bar", None),
+            self.settings_light_buttons,
+            self._test_lights,
+        )
+        self._fill_light_combos()
+        if getattr(self, "light_start_var", None) is not None:
+            entry = self.selected_entry() if self.playlist else None
+            self._set_play_light_combo(entry.light_start if entry else "")
+        self._refresh_light_buttons()
 
     def _fill_light_combos(self):
         start = getattr(self, "light_start_combo", None)
-        if start is not None:
-            start["values"] = self._play_light_labels()
-
-    def _light_label_for_key(self, key):
-        key = dmx.normalize_preset(key)
-        for item, label in zip(self._light_choice_keys(), self._light_choice_labels()):
-            if item == key:
-                return label
-        return t("light_auto")
-
-    def _light_key_from_label(self, label):
-        for item, text in zip(self._light_choice_keys(), self._light_choice_labels()):
-            if text == label:
-                return item
-        return dmx.normalize_preset(label)
+        if start is None:
+            return
+        try:
+            start["values"] = [label for _scene, label in self._scene_choices()]
+        except tk.TclError:
+            self.light_start_combo = None
 
     def _set_play_light_combo(self, key):
-        shown = dmx.play_preset(key)
-        if shown == "medium":
-            label = t("light_medium")
-        elif shown == "bright":
-            label = t("light_bright")
-        else:
-            label = t("light_dark")
+        scene = dmx.find_scene(self.lights_scenes, key) if key else None
+        if scene is None:
+            scene = dmx.find_scene(self.lights_scenes, dmx.SCENE_DARK)
+        label = ""
+        if scene is not None:
+            for item, text in self._scene_choices():
+                if item.id == scene.id:
+                    label = text
+                    break
         self.light_start_var.set(label)
 
     def _play_light_from_label(self, label):
-        if label == t("light_medium"):
-            return "medium"
-        if label == t("light_bright"):
-            return "bright"
-        return ""
-
-    def _set_light_combo(self, variable, key):
-        if variable is None:
-            return
-        variable.set(self._light_label_for_key(key))
+        for scene, text in self._scene_choices():
+            if text == label:
+                return scene.id
+        found = dmx.find_scene(self.lights_scenes, label)
+        return found.id if found is not None else dmx.SCENE_DARK
 
     def _apply_lights(self, preset, force=False):
         if self.calibration_mode:
             return
         if not bool(self.lights_control.get()):
             return
-        key = dmx.normalize_preset(preset)
-        if not key:
+        key = dmx.scene_key(preset, self.lights_scenes)
+        scene = dmx.find_scene(self.lights_scenes, key) if key else None
+        if scene is None:
             return
-        if not force and dmx.already_at_preset(self.lights_current, key):
+        if not force and dmx.already_at_preset(self.lights_current, scene.id, self.lights_scenes):
             return
-        self.lights_current = key
+        self.lights_current = scene.id
         output = getattr(self, "dmx_output", None)
         if output is None or not output.ready():
             self._stop_light_fade()
             self._refresh_light_buttons()
             return
-        presets = dict(self.lights_presets)
+        scenes = [item.copy() for item in self.lights_scenes]
         transition = self.lights_transition_ms
         self._start_light_fade(transition)
 
         def worker():
-            error = dmx.apply_preset(output, key, presets, transition)
+            error = dmx.apply_scene(output, scene.id, scenes, transition)
             with self._light_error_lock:
                 self._light_errors.append(error)
 
@@ -5493,7 +5793,7 @@ class VideoPlayerGUI:
 
     def _refresh_light_buttons(self):
         enabled = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
-        current = dmx.normalize_preset(getattr(self, "lights_current", "")) if enabled else ""
+        current = dmx.scene_key(getattr(self, "lights_current", ""), self.lights_scenes) if enabled else ""
         fading = bool(enabled and current and getattr(self, "lights_fading", False))
         blink_on = bool(getattr(self, "lights_blink_on", False))
         for key, button in self._iter_light_buttons():
@@ -5501,9 +5801,17 @@ class VideoPlayerGUI:
             lit = active and (not fading or blink_on)
             bg = ACCENT if lit else COLOR_BUTTON
             fg = COLOR_WHITE if lit else COLOR_TEXT
+            style = (
+                "normal" if enabled else "disabled",
+                bg,
+                fg,
+            )
+            if getattr(button, "_light_style", None) == style:
+                continue
+            button._light_style = style
             try:
                 button.config(
-                    state="normal" if enabled else "disabled",
+                    state=style[0],
                     bg=bg,
                     fg=fg,
                     activebackground=bg,
@@ -5511,7 +5819,7 @@ class VideoPlayerGUI:
                     disabledforeground=COLOR_MUTED,
                 )
             except tk.TclError:
-                pass
+                button._light_style = None
 
     def _iter_light_buttons(self):
         for group in (
@@ -5527,7 +5835,7 @@ class VideoPlayerGUI:
         enabled = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else True
         self.settings["lights"] = dmx.dump_lights_config(
             getattr(self, "dmx_output", None) or dmx.DmxOutput(),
-            self.lights_presets,
+            self.lights_scenes,
             self.lights_transition_ms,
             enabled,
             self.lights_start_lead_ms,
@@ -5537,6 +5845,190 @@ class VideoPlayerGUI:
             save_settings(self.settings)
         except OSError:
             pass
+
+    def _build_scene_editor(self, parent):
+        """Name a scene and set a brightness for every global DMX channel."""
+        self._scene_draft = [scene.copy() for scene in self.lights_scenes]
+        self._scene_edit_id = self._scene_draft[0].id if self._scene_draft else ""
+        self._scene_level_vars = {}
+        editor = tk.Frame(parent, bg=COLOR_PANEL)
+        editor.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        left = tk.Frame(editor, bg=COLOR_PANEL)
+        left.pack(side="left", fill="y")
+        tk.Label(left, text=t("lights_scenes"), bg=COLOR_PANEL, font=FONT_SMALL).pack(anchor="w")
+        self._scene_listbox = self._styled_listbox(left)
+        self._scene_listbox.configure(height=6, width=18)
+        self._scene_listbox.pack(fill="y", expand=True, pady=(2, 4))
+        self._scene_listbox.bind("<<ListboxSelect>>", self._on_scene_select)
+        actions = tk.Frame(left, bg=COLOR_PANEL)
+        actions.pack(fill="x")
+        tk.Button(
+            actions, text=t("lights_scene_add"), font=FONT_SMALL, command=self._add_edited_scene,
+        ).pack(side="left")
+        self._scene_delete_button = tk.Button(
+            actions, text=t("lights_scene_delete"), font=FONT_SMALL, command=self._delete_edited_scene,
+        )
+        self._scene_delete_button.pack(side="left", padx=(8, 0))
+        right = tk.Frame(editor, bg=COLOR_PANEL)
+        right.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        name_row = tk.Frame(right, bg=COLOR_PANEL)
+        name_row.pack(fill="x")
+        tk.Label(name_row, text=t("lights_scene_name"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        self._scene_name_var = tk.StringVar(value="")
+        name_entry = tk.Entry(name_row, textvariable=self._scene_name_var, width=22, font=FONT_UI)
+        name_entry.pack(side="left", padx=(4, 0))
+        name_entry.bind("<FocusOut>", self._on_scene_name_changed)
+        name_entry.bind("<Return>", self._on_scene_name_changed)
+        self._scene_levels_frame = tk.Frame(right, bg=COLOR_PANEL)
+        self._scene_levels_frame.pack(fill="x", pady=(6, 0))
+        tk.Label(
+            right, text=t("lights_scene_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=360, justify="left",
+        ).pack(fill="x", pady=(6, 0))
+        self._refresh_scene_editor()
+
+    def _draft_channels(self):
+        text = self.lights_channels.get() if getattr(self, "lights_channels", None) else ""
+        return dmx.parse_channels(text) or [1]
+
+    def _flush_scene_form(self):
+        if not self._scene_draft or not self._scene_edit_id or self._scene_name_var is None:
+            return
+        scene = dmx.find_scene(self._scene_draft, self._scene_edit_id)
+        if scene is None:
+            return
+        name = self._scene_name_var.get().strip()
+        default = self._default_scene_name(scene)
+        if default and (not name or name == default):
+            scene.name = ""
+        elif name:
+            scene.name = name[:dmx.SCENE_NAME_LIMIT]
+        channels = self._draft_channels()
+        for channel, variable in list(self._scene_level_vars.items()):
+            if channel not in channels:
+                continue
+            scene.levels[channel] = dmx.clamp_percent(variable.get(), scene.levels.get(channel, 0))
+        self._scene_draft = dmx.align_scenes(self._scene_draft, channels)
+
+    def _refresh_scene_editor(self):
+        if self._scene_listbox is None:
+            return
+        if not self._scene_draft:
+            return
+        if dmx.find_scene(self._scene_draft, self._scene_edit_id) is None:
+            self._scene_edit_id = self._scene_draft[0].id
+        self._refresh_scene_list_labels()
+        self._load_scene_form(self._scene_edit_id)
+
+    def _refresh_scene_list_labels(self):
+        box = self._scene_listbox
+        if box is None:
+            return
+        self._scene_guard = True
+        try:
+            selected = 0
+            for index, scene in enumerate(self._scene_draft):
+                if scene.id == self._scene_edit_id:
+                    selected = index
+            box.delete(0, "end")
+            for scene in self._scene_draft:
+                box.insert("end", self._scene_label(scene))
+            if self._scene_draft:
+                box.selection_set(selected)
+                box.activate(selected)
+                box.see(selected)
+        except tk.TclError:
+            self._scene_listbox = None
+        finally:
+            self._scene_guard = False
+
+    def _load_scene_form(self, scene_id):
+        scene = dmx.find_scene(self._scene_draft, scene_id)
+        if scene is None and self._scene_draft:
+            scene = self._scene_draft[0]
+        if scene is None or self._scene_levels_frame is None:
+            return
+        self._scene_edit_id = scene.id
+        self._scene_guard = True
+        try:
+            self._scene_name_var.set(self._scene_label(scene))
+            for child in list(self._scene_levels_frame.winfo_children()):
+                child.destroy()
+            self._scene_level_vars = {}
+            for channel in self._draft_channels():
+                row = tk.Frame(self._scene_levels_frame, bg=COLOR_PANEL)
+                row.pack(fill="x", pady=1)
+                tk.Label(
+                    row, text=t("lights_scene_channel", channel=channel),
+                    bg=COLOR_PANEL, font=FONT_SMALL, width=12, anchor="w",
+                ).pack(side="left")
+                variable = tk.StringVar(value=str(scene.levels.get(channel, 0)))
+                self._scene_level_vars[channel] = variable
+                tk.Entry(row, textvariable=variable, width=4, font=FONT_UI).pack(side="left", padx=4)
+                tk.Label(row, text="%", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
+            if self._scene_delete_button is not None:
+                state = "disabled" if dmx.scene_locked(scene.id) else "normal"
+                self._scene_delete_button.config(state=state)
+        except tk.TclError:
+            self._scene_levels_frame = None
+        finally:
+            self._scene_guard = False
+
+    def _on_scene_select(self, _event=None):
+        if self._scene_guard or self._scene_listbox is None or not self._scene_draft:
+            return
+        try:
+            selection = self._scene_listbox.curselection()
+        except tk.TclError:
+            return
+        if not selection:
+            return
+        index = selection[0]
+        if not 0 <= index < len(self._scene_draft):
+            return
+        scene_id = self._scene_draft[index].id
+        if scene_id == self._scene_edit_id:
+            return
+        self._flush_scene_form()
+        self._scene_edit_id = scene_id
+        self._load_scene_form(scene_id)
+
+    def _on_scene_name_changed(self, _event=None):
+        if self._scene_guard:
+            return
+        self._flush_scene_form()
+        self._refresh_scene_list_labels()
+
+    def _on_scene_channels_changed(self, _event=None):
+        if self._scene_guard or self._scene_draft is None:
+            return
+        self._flush_scene_form()
+        channels = self._draft_channels()
+        self._scene_draft = dmx.align_scenes(self._scene_draft, channels)
+        if getattr(self, "lights_channels", None) is not None:
+            self.lights_channels.set(dmx.format_channels(channels))
+        self._refresh_scene_editor()
+        if _event is not None and getattr(_event, "keysym", "") == "Return":
+            return "break"
+
+    def _add_edited_scene(self):
+        if self._scene_draft is None:
+            return
+        self._flush_scene_form()
+        channels = self._draft_channels()
+        name = self._fresh_scene_name(self._scene_draft)
+        self._scene_draft = dmx.add_scene(self._scene_draft, channels, name)
+        self._scene_edit_id = self._scene_draft[-1].id
+        self._refresh_scene_editor()
+
+    def _delete_edited_scene(self):
+        scene = dmx.find_scene(self._scene_draft, self._scene_edit_id)
+        if scene is None or dmx.scene_locked(scene.id):
+            return
+        channels = self._draft_channels()
+        self._scene_draft = dmx.delete_scene(self._scene_draft, scene.id, channels)
+        self._scene_edit_id = self._scene_draft[0].id
+        self._refresh_scene_editor()
 
     def show_lights(self):
         """Configure DMX house lights over Enttec, Open DMX, or Art-Net."""
@@ -5554,7 +6046,7 @@ class VideoPlayerGUI:
         window = tk.Toplevel(self.root)
         window.title(t("lights"))
         window.configure(bg=COLOR_BG)
-        window.minsize(640, 420)
+        window.minsize(680, 560)
         if self.icon_image is not None:
             try:
                 window.iconphoto(True, self.icon_image)
@@ -5615,7 +6107,12 @@ class VideoPlayerGUI:
         self.lights_device_combo.pack(side="left", padx=(4, 12))
         self._fill_lights_devices()
         tk.Label(cable, text=t("lights_channels"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(cable, textvariable=self.lights_channels, width=16, font=FONT_UI).pack(side="left", padx=4)
+        self.lights_channels_entry = tk.Entry(
+            cable, textvariable=self.lights_channels, width=16, font=FONT_UI,
+        )
+        self.lights_channels_entry.pack(side="left", padx=4)
+        self.lights_channels_entry.bind("<FocusOut>", self._on_scene_channels_changed)
+        self.lights_channels_entry.bind("<Return>", self._on_scene_channels_changed)
         self.lights_device_hint = tk.Label(
             holder, text=t("lights_device_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
             wraplength=620, justify="left",
@@ -5630,23 +6127,13 @@ class VideoPlayerGUI:
             holder, textvariable=self.lights_status, bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
         ).pack(fill="x", padx=8)
         self._sync_lights_control(save=False)
-        presets = tk.Frame(holder, bg=COLOR_PANEL)
-        presets.pack(fill="x", padx=8, pady=(8, 4))
-        self.lights_bright = tk.StringVar(value=str(self.lights_presets.get("bright", 100)))
-        self.lights_medium = tk.StringVar(value=str(self.lights_presets.get("medium", 40)))
-        self.lights_dark = tk.StringVar(value=str(self.lights_presets.get("dark", 0)))
+        self._build_scene_editor(holder)
+        fade = tk.Frame(holder, bg=COLOR_PANEL)
+        fade.pack(fill="x", padx=8, pady=(8, 4))
         self.lights_transition = tk.StringVar(value=self._lights_transition_text())
-        for label_key, variable in (
-            ("light_dark", self.lights_dark),
-            ("light_medium", self.lights_medium),
-            ("light_bright", self.lights_bright),
-        ):
-            tk.Label(presets, text=t(label_key), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-            tk.Entry(presets, textvariable=variable, width=4, font=FONT_UI).pack(side="left", padx=(4, 12))
-            tk.Label(presets, text="%", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left", padx=(0, 8))
-        tk.Label(presets, text=t("lights_transition"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
-        tk.Entry(presets, textvariable=self.lights_transition, width=4, font=FONT_UI).pack(side="left", padx=4)
-        tk.Label(presets, text=t("seconds_short"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
+        tk.Label(fade, text=t("lights_transition"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left")
+        tk.Entry(fade, textvariable=self.lights_transition, width=4, font=FONT_UI).pack(side="left", padx=4)
+        tk.Label(fade, text=t("seconds_short"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL).pack(side="left")
         timing = tk.Frame(holder, bg=COLOR_PANEL)
         timing.pack(fill="x", padx=8, pady=(0, 4))
         self.lights_start_lead = tk.StringVar(value=dmx.ms_to_seconds_text(self.lights_start_lead_ms))
@@ -5663,20 +6150,10 @@ class VideoPlayerGUI:
         ).pack(side="left")
         tests = tk.Frame(holder, bg=COLOR_PANEL)
         tests.pack(fill="x", padx=8, pady=(0, 4))
+        self.settings_light_bar = tk.Frame(tests, bg=COLOR_PANEL)
+        self.settings_light_bar.pack(side="left")
         self.settings_light_buttons = {}
-        for key, label_key in (
-            ("dark", "light_dark"),
-            ("medium", "light_medium"),
-            ("bright", "light_bright"),
-        ):
-            button = tk.Button(
-                tests,
-                text=t(label_key),
-                font=FONT_SMALL,
-                command=lambda preset=key: self._test_lights(preset),
-            )
-            button.pack(side="left", padx=(0, 8))
-            self.settings_light_buttons[key] = button
+        self._fill_light_buttons(self.settings_light_bar, self.settings_light_buttons, self._test_lights)
         self._refresh_light_buttons()
         buttons = tk.Frame(holder, bg=COLOR_PANEL)
         buttons.pack(fill="x", padx=8, pady=(4, 8))
@@ -5685,7 +6162,7 @@ class VideoPlayerGUI:
             side="right", padx=(0, 8),
         )
         self.lights_window = window
-        self._place_on_control_monitor(window, 760, 460)
+        self._place_on_control_monitor(window, 820, 640)
 
     def _lights_mode_label(self, key):
         mode = dmx.normalize_mode(key)
@@ -5752,11 +6229,19 @@ class VideoPlayerGUI:
         window = getattr(self, "lights_window", None)
         self.lights_window = None
         self.settings_light_buttons = {}
+        self.settings_light_bar = None
         self.settings_lights_check = None
         self.lights_host_entry = None
         self.lights_universe_entry = None
         self.lights_device_combo = None
         self.lights_device_hint = None
+        self.lights_channels_entry = None
+        self._scene_draft = None
+        self._scene_listbox = None
+        self._scene_name_var = None
+        self._scene_level_vars = {}
+        self._scene_levels_frame = None
+        self._scene_delete_button = None
         if window is not None:
             try:
                 window.destroy()
@@ -5780,12 +6265,14 @@ class VideoPlayerGUI:
             self.lights_universe.set(str(self.dmx_output.universe))
             self.lights_device.set(self.dmx_output.device)
             self.lights_channels.set(dmx.format_channels(self.dmx_output.channels) or "1")
-        if getattr(self, "lights_bright", None) is not None:
-            self.lights_presets = {
-                "bright": dmx.clamp_percent(self.lights_bright.get(), 100),
-                "medium": dmx.clamp_percent(self.lights_medium.get(), 40),
-                "dark": dmx.clamp_percent(self.lights_dark.get(), 0),
-            }
+        if self._scene_draft is not None:
+            self._flush_scene_form()
+            channels = self.dmx_output.channels if getattr(self, "dmx_output", None) else [1]
+            self.lights_scenes = dmx.align_scenes(self._scene_draft, channels)
+            self._scene_draft = [scene.copy() for scene in self.lights_scenes]
+            self._refresh_scene_editor()
+            self._rebuild_light_buttons()
+        if getattr(self, "lights_transition", None) is not None:
             try:
                 seconds = float(self.lights_transition.get())
             except (TypeError, ValueError):
@@ -5797,9 +6284,6 @@ class VideoPlayerGUI:
             self.lights_end_lead_ms = dmx.seconds_to_ms(
                 self.lights_end_lead.get(), self.lights_end_lead_ms,
             )
-            self.lights_bright.set(str(self.lights_presets["bright"]))
-            self.lights_medium.set(str(self.lights_presets["medium"]))
-            self.lights_dark.set(str(self.lights_presets["dark"]))
             self.lights_transition.set(self._lights_transition_text())
             self.lights_start_lead.set(dmx.ms_to_seconds_text(self.lights_start_lead_ms))
             self.lights_end_lead.set(dmx.ms_to_seconds_text(self.lights_end_lead_ms))
@@ -5894,7 +6378,11 @@ class VideoPlayerGUI:
             "volume": clamp_volume(self.program_volume.get()),
             "lights": {
                 "enabled": bool(self.lights_control.get()),
-                "preset": dmx.normalize_preset(self.lights_current) or "",
+                "preset": dmx.scene_key(self.lights_current, self.lights_scenes) if self.lights_current else "",
+                "scenes": [
+                    {"id": scene.id, "name": self._scene_label(scene)}
+                    for scene in self.lights_scenes
+                ],
                 "fading": bool(self.lights_fading),
                 "output": self.dmx_output.mode if getattr(self, "dmx_output", None) else "",
                 "connected": dmx.connected(),
@@ -5982,8 +6470,8 @@ class VideoPlayerGUI:
             if enabled and not bool(self.lights_control.get()):
                 return self._remote_result(False, "lights_disabled")
         if preset is not None and str(preset).strip() != "":
-            key = dmx.normalize_preset(preset)
-            if not key:
+            key = dmx.scene_key(preset, self.lights_scenes)
+            if not key or dmx.find_scene(self.lights_scenes, key) is None:
                 return self._remote_result(False, "invalid_preset")
             if not bool(self.lights_control.get()):
                 return self._remote_result(False, "lights_disabled")
@@ -7116,7 +7604,7 @@ class VideoPlayerGUI:
         if self.idle_showing:
             label.config(text=name, bg=COLOR_PLAYING, fg=COLOR_WHITE)
         else:
-            label.config(text=name, bg=COLOR_PANEL, fg=COLOR_TEXT)
+            label.config(text=name, bg=COLOR_BG, fg=COLOR_TEXT)
         try:
             mapped = bool(label.winfo_ismapped())
         except tk.TclError:
@@ -7142,7 +7630,7 @@ class VideoPlayerGUI:
                 idle_on = bool(idle is not None and idle.winfo_manager())
             except tk.TclError:
                 idle_on = False
-            label.config(text=t("settings_warning_active"), bg=COLOR_PANEL, fg=COLOR_WARNING)
+            label.config(text=t("settings_warning_active"), bg=COLOR_BG, fg=COLOR_WARNING)
             try:
                 mapped = bool(label.winfo_manager())
             except tk.TclError:
@@ -7610,8 +8098,8 @@ class VideoPlayerGUI:
         self.duration = entry.duration
         self.position = entry.in_point if entry.in_point is not None else 0
         self.program_state = "PLAYING"
-        preset = dmx.resolve_start_preset(entry.light_start)
-        self._apply_lights(preset, force=bool(dmx.play_preset(entry.light_start)))
+        preset = dmx.resolve_start_preset(entry.light_start, self.lights_scenes)
+        self._apply_lights(preset, force=bool(dmx.play_preset(entry.light_start, self.lights_scenes)))
         delay = self._lights_play_delay_ms()
         if delay > 0:
             self.refresh_all()
@@ -7799,7 +8287,7 @@ class VideoPlayerGUI:
         self._reset_preview_meter()
         self._skip_to_playable(inclusive=False)
         self.lights_end_sent = False
-        self._apply_lights(dmx.resolve_end_preset("", False))
+        self._apply_lights(dmx.resolve_end_preset("", False, self.lights_scenes))
         self.refresh_all()
         self.confirm_projection_zoom(prompt=not self._remote_action)
         return True
@@ -7843,7 +8331,7 @@ class VideoPlayerGUI:
         self.blank_output(show_idle=not (autoplay and has_next))
         if not self.lights_end_sent:
             self._apply_lights(
-                dmx.resolve_end_preset("", autoplay and has_next)
+                dmx.resolve_end_preset("", autoplay and has_next, self.lights_scenes)
             )
         self.lights_end_sent = False
         self.refresh_all()
@@ -8053,9 +8541,31 @@ class VideoPlayerGUI:
             self._release_preview_range()
         self.preview_mpv.set_position(position)
 
+    def _apply_program_clock(self, mpv):
+        """Keep silent clips at speed 1 when HDMI audio has to be fed at speed 2."""
+        entry = self.current_entry()
+        on_program = (
+            self.program_state == "PLAYING"
+            and not self.idle_showing
+            and entry
+            and mpv.has_file(entry.path)
+        )
+        if not on_program:
+            has_audio = None
+        elif entry.audio_codec or entry.audio_tracks:
+            has_audio = True
+        elif entry.video_codec or entry.container:
+            has_audio = False
+        else:
+            has_audio = None
+        for prop, value in self.output_manager.program_clock_properties(has_audio):
+            mpv.command("set_property", prop, value)
+
     def main_mpv_event(self, mpv, message):
         event = message.get("event")
         if event == "file-loaded":
+            if not mpv.is_audio_keepalive():
+                self._apply_program_clock(mpv)
             mpv.apply_pending_range()
             self.program_video_bps = 0
             self.program_audio_bps = 0
@@ -8086,6 +8596,8 @@ class VideoPlayerGUI:
                 return
             if self.hdmi_audio_keepalive or mpv.is_audio_keepalive():
                 return
+            if getattr(self, "lights_play_after", None):
+                return
             if (
                 message.get("reason") == "eof"
                 and not self.still_active()
@@ -8111,8 +8623,15 @@ class VideoPlayerGUI:
                 return
             if self.program_state != "PLAYING" and not self.idle_showing:
                 return
-            self.position = position
             entry = self.current_entry()
+            if not program_clock_drives_playhead(
+                bool(getattr(self, "lights_play_after", None)),
+                self.program_state == "PLAYING",
+                bool(self.idle_showing),
+                bool(entry and mpv.has_file(entry.path)),
+            ):
+                return
+            self.position = position
             if (
                 self.program_state == "PLAYING"
                 and entry
@@ -8136,6 +8655,8 @@ class VideoPlayerGUI:
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)
         elif name == "eof-reached" and value:
+            if getattr(self, "lights_play_after", None):
+                return
             if (
                 not self.beamer_test_active
                 and not self._program_loop_active()
@@ -8246,6 +8767,7 @@ class VideoPlayerGUI:
         return format_bitrate(bps) or "--"
 
     def _apply_bitrate_text(self, label, text):
+        """Replace the readout text. The label stays in the grid at a fixed width."""
         if label is None:
             return
         if getattr(label, "_shown_bitrate", None) == text:
@@ -8389,7 +8911,7 @@ class VideoPlayerGUI:
             entry and entry.autoplay and self._has_playable_after(self.program_index)
         )
         self.lights_end_sent = True
-        preset = dmx.resolve_end_preset("", autoplay_continues)
+        preset = dmx.resolve_end_preset("", autoplay_continues, self.lights_scenes)
         if autoplay_continues and preset == "dark":
             return
         self._apply_lights(preset)

@@ -21,6 +21,10 @@ from dataclasses import dataclass, field
 
 PRESETS = ("bright", "medium", "dark")
 DEFAULT_PRESETS = {"bright": 100, "medium": 40, "dark": 0}
+SCENE_DARK = "dark"
+SCENE_BRIGHT = "bright"
+PROTECTED_SCENES = (SCENE_DARK, SCENE_BRIGHT)
+SCENE_NAME_LIMIT = 40
 DEFAULT_TRANSITION_MS = 2500
 DEFAULT_START_LEAD_MS = 0
 DEFAULT_END_LEAD_MS = 0
@@ -136,17 +140,203 @@ def normalize_mode(value):
     return aliases.get(key, DEFAULT_MODE)
 
 
+_SCENE_ALIASES = {
+    "bright": SCENE_BRIGHT,
+    "hell": SCENE_BRIGHT,
+    "medium": "medium",
+    "mittel": "medium",
+    "dark": SCENE_DARK,
+    "dunkel": SCENE_DARK,
+}
+
+
+@dataclass
+class Scene:
+    """One lighting cue: a name and a brightness for every global DMX channel."""
+
+    id: str
+    name: str = ""
+    levels: dict = field(default_factory=dict)
+
+    def copy(self):
+        return Scene(self.id, self.name, dict(self.levels))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "levels": {
+                str(channel): int(percent)
+                for channel, percent in sorted(self.levels.items())
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, raw):
+        if isinstance(raw, Scene):
+            return raw.copy()
+        if not isinstance(raw, dict):
+            return None
+        scene_id = _clean_scene_id(raw.get("id"))
+        if not scene_id:
+            return None
+        name = str(raw.get("name") or "").strip()
+        if len(name) > SCENE_NAME_LIMIT:
+            name = name[:SCENE_NAME_LIMIT].strip()
+        levels = {}
+        incoming = raw.get("levels") if isinstance(raw.get("levels"), dict) else {}
+        for key, value in incoming.items():
+            channel = clamp_channel(key)
+            if channel is None:
+                continue
+            levels[channel] = clamp_percent(value, 0)
+        return cls(scene_id, name, levels)
+
+
+def _clean_scene_id(value):
+    text = str(value or "").strip().lower()
+    cleaned = "".join(ch for ch in text if ch.isalnum() or ch in "-_")
+    return cleaned[:32]
+
+
+def scene_locked(scene_id):
+    return _clean_scene_id(scene_id) in PROTECTED_SCENES
+
+
 def normalize_preset(value):
-    key = str(value or "").strip().lower()
-    aliases = {
-        "bright": "bright",
-        "hell": "bright",
-        "medium": "medium",
-        "mittel": "medium",
-        "dark": "dark",
-        "dunkel": "dark",
-    }
-    return aliases.get(key, "")
+    return scene_key(value)
+
+
+def scene_key(value, scenes=None):
+    """Stable scene id. Empty and 'auto' stay empty. Built-in names map to dark/bright/medium."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    folded = text.casefold()
+    if folded == "auto":
+        return ""
+    if scenes:
+        found = find_scene(scenes, text)
+        if found is not None:
+            return found.id
+    if folded in _SCENE_ALIASES:
+        return _SCENE_ALIASES[folded]
+    if scenes:
+        return ""
+    return _clean_scene_id(text)
+
+
+def find_scene(scenes, value):
+    text = str(value or "").strip()
+    if not text or not scenes:
+        return None
+    folded = text.casefold()
+    for scene in scenes:
+        if scene.id.casefold() == folded:
+            return scene
+    alias = _SCENE_ALIASES.get(folded)
+    if alias:
+        for scene in scenes:
+            if scene.id == alias:
+                return scene
+    for scene in scenes:
+        if scene.name and scene.name.casefold() == folded:
+            return scene
+    return None
+
+
+def _levels_for(current, channels, default):
+    levels = {}
+    source = current or {}
+    for channel in channels:
+        if channel in source:
+            levels[channel] = clamp_percent(source[channel], default)
+        elif str(channel) in source:
+            levels[channel] = clamp_percent(source[str(channel)], default)
+        else:
+            levels[channel] = clamp_percent(default, default)
+    return levels
+
+
+def align_scenes(scenes, channels):
+    """Dark and bright always exist, and every scene has exactly the global channels."""
+    channels = parse_channels(channels) or [1]
+    incoming = []
+    seen = set()
+    for raw in scenes or []:
+        scene = Scene.from_dict(raw)
+        if scene is None or scene.id in seen:
+            continue
+        seen.add(scene.id)
+        incoming.append(scene)
+    by_id = {scene.id: scene for scene in incoming}
+    result = []
+    for scene_id, default in ((SCENE_DARK, 0), (SCENE_BRIGHT, 100)):
+        scene = by_id.get(scene_id)
+        result.append(Scene(
+            scene_id,
+            scene.name if scene else "",
+            _levels_for(scene.levels if scene else {}, channels, default),
+        ))
+    for scene in incoming:
+        if scene.id in PROTECTED_SCENES:
+            continue
+        result.append(Scene(scene.id, scene.name, _levels_for(scene.levels, channels, 0)))
+    return result
+
+
+def _fresh_scene_id(scenes):
+    used = {scene.id for scene in scenes}
+    number = 1
+    while f"scene-{number}" in used:
+        number += 1
+    return f"scene-{number}"
+
+
+def add_scene(scenes, channels, name=""):
+    scenes = align_scenes(scenes, channels)
+    name = str(name or "").strip()
+    if len(name) > SCENE_NAME_LIMIT:
+        name = name[:SCENE_NAME_LIMIT].strip()
+    scenes.append(Scene(_fresh_scene_id(scenes), name, {}))
+    return align_scenes(scenes, channels)
+
+
+def delete_scene(scenes, scene_id, channels):
+    if scene_locked(scene_id):
+        return align_scenes(scenes, channels)
+    target = _clean_scene_id(scene_id)
+    kept = [scene for scene in align_scenes(scenes, channels) if scene.id != target]
+    return align_scenes(kept, channels)
+
+
+def scenes_from_config(data, channels):
+    """Load scenes. Older configs stored one percent per Dark/Medium/Bright preset."""
+    raw = data.get("scenes") if isinstance(data, dict) else None
+    if isinstance(raw, list):
+        return align_scenes(raw, channels)
+    presets = data.get("presets") if isinstance(data, dict) and isinstance(data.get("presets"), dict) else None
+    channels = parse_channels(channels) or [1]
+    if not presets:
+        return align_scenes([], channels)
+    dark = clamp_percent(presets["dark"], 0) if "dark" in presets else 0
+    bright = clamp_percent(presets["bright"], 100) if "bright" in presets else 100
+    scenes = [
+        Scene(SCENE_DARK, "", {channel: dark for channel in channels}),
+        Scene(SCENE_BRIGHT, "", {channel: bright for channel in channels}),
+    ]
+    if "medium" in presets:
+        medium = clamp_percent(presets["medium"], 40)
+        scenes.append(Scene("medium", "", {channel: medium for channel in channels}))
+    return align_scenes(scenes, channels)
+
+
+def level_for(scenes, scene_id, channel, default=0):
+    scene = find_scene(scenes, scene_id)
+    number = clamp_channel(channel)
+    if scene is None or number is None:
+        return clamp_percent(default, default)
+    return clamp_percent(scene.levels.get(number, default), default)
 
 
 def clamp_percent(value, default=0):
@@ -235,31 +425,38 @@ def brightness_for_preset(preset, presets=None):
     return table.get(key, 0)
 
 
-def already_at_preset(current, target):
-    """True when house lights are already on the requested cue."""
-    key = normalize_preset(target)
-    return bool(key) and key == normalize_preset(current)
+def already_at_preset(current, target, scenes=None):
+    """True when house lights are already on the requested scene."""
+    key = scene_key(target, scenes)
+    return bool(key) and key == scene_key(current, scenes)
 
 
-def resolve_start_preset(light_start):
-    """Film start: playlist cue, otherwise house lights down."""
-    return play_preset(light_start) or "dark"
+def resolve_start_preset(light_start, scenes=None):
+    """Film start: the chosen scene, otherwise house lights down."""
+    key = scene_key(light_start, scenes)
+    if scenes is not None:
+        found = find_scene(scenes, key) if key else None
+        return found.id if found is not None else SCENE_DARK
+    return key or SCENE_DARK
 
 
-def play_preset(value):
-    """Dimmer while the clip plays. Empty or dark is the default (not shown)."""
-    key = normalize_preset(value)
-    if key in ("medium", "bright"):
-        return key
-    return ""
+def play_preset(value, scenes=None):
+    """Scene while the clip plays. Empty or dark is the default (not shown)."""
+    key = scene_key(value, scenes)
+    if key in ("", SCENE_DARK):
+        return ""
+    if scenes is not None and find_scene(scenes, key) is None:
+        return ""
+    return key
 
 
-def resolve_end_preset(light_end, autoplay_continues=False):
+def resolve_end_preset(light_end, autoplay_continues=False, scenes=None):
     """Film end: playlist cue, else up — except autoplay, which keeps lights down."""
-    preset = normalize_preset(light_end)
-    if preset:
-        return preset
-    return "dark" if autoplay_continues else "bright"
+    key = scene_key(light_end, scenes)
+    if key:
+        if scenes is None or find_scene(scenes, key) is not None:
+            return key
+    return SCENE_DARK if autoplay_continues else SCENE_BRIGHT
 
 
 def seconds_to_ms(value, default=0):
@@ -305,11 +502,7 @@ def _is_dmx_config(data):
 def load_lights_config(raw):
     data = raw if isinstance(raw, dict) else {}
     output = DmxOutput.from_dict(data if _is_dmx_config(data) else {})
-    presets = dict(DEFAULT_PRESETS)
-    incoming = data.get("presets") if isinstance(data.get("presets"), dict) else {}
-    for key in PRESETS:
-        if key in incoming:
-            presets[key] = clamp_percent(incoming[key], presets[key])
+    scenes = scenes_from_config(data, output.channels)
     try:
         transition_ms = int(data.get("transition_ms", DEFAULT_TRANSITION_MS))
     except (TypeError, ValueError):
@@ -325,7 +518,7 @@ def load_lights_config(raw):
     end_lead_ms = _ms_setting(data, "end_lead_ms", "end_lead_s", DEFAULT_END_LEAD_MS)
     return (
         output,
-        presets,
+        scenes,
         max(0, transition_ms),
         enabled,
         start_lead_ms,
@@ -335,19 +528,19 @@ def load_lights_config(raw):
 
 def dump_lights_config(
     output,
-    presets,
+    scenes,
     transition_ms,
     enabled=True,
     start_lead_ms=0,
     end_lead_ms=0,
 ):
-    payload = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output).to_dict()
+    output = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output)
+    if isinstance(scenes, dict):
+        scenes = scenes_from_config({"presets": scenes}, output.channels)
+    payload = output.to_dict()
     payload.update({
         "enabled": bool(enabled),
-        "presets": {
-            key: clamp_percent((presets or {}).get(key), DEFAULT_PRESETS[key])
-            for key in PRESETS
-        },
+        "scenes": [scene.to_dict() for scene in align_scenes(scenes, output.channels)],
         "transition_ms": max(0, int(transition_ms)),
         "start_lead_ms": max(0, int(start_lead_ms or 0)),
         "end_lead_ms": max(0, int(end_lead_ms or 0)),
@@ -388,11 +581,32 @@ def build_opendmx(values):
 
 
 def frame_for_level(channels, percent):
+    return frame_for_levels({channel: percent for channel in parse_channels(channels)})
+
+
+def frame_for_levels(levels):
+    """DMX frame where each channel can carry its own brightness."""
     frame = bytearray(DMX_CHANNELS)
-    value = percent_to_dmx(percent)
-    for channel in parse_channels(channels):
-        frame[channel - 1] = value
+    for channel, percent in (levels or {}).items():
+        number = clamp_channel(channel)
+        if number is None:
+            continue
+        frame[number - 1] = percent_to_dmx(percent)
     return bytes(frame)
+
+
+def _tracked_level(levels):
+    """One number for callers that still watch a single house-light level."""
+    if not levels:
+        return 0.0
+    if 1 in levels and len(levels) == 1:
+        return float(levels[1])
+    values = [float(value) for value in levels.values()]
+    if max(values) - min(values) < 0.001:
+        return values[0]
+    if 1 in levels:
+        return float(levels[1])
+    return float(levels[min(levels)])
 
 
 def mixed_level(start, target, started, now, duration_ms):
@@ -625,8 +839,11 @@ class DmxController:
         self._port_mode = ""
         self._output = DmxOutput()
         self.level = 0.0
+        self.levels = {}
         self._fade_start = 0.0
         self._target = 0.0
+        self._fade_start_levels = {}
+        self._target_levels = {}
         self._fade_started = 0.0
         self._fade_ms = 0
         self._have_level = False
@@ -703,7 +920,10 @@ class DmxController:
         return port
 
     def _emit(self, output, percent):
-        frame = frame_for_level(output.channels, percent)
+        self._emit_levels(output, {channel: percent for channel in output.channels})
+
+    def _emit_levels(self, output, levels):
+        frame = frame_for_levels(levels)
         with self._io_lock:
             if output.mode in SERIAL_MODES:
                 try:
@@ -743,7 +963,7 @@ class DmxController:
         while not self._stop.is_set():
             with self._lock:
                 output = DmxOutput.from_dict(self._output.to_dict())
-                fading = self._fade_ms > 0 and abs(self.level - self._target) > 0.05
+                fading = self._still_fading()
             interval = self._interval(output, fading)
             if self._stop.wait(0):
                 break
@@ -753,17 +973,40 @@ class DmxController:
                 break
             self._tick()
 
+    def _still_fading(self):
+        if self._fade_ms <= 0:
+            return False
+        keys = set(self.levels) | set(self._target_levels)
+        if not keys:
+            return abs(self.level - self._target) > 0.05
+        return any(
+            abs(float(self.levels.get(channel, 0.0)) - float(self._target_levels.get(channel, 0.0))) > 0.05
+            for channel in keys
+        )
+
+    def _mixed_levels(self, now):
+        keys = set(self._fade_start_levels) | set(self._target_levels)
+        return {
+            channel: mixed_level(
+                self._fade_start_levels.get(channel, 0.0),
+                self._target_levels.get(channel, 0.0),
+                self._fade_started,
+                now,
+                self._fade_ms,
+            )
+            for channel in keys
+        }
+
     def _tick(self):
         with self._lock:
             output = DmxOutput.from_dict(self._output.to_dict())
-            level = mixed_level(
-                self._fade_start, self._target, self._fade_started, self._time(), self._fade_ms,
-            )
-            self.level = level
+            levels = self._mixed_levels(self._time())
+            self.levels = levels
+            self.level = _tracked_level(levels)
         if not output.ready():
             return
         try:
-            self._emit(output, level)
+            self._emit_levels(output, levels)
         except OSError as exc:
             self._note_error(output, exc)
             return
@@ -771,11 +1014,24 @@ class DmxController:
         self.last_error = ""
 
     def apply(self, output, percent, transition_ms=0):
-        """Fade to percent. The first level snaps; later cues fade. Returns an error string."""
+        """Fade every configured channel to the same percent."""
+        output = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output)
+        levels = {channel: percent for channel in output.channels}
+        return self.apply_levels(output, levels, transition_ms)
+
+    def apply_levels(self, output, levels, transition_ms=0):
+        """Fade each DMX channel to its own percent. The first cue snaps. Returns an error string."""
         output = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output)
         if not output.ready():
             return "dmx_not_ready"
-        target = float(clamp_percent(percent))
+        target_levels = {}
+        for channel, percent in (levels or {}).items():
+            number = clamp_channel(channel)
+            if number is None:
+                continue
+            target_levels[number] = float(clamp_percent(percent))
+        if not target_levels:
+            return "dmx_not_ready"
         try:
             duration = max(0, int(transition_ms))
         except (TypeError, ValueError):
@@ -784,14 +1040,26 @@ class DmxController:
             if not self._have_level:
                 duration = 0
             self._output = output
-            self._fade_start = target if duration <= 0 else self.level
-            self._target = target
+            if duration <= 0:
+                self.levels = dict(target_levels)
+                self.level = _tracked_level(self.levels)
+                self._fade_start_levels = dict(target_levels)
+                self._target_levels = dict(target_levels)
+            else:
+                keys = set(self.levels) | set(target_levels)
+                self._fade_start_levels = {
+                    channel: float(self.levels.get(channel, 0.0)) for channel in keys
+                }
+                self._target_levels = {
+                    channel: float(target_levels.get(channel, 0.0)) for channel in keys
+                }
+            self._fade_start = _tracked_level(self._fade_start_levels)
+            self._target = _tracked_level(self._target_levels)
             self._fade_started = self._time()
             self._fade_ms = duration
-            if duration <= 0:
-                self.level = target
+            shown = dict(self.levels)
         try:
-            self._emit(output, target if duration <= 0 else self.level)
+            self._emit_levels(output, shown)
         except OSError as exc:
             with self._lock:
                 self._have_level = False
@@ -818,9 +1086,22 @@ class DmxController:
 _controller = DmxController()
 
 
+def apply_scene(output, scene_id, scenes=None, transition_ms=DEFAULT_TRANSITION_MS):
+    """Set each global DMX channel to the brightness stored on a scene."""
+    output = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output)
+    catalog = scenes if isinstance(scenes, list) else scenes_from_config(
+        {"presets": scenes} if isinstance(scenes, dict) else {},
+        output.channels,
+    )
+    scene = find_scene(catalog, scene_id) or find_scene(catalog, SCENE_DARK)
+    if scene is None:
+        return "dmx_not_ready"
+    return _controller.apply_levels(output, scene.levels, transition_ms)
+
+
 def apply_preset(output, preset, presets=None, transition_ms=DEFAULT_TRANSITION_MS):
-    """Set the configured DMX channels to a named house-light preset."""
-    return _controller.apply(output, brightness_for_preset(preset, presets), transition_ms)
+    """Set a scene. A legacy percent table is still accepted as the third argument."""
+    return apply_scene(output, preset, presets, transition_ms)
 
 
 def connected():

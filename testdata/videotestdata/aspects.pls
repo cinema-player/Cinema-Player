@@ -1,10 +1,10 @@
 {
   "projection_zoom": false,
-  "autoplay_delay": 0.0,
-  "idle_media": "AFC Idle.mp4",
-  "idle_media_path": "./idle/AFC Idle.mp4",
-  "program_index": 1,
-  "autosave_on_program_change": false,
+  "autoplay_delay": 5.0,
+  "idle_media": "keins",
+  "idle_media_path": "",
+  "program_index": 2,
+  "autosave_on_program_change": true,
   "entries": [
     {
       "path": "./testdata/videotestdata/h264-subtitle.mp4",
@@ -36,16 +36,20 @@
       "out_point": null,
       "display_time": 0.0,
       "is_image": false,
-      "refresh_ok": false,
+      "refresh_ok": true,
       "aspect_warning": false,
       "par_warning": false,
       "colorspace_warning": false,
-      "played": false,
+      "played": true,
       "missing": false,
       "volume": 100,
       "colorspace": "--",
       "color_range": "",
-      "loudness_lufs": null
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "",
+      "light_end": "",
+      "force_settings_warning": false
     },
     {
       "path": "./testdata/videotestdata/dv_pal_16x9.avi",
@@ -72,16 +76,20 @@
       "out_point": null,
       "display_time": 0.0,
       "is_image": false,
-      "refresh_ok": false,
+      "refresh_ok": true,
       "aspect_warning": false,
       "par_warning": false,
       "colorspace_warning": false,
-      "played": false,
+      "played": true,
       "missing": false,
       "volume": 100,
       "colorspace": "--",
       "color_range": "",
-      "loudness_lufs": null
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "",
+      "light_end": "",
+      "force_settings_warning": false
     },
     {
       "path": "./testdata/videotestdata/dv_pal_4x3.avi",
@@ -117,7 +125,11 @@
       "volume": 100,
       "colorspace": "--",
       "color_range": "",
-      "loudness_lufs": null
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "",
+      "light_end": "",
+      "force_settings_warning": false
     }
   ]
 }

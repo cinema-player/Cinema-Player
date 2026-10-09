@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-Linux / NVIDIA / mpv Video Player
+Linux / AMD / mpv Video Player
 Two mpv instances:
     - Main: exclusive video output on a separate HDMI output
     - Preview: separate mpv window on the control monitor
@@ -294,6 +294,130 @@ def audio_keepalive_path(directory=None):
     except AttributeError:
         suffix = "user"
     return os.path.join(folder, f"cinema-player-hdmi-keepalive-{suffix}.wav")
+
+
+def audio_clock_compensation(media_per_wall):
+    """Speed factor that puts a slow HDMI audio clock back on wall time.
+
+    One media second per wall second needs no change. About half a media
+    second per wall second is the AMD HDMI clock on this machine: the device
+    consumes samples at half the rate mpv requested, and display sync then
+    slows the picture to match. Playing the file at speed 2 feeds the device
+    twice as fast, so both land on realtime.
+    """
+    try:
+        ratio = float(media_per_wall)
+    except (TypeError, ValueError):
+        return 1
+    if ratio != ratio:
+        return 1
+    if 0.35 <= ratio <= 0.65:
+        return 2
+    return 1
+
+
+def measure_audio_clock_ratio(mpv_path, audio_device, wav_path):
+    """Media seconds advanced per wall second while `audio_device` is the clock.
+
+    Returns None when the device cannot be timed. A healthy clock is about 1.
+    """
+    if not mpv_path or not audio_device or not wav_path:
+        return None
+    sock_path = os.path.join(
+        tempfile.gettempdir(), f"cinema-player-clock-{os.getpid()}.sock",
+    )
+    try:
+        os.remove(sock_path)
+    except OSError:
+        pass
+    command = [
+        mpv_path, "--no-config", "--no-terminal", "--vo=null", "--no-video",
+        f"--audio-device={audio_device}",
+        "--video-sync=audio",
+        f"--input-ipc-server={sock_path}",
+        wav_path,
+    ]
+    try:
+        process = subprocess.Popen(
+            command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+
+    pending = b""
+    request_id = 0
+
+    def ipc_get(sock, prop):
+        nonlocal pending, request_id
+        request_id += 1
+        current = request_id
+        sock.sendall((
+            json.dumps({"command": ["get_property", prop], "request_id": current}) + "\n"
+        ).encode())
+        while True:
+            while b"\n" not in pending:
+                chunk = sock.recv(8192)
+                if not chunk:
+                    return None
+                pending += chunk
+            line, pending = pending.split(b"\n", 1)
+            if not line.strip():
+                continue
+            message = json.loads(line)
+            # Playback events arrive on the same socket and are not a reply.
+            if message.get("event") or message.get("request_id") != current:
+                continue
+            if message.get("error") != "success":
+                return None
+            value = message.get("data")
+            # bool is an int, and `eof-reached: false` must not look like time 0.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return float(value)
+
+    ratio = None
+    try:
+        deadline = time.monotonic() + 2.0
+        while not os.path.exists(sock_path) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.4)
+        sock.connect(sock_path)
+        start_pos = None
+        start_at = None
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end and start_pos is None:
+            pos = ipc_get(sock, "time-pos")
+            if pos is not None and pos > 0.05:
+                start_pos = pos
+                start_at = time.monotonic()
+                break
+            time.sleep(0.05)
+        if start_pos is not None:
+            time.sleep(0.4)
+            end_pos = ipc_get(sock, "time-pos")
+            elapsed = time.monotonic() - start_at
+            if end_pos is not None and elapsed > 0:
+                ratio = (end_pos - start_pos) / elapsed
+        try:
+            sock.sendall((json.dumps({"command": ["quit"]}) + "\n").encode())
+        except OSError:
+            pass
+        sock.close()
+    except (OSError, json.JSONDecodeError, TimeoutError):
+        ratio = None
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        try:
+            os.remove(sock_path)
+        except OSError:
+            pass
+    return ratio
 
 
 def ensure_audio_keepalive_wav(path=None):
@@ -904,6 +1028,23 @@ def playlist_location_label(file_path, directories):
     return match["name"] + " / " + " / ".join(parts)
 
 
+def playlist_location_short(file_path, directories):
+    """Folder name used as a playlist group heading.
+
+    A named media directory keeps that label, including subfolders after it.
+    A raw directory path keeps only its last segment. The full path stays on
+    the clip tooltip.
+    """
+    label = playlist_location_label(file_path, directories)
+    if not label:
+        return ""
+    if os.path.isabs(label):
+        trimmed = label.rstrip("\\/")
+        name = os.path.basename(trimmed)
+        return name or label
+    return label
+
+
 def clamp_volume(value, default=100):
     """Keep playlist and fader values in the 0–100 range used by mpv."""
     try:
@@ -1394,8 +1535,8 @@ def parse_mpv_audio_devices(help_text):
 def connector_hdmi_index(output_name, sibling_outputs=None):
     """Guess the HDMI audio endpoint index for a connector.
 
-    NVIDIA X11 uses HDMI-0, HDMI-1 (0-based). GNOME/DRM use HDMI-1 / HDMI-A-1
-    (1-based). Audio PCM indices are 0-based in both cases.
+    AMD/DRM and GNOME use HDMI-A-1 (1-based). Some X11 names are HDMI-0
+    (0-based). Audio PCM indices are 0-based in both cases.
     """
     if not output_name:
         return 0
@@ -2234,6 +2375,144 @@ def choose_color_format(width, height, refresh, color_info, prefer_rate=True):
     return available[0]
 
 
+def choose_amd_color_format(width, height, refresh, color_info):
+    """Prefer YCbCr 4:4:4 when the sink advertises it and the link can carry it.
+
+    amdgpu sends 4:4:4 on HDMI in that case. There is no separate switch for
+    RGB, 4:4:4, 4:2:2 and 4:2:0. Narrower YCbCr is only used when 4:4:4
+    does not fit.
+    """
+    info = color_info or EdidColorInfo()
+    if (
+        COLOR_FMT_444 in (info.formats or [])
+        and color_format_fits(COLOR_FMT_444, width, height, refresh, info.max_tmds_mhz)
+    ):
+        return COLOR_FMT_444
+    return choose_color_format(width, height, refresh, info, prefer_rate=True)
+
+
+def amd_output_color(fmt):
+    """amdgpu connector request for a player color format.
+
+    YCbCr becomes BT.709 YCC with limited range. 4:4:4, 4:2:2 and 4:2:0 share
+    that request; ``pixel_encoding`` is only written when the kernel has it.
+    """
+    ycc = fmt in (COLOR_FMT_444, COLOR_FMT_422, COLOR_FMT_420)
+    encoding = {
+        COLOR_FMT_RGB: "rgb",
+        COLOR_FMT_444: "ycbcr444",
+        COLOR_FMT_422: "ycbcr422",
+        COLOR_FMT_420: "ycbcr420",
+    }.get(fmt, "rgb")
+    return {
+        "colorspace": "BT709_YCC" if ycc else "Default",
+        "broadcast_rgb": "Limited 16:235" if ycc else "Full",
+        "pixel_encoding": encoding,
+        "rgb_range": "limited" if ycc else "full",
+    }
+
+
+def gdctl_color_args(fmt):
+    """``gdctl set`` monitor options for the AMD color request."""
+    rng = amd_output_color(fmt).get("rgb_range")
+    if not rng:
+        return []
+    return ["--rgb-range", rng]
+
+
+def parse_amd_color_format(colorspace, pixel_encoding=""):
+    """Map connector Colorspace / pixel_encoding back to a player format."""
+    encoding = (pixel_encoding or "").lower().replace(" ", "").replace(":", "").replace("_", "")
+    if "420" in encoding:
+        return COLOR_FMT_420
+    if "422" in encoding:
+        return COLOR_FMT_422
+    if "444" in encoding or encoding in ("ycbcr", "yuv"):
+        return COLOR_FMT_444
+    space = (colorspace or "").upper().replace(" ", "")
+    if "YCC" in space or "YCBCR" in space:
+        return COLOR_FMT_444
+    if not space and not encoding:
+        return ""
+    return COLOR_FMT_RGB
+
+
+_DRM_CONNECTOR_TYPES = {
+    3: "DVI-D",
+    4: "DVI-A",
+    10: "DP",
+    11: "HDMI-A",
+    12: "HDMI-B",
+    14: "eDP",
+}
+
+
+def iter_drm_connectors(payload):
+    """Yield ``(HDMI-A-1, properties)`` from ``drm_info -j``."""
+    if not isinstance(payload, dict):
+        return
+    cards = []
+    if isinstance(payload.get("connectors"), list):
+        cards.append(payload)
+    else:
+        cards.extend(card for card in payload.values() if isinstance(card, dict))
+    for card in cards:
+        counts = {}
+        for connector in card.get("connectors") or []:
+            if not isinstance(connector, dict):
+                continue
+            try:
+                type_id = int(connector.get("type"))
+            except (TypeError, ValueError):
+                continue
+            kind = _DRM_CONNECTOR_TYPES.get(type_id)
+            if not kind:
+                continue
+            counts[kind] = counts.get(kind, 0) + 1
+            yield f"{kind}-{counts[kind]}", connector.get("properties") or {}
+
+
+def drm_enum_name(prop):
+    if not isinstance(prop, dict):
+        return ""
+    value = prop.get("value")
+    for item in prop.get("spec") or []:
+        if isinstance(item, dict) and item.get("value") == value:
+            return str(item.get("name") or "")
+    return ""
+
+
+def amd_color_format_from_drm_info(payload, output_name):
+    target = canonicalize_connector(output_name)
+    if not target:
+        return ""
+    for name, props in iter_drm_connectors(payload):
+        if canonicalize_connector(name) != target:
+            continue
+        return parse_amd_color_format(
+            drm_enum_name(props.get("Colorspace")),
+            drm_enum_name(props.get("pixel_encoding")),
+        )
+    return ""
+
+
+def xrandr_output_property_names(text, output_name):
+    """Property names ``xrandr --prop`` lists for one output."""
+    target = canonicalize_connector(output_name)
+    current = None
+    names = []
+    for raw in (text or "").splitlines():
+        if raw and not raw.startswith((" ", "\t")):
+            current = canonicalize_connector(raw.split()[0])
+            continue
+        if current != target or not raw.startswith("\t") or raw.startswith("\t\t"):
+            continue
+        label = raw.strip().split(":", 1)[0].strip()
+        if label and not label.lower().startswith("supported"):
+            names.append(label)
+    return names
+
+
 def format_output_device_name(edid_identity=None, monitor_identity=None):
     """Best human-readable name for the display on a connector."""
     edid_identity = edid_identity or {}
@@ -2398,6 +2677,7 @@ class VideoOutputManager:
         self._color_info_cache = None
         self.color_format = COLOR_FMT_RGB
         self._original_color_format = None
+        self._audio_clock_scale = None
 
     @staticmethod
     def desktop_env():
@@ -2764,6 +3044,39 @@ class VideoOutputManager:
         self._preview_audio_key = key
         return device
 
+    def program_audio_clock_scale(self, mpv_path):
+        """1, or 2 when the projector HDMI clock runs at half the requested rate."""
+        try:
+            device = self.program_audio_device(mpv_path)
+        except Exception:
+            return 1
+        if not device or "hdmi" not in device.lower():
+            return 1
+        cached = self._audio_clock_scale
+        if cached and cached[0] == device:
+            return cached[1]
+        wav_path = ensure_audio_keepalive_wav()
+        ratio = measure_audio_clock_ratio(mpv_path, device, wav_path)
+        scale = audio_clock_compensation(ratio)
+        self._audio_clock_scale = (device, scale)
+        return scale
+
+    def program_clock_properties(self, has_audio):
+        """Property updates for one clip. Empty when the audio clock is healthy.
+
+        Speed 2 is only for clips that actually open the slow HDMI device.
+        A silent clip would otherwise run at double speed, because nothing
+        holds the clock back. None leaves the launch setting alone when the
+        file has not been probed yet.
+        """
+        cached = self._audio_clock_scale
+        scale = cached[1] if cached else 1
+        if scale != 2 or has_audio is None:
+            return []
+        if has_audio:
+            return [("speed", 2), ("video-sync", "audio")]
+        return [("speed", 1), ("video-sync", "display-resample")]
+
     def audio_launch_args(self, role, mpv_path):
         """mpv arguments that connect one player to its patched sound output."""
         role = "beamer" if role in {"beamer", "main", "program"} else "preview"
@@ -3057,58 +3370,82 @@ class VideoOutputManager:
         return list(self.get_color_info(output_name).formats)
 
     def preferred_color_format(self, width, height, refresh, output_name=None):
-        """RGB when the link allows it; YCbCr when needed to keep the refresh."""
-        return choose_color_format(
+        """YCbCr 4:4:4 when amdgpu will send it; otherwise the link fallback."""
+        return choose_amd_color_format(
             width,
             height,
             refresh,
             self.get_color_info(output_name),
-            prefer_rate=True,
         )
 
-    @staticmethod
-    def _nvidia_color_space_token(fmt):
-        return {
-            COLOR_FMT_RGB: "RGB",
-            COLOR_FMT_444: "YCbCr444",
-            COLOR_FMT_422: "YCbCr422",
-            COLOR_FMT_420: "YCbCr420",
-        }.get(fmt, "RGB")
-
-    @staticmethod
-    def _parse_nvidia_color_space(text):
-        blob = (text or "").lower()
-        if "420" in blob:
-            return COLOR_FMT_420
-        if "422" in blob:
-            return COLOR_FMT_422
-        if "444" in blob or "ycbcr" in blob:
-            return COLOR_FMT_444
-        if "rgb" in blob:
-            return COLOR_FMT_RGB
-        return ""
-
-    def query_color_format(self, output_name=None):
-        """Best-effort current HDMI encoding (NVIDIA CurrentColorSpace when available)."""
-        if self.color_format:
-            probed = self.color_format
-        else:
-            probed = ""
-        if not shutil.which("nvidia-settings"):
-            return probed or COLOR_FMT_RGB
-        env = self.desktop_env()
+    def _read_drm_info(self):
+        if not shutil.which("drm_info"):
+            return None
         try:
             result = subprocess.run(
-                ["nvidia-settings", "-t", "-q", "CurrentColorSpace"],
+                ["drm_info", "-j"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0 or not result.stdout:
+            return None
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return None
+
+    def query_color_format(self, output_name=None):
+        """Current AMD connector encoding, from Colorspace / pixel_encoding."""
+        name = output_name or self.video_output or ""
+        payload = self._read_drm_info()
+        if payload is not None and name:
+            parsed = amd_color_format_from_drm_info(payload, name)
+            if parsed:
+                return parsed
+        return self.color_format or COLOR_FMT_RGB
+
+    def _xrandr_apply_color(self, output_name, spec):
+        """Set amdgpu connector properties. No-op when xrandr cannot see the output."""
+        if not output_name or not shutil.which("xrandr"):
+            return False
+        env = self.desktop_env()
+        try:
+            probed = subprocess.run(
+                ["xrandr", "--prop"],
                 capture_output=True,
                 text=True,
                 timeout=5,
                 env=env,
             )
         except (OSError, subprocess.TimeoutExpired):
-            return probed or COLOR_FMT_RGB
-        parsed = self._parse_nvidia_color_space(result.stdout or result.stderr or "")
-        return parsed or probed or COLOR_FMT_RGB
+            return False
+        if probed.returncode != 0:
+            return False
+        present = set(xrandr_output_property_names(probed.stdout, output_name))
+        assignments = []
+        for prop, key in (
+            ("Colorspace", "colorspace"),
+            ("Broadcast RGB", "broadcast_rgb"),
+            ("pixel_encoding", "pixel_encoding"),
+        ):
+            if prop in present and spec.get(key):
+                assignments.extend(["--set", prop, spec[key]])
+        if not assignments:
+            return False
+        try:
+            result = subprocess.run(
+                ["xrandr", "--output", output_name, *assignments],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
 
     def ensure_color_format(self, fmt):
         """Request RGB/YCbCr on the projector. Returns True when a change was attempted."""
@@ -3122,30 +3459,8 @@ class VideoOutputManager:
                 fmt = COLOR_FMT_444
         if self._original_color_format is None:
             self._original_color_format = self.query_color_format()
-        if fmt == self.color_format:
-            # Re-assert after mode changes; NVIDIA often needs an explicit write.
-            pass
-        token = self._nvidia_color_space_token(fmt)
-        applied = False
-        if shutil.which("nvidia-settings"):
-            env = self.desktop_env()
-            for assignment in (
-                f"CurrentColorSpace={token}",
-                f"ColorSpace={token}",
-            ):
-                try:
-                    result = subprocess.run(
-                        ["nvidia-settings", "-a", assignment],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                        env=env,
-                    )
-                except (OSError, subprocess.TimeoutExpired):
-                    continue
-                if result.returncode == 0:
-                    applied = True
-                    break
+        spec = amd_output_color(fmt)
+        applied = self._xrandr_apply_color(self.video_output, spec)
         self.color_format = fmt
         return applied or fmt != COLOR_FMT_RGB
 
@@ -3207,9 +3522,12 @@ class VideoOutputManager:
     def target_refresh_rates(fps):
         """Rates that give judder-free playback, best first.
 
-        For 24/25 fps prefer 48/50 Hz over 24/25 Hz (less flicker).
+        24/25/30 fps are shown at 48/50/60 Hz, each frame twice. A 25 Hz
+        scan on this projector plays those frames at half speed and flickers.
         For 50/60 fps prefer 50/60 Hz, then 100/120 Hz, then 25/30 Hz.
         """
+        if not fps or fps <= 0:
+            return []
         candidates = []
         for multiplier in range(1, 5):
             rate = fps * multiplier
@@ -3438,6 +3756,7 @@ class VideoOutputManager:
             command.extend(["-L", "-M", item.connector])
             if item.connector == mode.output:
                 command.extend(["--mode", mode.mode])
+                command.extend(gdctl_color_args(self.color_format))
             elif item.mode_name:
                 command.extend(["--mode", item.mode_name])
             if item.primary:
@@ -3454,6 +3773,21 @@ class VideoOutputManager:
             command, capture_output=True, text=True,
             env=self.desktop_env(),
         )
+        if result.returncode != 0 and "--rgb-range" in command:
+            plain = []
+            skip = False
+            for arg in command:
+                if skip:
+                    skip = False
+                    continue
+                if arg == "--rgb-range":
+                    skip = True
+                    continue
+                plain.append(arg)
+            result = subprocess.run(
+                plain, capture_output=True, text=True,
+                env=self.desktop_env(),
+            )
         if result.returncode != 0:
             detail = (result.stderr or result.stdout or "").strip()
             raise RuntimeError(detail or "gdctl set fehlgeschlagen")
@@ -3576,6 +3910,7 @@ class VideoOutputManager:
             )
         ):
             wanted_fmt = self.color_format
+        previous_fmt = self.color_format
         self.ensure_color_format(wanted_fmt)
 
         current = self.get_current_mode(mode.output)
@@ -3587,6 +3922,8 @@ class VideoOutputManager:
         ):
             mode.x, mode.y = current.x, current.y
             self.video_mode = mode
+            if self.uses_wayland_display() and previous_fmt != self.color_format:
+                self._wayland_apply_mode(mode)
             return
 
         if self.uses_wayland_display():
@@ -3601,8 +3938,9 @@ class VideoOutputManager:
             subprocess.run(command, capture_output=True, text=True, check=True)
             time.sleep(0.2)
 
-        # Re-assert encoding after the mode switch (NVIDIA often resets it).
-        self.ensure_color_format(wanted_fmt)
+        # Re-assert encoding after the mode switch. Wayland already sent it with gdctl.
+        if not self.uses_wayland_display():
+            self.ensure_color_format(wanted_fmt)
 
         self._invalidate_display_cache()
         geometry = self.get_output_geometry(mode.output)
@@ -3652,6 +3990,19 @@ class VideoOutputManager:
         # Offsets are relative to --screen-name, not the virtual desktop.
         return f"{mode.width}x{mode.height}+0+0"
 
+    def _clock_sync_arguments(self, mpv_path, mode):
+        """Lock 25p to the projector unless the HDMI audio clock runs at half rate.
+
+        display-resample then mistimes every frame, because it plans a 50 Hz
+        cadence while the audio device only accepts samples at half speed and
+        drags the picture with it. Speed 2 plus the audio clock lands both on
+        realtime; the probe result is cached for the rest of the session.
+        """
+        refresh = f"--override-display-fps={mode.refresh:.3f}"
+        if self.program_audio_clock_scale(mpv_path) == 2:
+            return ["--video-sync=audio", "--speed=2", refresh]
+        return ["--video-sync=display-resample", refresh]
+
     def get_mpv_arguments(self, mpv_path=None):
         mode = self.effective_mode()
         if not mode:
@@ -3662,8 +4013,7 @@ class VideoOutputManager:
             "--no-border",
             "--fullscreen=yes" if wayland else "--fullscreen=no",
             "--keepaspect=yes",
-            "--video-sync=display-resample",
-            f"--override-display-fps={mode.refresh:.3f}",
+            *self._clock_sync_arguments(mpv_path, mode),
             "--hwdec=auto-safe",
             "--vo=gpu-next",
             f"--gpu-context={gpu_context_for_mpv(mpv_path)}",

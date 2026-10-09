@@ -7,6 +7,19 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+
+def _ensure_real_tkinter():
+    """Undo the MagicMock some earlier test modules install for headless runs."""
+    current = sys.modules.get("tkinter")
+    if current is not None and type(current).__module__ == "unittest.mock":
+        for name in list(sys.modules):
+            if name == "tkinter" or name.startswith("tkinter."):
+                del sys.modules[name]
+        sys.modules.pop("cinema_gui", None)
+
+
+_ensure_real_tkinter()
+
 import tkinter as tk
 
 import cinema_gui

@@ -91,6 +91,21 @@ class PlaylistLocationLabelTests(unittest.TestCase):
         self.assertEqual(player.playlist_location_label("", []), "")
         self.assertEqual(player.playlist_location_label("clip.mp4", []), "")
 
+    def test_short_label_uses_the_last_folder(self):
+        directories = [{"path": "/media/films", "name": ""}]
+        self.assertEqual(
+            player.playlist_location_short("/media/films/day/clip.mp4", directories),
+            "day",
+        )
+
+    def test_short_label_keeps_a_named_directory(self):
+        directories = [{"path": "/media/films", "name": "Filme"}]
+        self.assertEqual(
+            player.playlist_location_short("/media/films/2024/day/clip.mp4", directories),
+            "Filme / 2024 / day",
+        )
+        self.assertEqual(player.playlist_location_short("", []), "")
+
 
 MOUNTS = "\n".join([
     "sysfs /sys sysfs rw 0 0",

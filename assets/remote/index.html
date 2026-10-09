@@ -25,7 +25,9 @@
       background: var(--bg);
       color: var(--text);
       min-height: 100dvh;
-      padding: calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      padding: calc(12px + env(safe-area-inset-top)) 16px 0;
     }
     h1 { font-size: 1.05rem; margin: 0 0 8px; font-weight: 700; letter-spacing: .04em; }
     .status {
@@ -50,20 +52,20 @@
       text-align: center;
     }
     .clock span { display: block; color: var(--muted); font-size: .75rem; }
-    .clock b { font-size: 1.15rem; }
+    .clock b { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+    .clock.primary b { font-size: 1.7rem; }
+    .clock.minor b { font-size: 1rem; color: #c8c8c8; }
     .lights {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr auto;
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 12px;
+      align-items: stretch;
     }
-    .lights button { min-height: 48px; padding: 12px 6px; font-size: .92rem; }
+    .lights .scenes { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
+    .lights .scenes button { flex: 1 1 6rem; min-height: 48px; padding: 12px 6px; font-size: .92rem; }
     #light-control { background: #2e9d3a; color: #fff; min-width: 7.5rem; }
     #light-control.off { background: #555; color: #ddd; }
-    @media (max-width: 420px) {
-      .lights { grid-template-columns: 1fr 1fr 1fr; }
-      #light-control { grid-column: 1 / -1; }
-    }
     .bar {
       height: 8px;
       background: #333;
@@ -112,6 +114,17 @@
       background: var(--panel);
       border-radius: 12px;
       overflow: hidden;
+      flex: 1 1 auto;
+    }
+    .dock {
+      position: sticky;
+      bottom: 0;
+      z-index: 5;
+      margin-top: auto;
+      background: rgba(17, 17, 17, .96);
+      border-top: 1px solid #2a2a2a;
+      padding-top: 12px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
     }
     .row {
       display: flex;
@@ -171,18 +184,18 @@
     <div class="name" id="state">…</div>
     <div class="meta" id="clip"></div>
   </div>
-  <div class="lights" id="lights">
-    <button id="light-dark" type="button">Dark</button>
-    <button id="light-medium" type="button">Medium</button>
-    <button id="light-bright" type="button">Bright</button>
-    <button id="light-control" type="button">Lights</button>
-  </div>
   <div class="bar"><i id="progress"></i></div>
   <div class="clocks">
-    <div class="clock"><span data-i="total">Total</span><b id="t-total">--:--</b></div>
-    <div class="clock"><span data-i="elapsed">Elapsed</span><b id="t-elapsed">--:--</b></div>
-    <div class="clock"><span data-i="remaining">Remaining</span><b id="t-remaining">--:--</b></div>
-    <div class="clock"><span data-i="end">End</span><b id="t-end">--:--</b></div>
+    <div class="clock primary"><span data-i="remaining">Remaining</span><b id="t-remaining">--:--</b></div>
+    <div class="clock primary"><span data-i="end">End</span><b id="t-end">--:--</b></div>
+    <div class="clock minor"><span data-i="total">Total</span><b id="t-total">--:--</b></div>
+    <div class="clock minor"><span data-i="elapsed">Elapsed</span><b id="t-elapsed">--:--</b></div>
+  </div>
+  <div class="list" id="playlist"></div>
+  <div class="dock">
+  <div class="lights" id="lights">
+    <div id="light-scenes" class="scenes"></div>
+    <button id="light-control" type="button">Lights</button>
   </div>
   <div class="actions">
     <button id="resume" type="button">Resume</button>
@@ -194,7 +207,7 @@
     <label><span data-i="volume">Volume</span><b id="vol-label">100</b></label>
     <input id="volume" type="range" min="0" max="100" value="100">
   </div>
-  <div class="list" id="playlist"></div>
+  </div>
   <div class="modal" id="confirm" hidden>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <h2 id="confirm-title"></h2>
@@ -209,7 +222,6 @@
     const I18N = {
       en: { resume: "Resume", pause: "Pause", still: "Still", stop: "Stop", volume: "Volume",
             total: "Total", elapsed: "Elapsed", remaining: "Remaining", end: "End",
-            light_dark: "Dark", light_medium: "Medium", light_bright: "Bright",
             lights_control: "House lights",
             token: "Token", yes: "Yes", no: "No",
             pause_title: "Pause",
@@ -222,7 +234,6 @@
             program_message: "Set the program pointer to {name}?" },
       de: { resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
             total: "Gesamt", elapsed: "Gelaufen", remaining: "Rest", end: "Ende",
-            light_dark: "Dunkel", light_medium: "Mittel", light_bright: "Hell",
             lights_control: "Lichtsteuerung",
             token: "Token", yes: "Ja", no: "Nein",
             pause_title: "Pause",
@@ -281,9 +292,6 @@
       document.getElementById("pause").textContent = table.pause;
       document.getElementById("still").textContent = table.still;
       document.getElementById("stop").textContent = table.stop;
-      document.getElementById("light-dark").textContent = table.light_dark;
-      document.getElementById("light-medium").textContent = table.light_medium;
-      document.getElementById("light-bright").textContent = table.light_bright;
       document.getElementById("light-control").textContent = table.lights_control;
       document.querySelector('[data-i="volume"]').textContent = table.volume;
       document.querySelector('[data-i="total"]').textContent = table.total;
@@ -297,6 +305,9 @@
     applyLang(uiLang);
 
     function render(data) {
+      if (data.ok !== false && tokenInput.value.trim()) {
+        document.getElementById("token-box").hidden = true;
+      }
       const err = document.getElementById("err");
       err.textContent = data.ok === false && data.error && data.error !== "unauthorized"
         ? data.error : "";
@@ -327,12 +338,7 @@
       const preset = lights.preset || "";
       document.getElementById("light-control").classList.toggle("off", !lightsOn);
       document.getElementById("light-control").classList.toggle("active", lightsOn);
-      ["dark", "medium", "bright"].forEach((key) => {
-        const button = document.getElementById("light-" + key);
-        button.disabled = !lightsOn;
-        button.classList.toggle("fading", lightsOn && !!lights.fading && preset === key);
-        button.classList.toggle("active", lightsOn && preset === key && !lights.fading);
-      });
+      renderScenes(lights, lightsOn, preset);
       if (!dragging && typeof data.volume === "number") {
         lastVolume = data.volume;
         document.getElementById("volume").value = data.volume;
@@ -404,10 +410,28 @@
       confirmBox.hidden = true;
     }
 
+    function renderScenes(lights, lightsOn, preset) {
+      const holder = document.getElementById("light-scenes");
+      const scenes = lights.scenes || [];
+      const signature = scenes.map((scene) => scene.id + "\n" + scene.name).join("\n");
+      if (holder.dataset.signature !== signature) {
+        holder.dataset.signature = signature;
+        holder.innerHTML = scenes.map((scene) =>
+          `<button type="button" data-scene="${esc(scene.id)}">${esc(scene.name)}</button>`
+        ).join("");
+        holder.querySelectorAll("button").forEach((button) => {
+          button.onclick = () => command("/api/lights", "POST", { preset: button.dataset.scene });
+        });
+      }
+      holder.querySelectorAll("button").forEach((button) => {
+        const key = button.dataset.scene;
+        button.disabled = !lightsOn;
+        button.classList.toggle("fading", lightsOn && !!lights.fading && preset === key);
+        button.classList.toggle("active", lightsOn && preset === key && !lights.fading);
+      });
+    }
+
     document.getElementById("resume").onclick = () => command("/api/resume", "POST");
-    document.getElementById("light-dark").onclick = () => command("/api/lights", "POST", { preset: "dark" });
-    document.getElementById("light-medium").onclick = () => command("/api/lights", "POST", { preset: "medium" });
-    document.getElementById("light-bright").onclick = () => command("/api/lights", "POST", { preset: "bright" });
     document.getElementById("light-control").onclick = () => {
       const on = !document.getElementById("light-control").classList.contains("off");
       command("/api/lights", "POST", { enabled: !on });

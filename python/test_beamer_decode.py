@@ -40,5 +40,20 @@ class DropframeTests(unittest.TestCase):
         self.assertFalse(player.frames_were_dropped("0", "0"))
 
 
+class RefreshRateTests(unittest.TestCase):
+    def test_25_fps_is_shown_at_50_hz(self):
+        rates = player.VideoOutputManager.target_refresh_rates(25)
+        self.assertEqual(rates[0][0], 50)
+        self.assertIn(25, [rate for rate, _mult in rates])
+        self.assertTrue(player.VideoOutputManager.refresh_matches(25, 50))
+        self.assertTrue(player.VideoOutputManager.refresh_matches(25, 25))
+
+    def test_50_fps_can_fall_back_to_25_hz(self):
+        rates = [rate for rate, _mult in player.VideoOutputManager.target_refresh_rates(50)]
+        self.assertEqual(rates[0], 50)
+        self.assertIn(25, rates)
+        self.assertTrue(player.VideoOutputManager.refresh_matches(50, 25))
+
+
 if __name__ == "__main__":
     unittest.main()
