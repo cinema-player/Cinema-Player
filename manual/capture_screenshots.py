@@ -419,7 +419,7 @@ def open_cascade(gui, menu, needle):
             text = str(child.cget("text"))
         except Exception:
             continue
-        if "▸" in text:
+        if text.endswith("  >"):
             rows.append((text, child))
     for (text, row), sub in zip(rows, menu._cascades):
         if needle not in text or sub is None:

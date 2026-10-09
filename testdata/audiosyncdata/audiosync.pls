@@ -1,0 +1,53 @@
+{
+  "projection_zoom": false,
+  "autoplay_delay": 5.0,
+  "idle_media": "AFC Idle.mp4",
+  "idle_media_path": "/home/administrator/Cinema-Player/idle/AFC Idle.mp4",
+  "program_index": 0,
+  "autosave_on_program_change": true,
+  "entries": [
+    {
+      "path": "/home/administrator/Cinema-Player/testdata/audiosyncdata/rec2020-test.mp4",
+      "filename": "rec2020-test.mp4",
+      "duration": 6.0,
+      "container": "MP4",
+      "video_codec": "HEVC",
+      "audio_codec": "AAC",
+      "video_bitrate": 39928,
+      "audio_bitrate": 159856,
+      "width": 1920,
+      "height": 1080,
+      "fps": 24.0,
+      "aspect": "16:9",
+      "pixel_aspect": "1:1",
+      "resolution_label": "HD",
+      "autoplay": false,
+      "loop": true,
+      "audio_tracks": [
+        "1: AAC (und)"
+      ],
+      "subtitle_tracks": [],
+      "audio_track": "1: AAC (und)",
+      "subtitle_track": "--",
+      "in_point": null,
+      "out_point": null,
+      "display_time": 0.0,
+      "is_image": false,
+      "refresh_ok": true,
+      "aspect_warning": false,
+      "par_warning": false,
+      "colorspace_warning": false,
+      "played": true,
+      "missing": false,
+      "volume": 100,
+      "colorspace": "Rec.2020",
+      "color_range": "limited",
+      "hdr_status": "SDR",
+      "loudness_lufs": null,
+      "audio_envelope": null,
+      "light_start": "dark",
+      "light_end": "",
+      "force_settings_warning": false
+    }
+  ]
+}

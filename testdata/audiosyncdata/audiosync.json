@@ -1,5 +1,7 @@
 {
   "delays": {
     "1920x1080@24p": -5
-  }
+  },
+  "beamer_hdmi": "HDMI-1",
+  "audio_output": "alsa/hdmi:CARD=HDMI,DEV=0"
 }

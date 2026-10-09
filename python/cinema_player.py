@@ -1267,33 +1267,63 @@ def clip_needs_settings_warning(entry, enabled=True):
     )
 
 
-def refresh_entry_aspect(entry):
-    """Read display and pixel aspect from the media file when it is still on disk."""
-    if os.path.isfile(entry.path):
-        try:
-            probed = probe_media(entry.path)
-        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError, ValueError, KeyError):
-            probed = None
-        if probed:
-            entry.width = probed.width
-            entry.height = probed.height
-            entry.aspect = probed.aspect
-            entry.pixel_aspect = probed.pixel_aspect
-            entry.resolution_label = probed.resolution_label
-            entry.video_codec = probed.video_codec
-            entry.audio_codec = probed.audio_codec
-            entry.video_bitrate = probed.video_bitrate
-            entry.audio_bitrate = probed.audio_bitrate
-            entry.colorspace = probed.colorspace
-            entry.color_range = probed.color_range
-            return entry
-    entry.pixel_aspect = pixel_aspect_label(
-        entry.width, entry.height, entry.pixel_aspect, entry.aspect
-    )
-    entry.aspect = aspect_label(
-        entry.width, entry.height, entry.aspect, entry.pixel_aspect
-    )
-    return entry
+_PROBE_FIELDS = (
+    "duration", "container", "video_codec", "audio_codec",
+    "video_bitrate", "audio_bitrate", "width", "height", "fps",
+    "aspect", "pixel_aspect", "resolution_label", "is_image",
+    "audio_tracks", "subtitle_tracks", "colorspace", "color_range", "hdr_status",
+)
+
+
+def reload_entry_metadata(entry):
+    """Re-read picture, sound and color metadata. Cue settings stay put.
+
+    Returns True when the file was read. A missing file is flagged and left
+    otherwise unchanged.
+    """
+    if not media_file_available(entry):
+        entry.missing = True
+        return False
+    try:
+        probed = probe_media(entry.path)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, TypeError, ValueError, KeyError):
+        entry.missing = False
+        entry.pixel_aspect = pixel_aspect_label(
+            entry.width, entry.height, entry.pixel_aspect, entry.aspect
+        )
+        entry.aspect = aspect_label(
+            entry.width, entry.height, entry.aspect, entry.pixel_aspect
+        )
+        return False
+    for name in _PROBE_FIELDS:
+        setattr(entry, name, getattr(probed, name))
+    entry.filename = os.path.basename(entry.path)
+    entry.missing = False
+    if entry.is_image:
+        entry.loop = False
+    if entry.audio_tracks:
+        if entry.audio_track not in entry.audio_tracks:
+            entry.audio_track = entry.audio_tracks[0]
+    else:
+        entry.audio_track = "--"
+    tracks = entry.subtitle_tracks or ["--"]
+    if entry.subtitle_track not in tracks:
+        entry.subtitle_track = "--"
+    if entry.duration > 0:
+        if entry.in_point is not None and not 0 <= entry.in_point < entry.duration:
+            entry.in_point = None
+        if entry.out_point is not None and not 0 < entry.out_point <= entry.duration:
+            entry.out_point = None
+        if (
+            entry.in_point is not None
+            and entry.out_point is not None
+            and entry.in_point > entry.out_point
+        ):
+            entry.in_point, entry.out_point = entry.out_point, entry.in_point
+    else:
+        entry.in_point = None
+        entry.out_point = None
+    return True
 
 
 def parse_bitrate_bps(value):

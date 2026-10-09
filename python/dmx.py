@@ -152,17 +152,18 @@ _SCENE_ALIASES = {
 
 @dataclass
 class Scene:
-    """One lighting cue: a name and a brightness for every global DMX channel."""
+    """One lighting cue: a name, a fade, and a brightness for every DMX channel."""
 
     id: str
     name: str = ""
     levels: dict = field(default_factory=dict)
+    fade_ms: int | None = None
 
     def copy(self):
-        return Scene(self.id, self.name, dict(self.levels))
+        return Scene(self.id, self.name, dict(self.levels), self.fade_ms)
 
     def to_dict(self):
-        return {
+        payload = {
             "id": self.id,
             "name": self.name,
             "levels": {
@@ -170,6 +171,9 @@ class Scene:
                 for channel, percent in sorted(self.levels.items())
             },
         }
+        if self.fade_ms is not None:
+            payload["fade_ms"] = max(0, int(self.fade_ms))
+        return payload
 
     @classmethod
     def from_dict(cls, raw):
@@ -190,7 +194,60 @@ class Scene:
             if channel is None:
                 continue
             levels[channel] = clamp_percent(value, 0)
-        return cls(scene_id, name, levels)
+        fade_ms = None
+        if "fade_ms" in raw and raw.get("fade_ms") is not None:
+            fade_ms = _parse_fade_ms(raw.get("fade_ms"))
+        return cls(scene_id, name, levels, fade_ms)
+
+
+@dataclass
+class SceneSequence:
+    """Scenes that run one after another. Each step uses that scene's fade."""
+
+    id: str
+    name: str = ""
+    steps: list = field(default_factory=list)
+
+    def copy(self):
+        return SceneSequence(self.id, self.name, list(self.steps))
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "steps": list(self.steps)}
+
+    @classmethod
+    def from_dict(cls, raw):
+        if isinstance(raw, SceneSequence):
+            return raw.copy()
+        if not isinstance(raw, dict):
+            return None
+        sequence_id = _clean_scene_id(raw.get("id"))
+        if not sequence_id:
+            return None
+        name = str(raw.get("name") or "").strip()
+        if len(name) > SCENE_NAME_LIMIT:
+            name = name[:SCENE_NAME_LIMIT].strip()
+        steps = []
+        for item in raw.get("steps") or []:
+            step = _clean_scene_id(item)
+            if step:
+                steps.append(step)
+        return cls(sequence_id, name, steps)
+
+
+def _parse_fade_ms(value, default=None):
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        if default is None:
+            return None
+        return max(0, int(default))
+
+
+def _scene_fade(scene, default):
+    """Fade stored on the scene, or the default for a new or older cue."""
+    if scene is None or scene.fade_ms is None:
+        return _parse_fade_ms(default, DEFAULT_TRANSITION_MS)
+    return _parse_fade_ms(scene.fade_ms, default)
 
 
 def _clean_scene_id(value):
@@ -258,9 +315,10 @@ def _levels_for(current, channels, default):
     return levels
 
 
-def align_scenes(scenes, channels):
+def align_scenes(scenes, channels, fade_ms=None):
     """Dark and bright always exist, and every scene has exactly the global channels."""
     channels = parse_channels(channels) or [1]
+    default_fade = DEFAULT_TRANSITION_MS if fade_ms is None else fade_ms
     incoming = []
     seen = set()
     for raw in scenes or []:
@@ -277,11 +335,17 @@ def align_scenes(scenes, channels):
             scene_id,
             scene.name if scene else "",
             _levels_for(scene.levels if scene else {}, channels, default),
+            _scene_fade(scene, default_fade),
         ))
     for scene in incoming:
         if scene.id in PROTECTED_SCENES:
             continue
-        result.append(Scene(scene.id, scene.name, _levels_for(scene.levels, channels, 0)))
+        result.append(Scene(
+            scene.id,
+            scene.name,
+            _levels_for(scene.levels, channels, 0),
+            _scene_fade(scene, default_fade),
+        ))
     return result
 
 
@@ -293,13 +357,16 @@ def _fresh_scene_id(scenes):
     return f"scene-{number}"
 
 
-def add_scene(scenes, channels, name=""):
-    scenes = align_scenes(scenes, channels)
+def add_scene(scenes, channels, name="", fade_ms=None):
+    default_fade = DEFAULT_TRANSITION_MS if fade_ms is None else fade_ms
+    scenes = align_scenes(scenes, channels, default_fade)
     name = str(name or "").strip()
     if len(name) > SCENE_NAME_LIMIT:
         name = name[:SCENE_NAME_LIMIT].strip()
-    scenes.append(Scene(_fresh_scene_id(scenes), name, {}))
-    return align_scenes(scenes, channels)
+    scenes.append(Scene(
+        _fresh_scene_id(scenes), name, {}, _scene_fade(None, default_fade),
+    ))
+    return align_scenes(scenes, channels, default_fade)
 
 
 def delete_scene(scenes, scene_id, channels):
@@ -310,11 +377,11 @@ def delete_scene(scenes, scene_id, channels):
     return align_scenes(kept, channels)
 
 
-def scenes_from_config(data, channels):
+def scenes_from_config(data, channels, fade_ms=None):
     """Load scenes. Older configs stored one percent per Dark/Medium/Bright preset."""
     raw = data.get("scenes") if isinstance(data, dict) else None
     if isinstance(raw, list):
-        return align_scenes(raw, channels)
+        return align_scenes(raw, channels, fade_ms)
     presets = data.get("presets") if isinstance(data, dict) and isinstance(data.get("presets"), dict) else None
     channels = parse_channels(channels) or [1]
     if not presets:
@@ -328,7 +395,92 @@ def scenes_from_config(data, channels):
     if "medium" in presets:
         medium = clamp_percent(presets["medium"], 40)
         scenes.append(Scene("medium", "", {channel: medium for channel in channels}))
-    return align_scenes(scenes, channels)
+    return align_scenes(scenes, channels, fade_ms)
+
+
+def _fresh_sequence_id(sequences):
+    used = {sequence.id for sequence in sequences}
+    number = 1
+    while f"seq-{number}" in used:
+        number += 1
+    return f"seq-{number}"
+
+
+def align_sequences(sequences, scenes):
+    """Keep sequences whose steps still point at real scenes."""
+    known = {scene.id for scene in scenes or []}
+    result = []
+    seen = set()
+    for raw in sequences or []:
+        sequence = SceneSequence.from_dict(raw)
+        if sequence is None or sequence.id in seen or sequence.id in known:
+            continue
+        seen.add(sequence.id)
+        sequence.steps = [step for step in sequence.steps if step in known]
+        result.append(sequence)
+    return result
+
+
+def add_sequence(sequences, scenes, name=""):
+    """A new sequence starts with Dark then Bright and can be reordered."""
+    sequences = align_sequences(sequences, scenes)
+    name = str(name or "").strip()
+    if len(name) > SCENE_NAME_LIMIT:
+        name = name[:SCENE_NAME_LIMIT].strip()
+    steps = [scene.id for scene in scenes if scene.id in PROTECTED_SCENES]
+    sequences.append(SceneSequence(_fresh_sequence_id(sequences), name, steps))
+    return align_sequences(sequences, scenes)
+
+
+def delete_sequence(sequences, sequence_id, scenes):
+    target = _clean_scene_id(sequence_id)
+    kept = [sequence for sequence in sequences or [] if sequence.id != target]
+    return align_sequences(kept, scenes)
+
+
+def find_sequence(sequences, value):
+    text = str(value or "").strip()
+    if not text or not sequences:
+        return None
+    folded = text.casefold()
+    for sequence in sequences:
+        if sequence.id.casefold() == folded:
+            return sequence
+    for sequence in sequences:
+        if sequence.name and sequence.name.casefold() == folded:
+            return sequence
+    return None
+
+
+def sequence_steps(sequence, scenes):
+    """Scenes of a sequence, in order, skipping any step that no longer exists."""
+    if sequence is None:
+        return []
+    steps = []
+    for step in sequence.steps:
+        scene = find_scene(scenes, step)
+        if scene is not None:
+            steps.append(scene)
+    return steps
+
+
+def cue_key(value, scenes=None, sequences=None):
+    """Scene or sequence id. Empty and 'auto' stay empty."""
+    key = scene_key(value, scenes)
+    if key:
+        return key
+    found = find_sequence(sequences, value)
+    return found.id if found is not None else ""
+
+
+def find_cue(value, scenes=None, sequences=None):
+    key = cue_key(value, scenes, sequences)
+    if not key:
+        return None
+    sequence = find_sequence(sequences, key)
+    if sequence is not None:
+        return sequence
+    return find_scene(scenes, key)
 
 
 def level_for(scenes, scene_id, channel, default=0):
@@ -431,8 +583,11 @@ def already_at_preset(current, target, scenes=None):
     return bool(key) and key == scene_key(current, scenes)
 
 
-def resolve_start_preset(light_start, scenes=None):
-    """Film start: the chosen scene, otherwise house lights down."""
+def resolve_start_preset(light_start, scenes=None, sequences=None):
+    """Film start: the chosen scene or sequence, otherwise house lights down."""
+    sequence = find_sequence(sequences, light_start)
+    if sequence is not None:
+        return sequence.id
     key = scene_key(light_start, scenes)
     if scenes is not None:
         found = find_scene(scenes, key) if key else None
@@ -440,8 +595,11 @@ def resolve_start_preset(light_start, scenes=None):
     return key or SCENE_DARK
 
 
-def play_preset(value, scenes=None):
-    """Scene while the clip plays. Empty or dark is the default (not shown)."""
+def play_preset(value, scenes=None, sequences=None):
+    """Scene or sequence while the clip plays. Empty or dark is the default (not shown)."""
+    sequence = find_sequence(sequences, value)
+    if sequence is not None:
+        return sequence.id
     key = scene_key(value, scenes)
     if key in ("", SCENE_DARK):
         return ""
@@ -502,11 +660,13 @@ def _is_dmx_config(data):
 def load_lights_config(raw):
     data = raw if isinstance(raw, dict) else {}
     output = DmxOutput.from_dict(data if _is_dmx_config(data) else {})
-    scenes = scenes_from_config(data, output.channels)
     try:
         transition_ms = int(data.get("transition_ms", DEFAULT_TRANSITION_MS))
     except (TypeError, ValueError):
         transition_ms = DEFAULT_TRANSITION_MS
+    transition_ms = max(0, transition_ms)
+    scenes = scenes_from_config(data, output.channels, transition_ms)
+    sequences = align_sequences(data.get("sequences") if isinstance(data, dict) else None, scenes)
     enabled = False
     if _is_dmx_config(data) and "enabled" in data:
         value = data.get("enabled")
@@ -519,10 +679,11 @@ def load_lights_config(raw):
     return (
         output,
         scenes,
-        max(0, transition_ms),
+        transition_ms,
         enabled,
         start_lead_ms,
         end_lead_ms,
+        sequences,
     )
 
 
@@ -533,15 +694,19 @@ def dump_lights_config(
     enabled=True,
     start_lead_ms=0,
     end_lead_ms=0,
+    sequences=None,
 ):
     output = DmxOutput.from_dict(output.to_dict() if hasattr(output, "to_dict") else output)
+    fade = max(0, int(transition_ms))
     if isinstance(scenes, dict):
-        scenes = scenes_from_config({"presets": scenes}, output.channels)
+        scenes = scenes_from_config({"presets": scenes}, output.channels, fade)
+    aligned = align_scenes(scenes, output.channels, fade)
     payload = output.to_dict()
     payload.update({
         "enabled": bool(enabled),
-        "scenes": [scene.to_dict() for scene in align_scenes(scenes, output.channels)],
-        "transition_ms": max(0, int(transition_ms)),
+        "scenes": [scene.to_dict() for scene in aligned],
+        "sequences": [sequence.to_dict() for sequence in align_sequences(sequences, aligned)],
+        "transition_ms": fade,
         "start_lead_ms": max(0, int(start_lead_ms or 0)),
         "end_lead_ms": max(0, int(end_lead_ms or 0)),
     })

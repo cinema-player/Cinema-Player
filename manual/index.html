@@ -212,18 +212,25 @@
     <p data-lang="de">Der Zeiger, welcher Film als nächstes gespielt wird, springt nach dem Ende eines Films automatisch weiter. Mit dieser Funktion kann der Zeiger händisch gesetzt werden. Die Option ist während der Wiedergabe deaktiviert.</p>
 
     <h3>
-      <span data-lang="en">Toggle autoplay</span>
-      <span data-lang="de">Autoplay umschalten</span>
+      <span data-lang="en">Autoplay</span>
+      <span data-lang="de">Autoplay</span>
     </h3>
     <p data-lang="en">Turns autoplay on or off. With autoplay on, the next clip starts by itself. The same switch sits in the preview clip-settings row.</p>
     <p data-lang="de">Die Autoplay-Funktion kann hier umgeschaltet werden. Bei aktivem Autoplay wird der nächste Film automatisch gestartet. Diese Umschaltmöglichkeit besteht auch im Block zum Programmablauf des Vorschaufensters.</p>
 
     <h3>
-      <span data-lang="en">Toggle loop</span>
-      <span data-lang="de">Loop umschalten</span>
+      <span data-lang="en">Loop</span>
+      <span data-lang="de">Loop</span>
     </h3>
     <p data-lang="en">Turns loop on or off. With loop on, the clip repeats until <strong>Resume</strong> ends it. The same switch sits in preview.</p>
     <p data-lang="de">Die Loop-Funktion kann hier umgeschaltet werden. Bei aktivem Loop wird der Film endlos in einer Schleife gespielt, bis diese durch die <strong>Weiter</strong>-Taste beendet wird. Diese Umschaltmöglichkeit besteht auch im Block zum Programmablauf des Vorschaufensters.</p>
+
+    <h3>
+      <span data-lang="en">Refresh</span>
+      <span data-lang="de">Aktualisieren</span>
+    </h3>
+    <p data-lang="en">Re-reads this file: resolution, codecs, color, and HDR/SDR. Autoplay, loop, volume, and cue points stay. <em>Settings → Playlist → Refresh</em> does the same for every entry.</p>
+    <p data-lang="de">Liest diese Datei neu ein: Auflösung, Codecs, Farbraum und SDR/HDR. Autoplay, Loop, Lautstärke und Ein-/Ausstieg bleiben. <em>Einstellungen → Playlist → Aktualisieren</em> macht dasselbe für alle Einträge.</p>
 
     <h3>
       <span data-lang="en">Relink</span>
@@ -231,8 +238,8 @@
     </h3>
     <p data-lang="en">If the file is missing, the row turns red and the program skips it. <em>Relink</em> sets a new path.</p>
     <p data-lang="de">Ist die Datei nicht auffindbar, wird der Playlist-Eintrag rot dargestellt und im Programmablauf übersprungen. Mit <em>Neu verknüpfen</em> kann der Pfad auf die Datei neu gesetzt werden.</p>
-    <p data-lang="en">To check every media path, use <em>Settings → Playlist → Check video files</em>.</p>
-    <p data-lang="de">Um zu überprüfen, ob alle Dateipfade zu den Mediendateien korrekt sind, in den Einstellungen <em>Einstellungen → Playlist → Videodateien prüfen</em> auswählen.</p>
+    <p data-lang="en">To re-check every path and reload metadata, use <em>Settings → Playlist → Refresh</em>.</p>
+    <p data-lang="de">Um alle Pfade zu prüfen und die Metadaten neu zu laden, <em>Einstellungen → Playlist → Aktualisieren</em> wählen.</p>
 
     <h3>
       <span data-lang="en">Delete entry</span>
@@ -287,10 +294,10 @@
     <p data-lang="de">Ein Pausenmedium ist ein Film oder Standbild, das statt des Schwarzbildes gezeigt wird. Filme werden dabei in einer Endlosschleife gespielt.</p>
     <p data-lang="en"><strong>Resume</strong> starts the next clip and ends the idle picture.</p>
     <p data-lang="de">Wird der nächste Film mit <strong>WEITER</strong> gestartet, beendet dies die Anzeige des Pausenmediums.</p>
-    <p data-lang="en">Choose the file under <em>Settings → Playlist → Idle media</em>. There you can also set seconds of black between idle media and the start of a clip, and between the end of a clip and idle media again.</p>
-    <p data-lang="de">Das Pausenmedium kann in den Einstellungen unter <em>Einstellungen → Playlist → Pausenmedium</em> ausgewählt werden. Dort kann auch eine Zeit gewählt werden, in der zwischen dem Pausenmedium und dem Filmbeginn beziehungsweise dem Filmende und der erneuten Anzeige des Pausenmediums ein schwarzes Bild gezeigt wird.</p>
-    <p data-lang="en">If a file is set, its name appears in the playlist header.</p>
-    <p data-lang="de">Ist ein Medium ausgewählt, wird dies im Kopf der Playlist angezeigt.</p>
+    <p data-lang="en">Choose the file under <em>Settings → Program → Idle media</em>. There you can also set seconds of black between idle media and the start of a clip, and between the end of a clip and idle media again.</p>
+    <p data-lang="de">Das Pausenmedium kann in den Einstellungen unter <em>Einstellungen → Programm → Pausenmedium</em> ausgewählt werden. Dort kann auch eine Zeit gewählt werden, in der zwischen dem Pausenmedium und dem Filmbeginn beziehungsweise dem Filmende und der erneuten Anzeige des Pausenmediums ein schwarzes Bild gezeigt wird.</p>
+    <p data-lang="en">If a file is set, its name appears on the same line as the next playlist entry.</p>
+    <p data-lang="de">Ist ein Medium ausgewählt, steht der Name auf derselben Zeile wie der nächste Playlist-Eintrag.</p>
     <p data-lang="en"><strong>Default.</strong> Settings can turn on <strong>Use default Idle Media</strong>. Then the file in the <code>idle</code> folder is used.</p>
     <p data-lang="de"><strong>Standard.</strong> In den Einstellungen kann das <strong>Standard-Pausenmedium</strong> eingeschaltet werden. In dem Fall wird die Datei, die im Verzeichnis <code>idle</code> abgelegt ist, als Pausenmedium verwendet.</p>
 
@@ -566,8 +573,8 @@
     <figure class="snip">
       <img src="images/guide/menu-program.png" alt="Program submenu">
     </figure>
-    <p data-lang="en">When this is on, the media (film / still) in the <code>idle</code> folder is always used as idle media.</p>
-    <p data-lang="de">Ist die Funktion ausgewählt, wird das Medium (Film / Bild) aus dem idle-Verzeichnis immer als Pausenmedium genutzt.</p>
+    <p data-lang="en"><strong>Idle media</strong> is the first item. Under it, <strong>Use default Idle Media</strong> always uses the file in the <code>idle</code> folder. <strong>Settings warning</strong> is the last item, below a line.</p>
+    <p data-lang="de"><strong>Pausenmedium</strong> steht an erster Stelle. Darunter schaltet <strong>Standard-Pausenmedium verwenden</strong> die Datei aus dem Verzeichnis <code>idle</code> ein. <strong>Einstellungswarnung</strong> steht ganz unten, unter einer Linie.</p>
 
     <h3>
       <span data-lang="en">Playlist</span>
@@ -576,8 +583,8 @@
     <figure class="snip">
       <img data-lang="en" src="images/menu-playlist-en.png" alt="Playlist submenu in English">
       <img data-lang="de" src="images/guide/menu-playlist.png" alt="Playlist-Untermenü">
-      <figcaption data-lang="en">Check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness.</figcaption>
-      <figcaption data-lang="de">Videodateien prüfen, Playlist zurücksetzen, Einstellungswarnung, automatisch speichern, letzte Playlist laden, Pausenmedium, Audioanalyse.</figcaption>
+      <figcaption data-lang="en">Refresh, reset, autosave, load last playlist, analyze loudness.</figcaption>
+      <figcaption data-lang="de">Aktualisieren, Playlist zurücksetzen, automatisch speichern, letzte Playlist laden, Audioanalyse.</figcaption>
     </figure>
 
     <h3>
@@ -634,8 +641,8 @@
       <span data-lang="en">Audio calibration</span>
       <span data-lang="de">Audiokalibrierung</span>
     </h4>
-    <p data-lang="en">Calibration of picture–sound offset for each resolution / frame-rate combination. Under the program volume slider an extra slider for A/V delay appears. <strong>Save</strong> stores the measured values so they can be loaded later. The values apply to the whole playlist.</p>
-    <p data-lang="de">Kalibrierung des Ton-Bild-Versatzes für jede Auflösungs-/Bildraten-Kombination. Unter dem Lautstärkeregler im Programm erscheint ein zusätzlicher Regler für den Bild-Ton-Versatz. Mit <strong>Speichern</strong> werden die Messwerte abgelegt und können später wieder geladen werden. Die Werte gelten für die gesamte Playlist.</p>
+    <p data-lang="en">Calibration of picture–sound offset for each resolution / frame-rate combination. Under the program volume slider an extra slider for A/V delay appears. <strong>Save</strong> stores the measured values together with the Beamer HDMI output and the audio output, so they can be loaded later. The values apply to the whole playlist.</p>
+    <p data-lang="de">Kalibrierung des Ton-Bild-Versatzes für jede Auflösungs-/Bildraten-Kombination. Unter dem Lautstärkeregler im Programm erscheint ein zusätzlicher Regler für den Bild-Ton-Versatz. Mit <strong>Speichern</strong> werden die Messwerte zusammen mit dem Beamer-HDMI-Ausgang und dem Audioausgang abgelegt und können später wieder geladen werden. Die Werte gelten für die gesamte Playlist.</p>
     <p class="center-caption" data-lang="en">A meter that sets the offset automatically to 1 millisecond is in development. Calibration should then run fully automatically.</p>
     <p class="center-caption" data-lang="de">Ein Messgerät, das den Versatz auf 1 Millisekunde genau automatisch einstellt, ist in Entwicklung. Die Kalibrierung soll dann vollautomatisch erfolgen.</p>
     <h4>

@@ -90,6 +90,50 @@ class PresetTests(unittest.TestCase):
         self.assertIsNone(dmx.find_scene(scenes, "Putzlicht"))
         self.assertEqual([scene.id for scene in scenes], ["dark", "bright"])
 
+    def test_new_scene_uses_the_given_fade_and_keeps_the_others(self):
+        scenes = dmx.align_scenes([
+            {"id": "dark", "fade_ms": 400, "levels": {"1": 0}},
+            {"id": "bright", "fade_ms": 900, "levels": {"1": 100}},
+        ], [1], 2500)
+        scenes = dmx.add_scene(scenes, [1], "Putzlicht", fade_ms=1500)
+        self.assertEqual(dmx.find_scene(scenes, "dark").fade_ms, 400)
+        self.assertEqual(dmx.find_scene(scenes, "bright").fade_ms, 900)
+        self.assertEqual(dmx.find_scene(scenes, "Putzlicht").fade_ms, 1500)
+
+    def test_missing_fade_uses_the_saved_default(self):
+        _output, scenes, transition, _enabled, _start, _end, _sequences = dmx.load_lights_config({
+            "mode": "enttec",
+            "channels": [1],
+            "transition_ms": 1800,
+            "scenes": [{"id": "dark", "levels": {"1": 0}}, {"id": "bright", "levels": {"1": 100}}],
+        })
+        self.assertEqual(transition, 1800)
+        self.assertEqual(dmx.find_scene(scenes, "dark").fade_ms, 1800)
+        self.assertEqual(dmx.find_scene(scenes, "bright").fade_ms, 1800)
+
+    def test_sequence_keeps_scene_order_and_drops_missing_steps(self):
+        scenes = dmx.align_scenes([], [1])
+        sequences = dmx.add_sequence([], scenes, "Anfang")
+        self.assertEqual(sequences[0].steps, ["dark", "bright"])
+        sequences[0].steps = ["bright", "missing", "dark"]
+        dumped = dmx.dump_lights_config(
+            dmx.DmxOutput(mode="enttec", channels=[1]),
+            scenes,
+            1000,
+            True,
+            sequences=sequences,
+        )
+        _output, loaded, _transition, _enabled, _start, _end, sequences = dmx.load_lights_config(dumped)
+        self.assertEqual(len(sequences), 1)
+        self.assertEqual(sequences[0].name, "Anfang")
+        self.assertEqual(sequences[0].steps, ["bright", "dark"])
+        self.assertEqual(
+            [scene.id for scene in dmx.sequence_steps(sequences[0], loaded)],
+            ["bright", "dark"],
+        )
+        self.assertEqual(dmx.play_preset("Anfang", loaded, sequences), sequences[0].id)
+        self.assertEqual(dmx.resolve_start_preset("Anfang", loaded, sequences), sequences[0].id)
+
     def test_frame_for_levels_keeps_channels_apart(self):
         frame = dmx.frame_for_levels({1: 100, 4: 0, 2: 40})
         self.assertEqual(frame[0], 255)
@@ -365,7 +409,7 @@ class ArtNetSendTests(unittest.TestCase):
 
 class ConfigTests(unittest.TestCase):
     def test_shelly_settings_keep_presets_and_stay_off(self):
-        output, scenes, transition, enabled, start_lead, end_lead = dmx.load_lights_config({
+        output, scenes, transition, enabled, start_lead, end_lead, _sequences = dmx.load_lights_config({
             "enabled": True,
             "devices": [{"host": "10.0.0.8", "enabled": True}],
             "presets": {"bright": 90, "medium": 30, "dark": 5},
@@ -393,7 +437,7 @@ class ConfigTests(unittest.TestCase):
             200,
             300,
         )
-        output, scenes, transition, enabled, start_lead, end_lead = dmx.load_lights_config(dumped)
+        output, scenes, transition, enabled, start_lead, end_lead, _sequences = dmx.load_lights_config(dumped)
         self.assertTrue(enabled)
         self.assertEqual(output.mode, "artnet")
         self.assertEqual(output.host, "10.0.0.5")
@@ -418,7 +462,7 @@ class ConfigTests(unittest.TestCase):
             500,
             True,
         )
-        _output, loaded, _transition, enabled, _start, _end = dmx.load_lights_config(dumped)
+        _output, loaded, _transition, enabled, _start, _end, _sequences = dmx.load_lights_config(dumped)
         self.assertTrue(enabled)
         self.assertEqual(dmx.level_for(loaded, "dark", 3), 10)
         self.assertEqual(dmx.level_for(loaded, "bright", 3), 80)
@@ -432,7 +476,7 @@ class ConfigTests(unittest.TestCase):
             500,
             True,
         )
-        output, scenes, transition, enabled, _start_lead, _end_lead = dmx.load_lights_config(dumped)
+        output, scenes, transition, enabled, _start_lead, _end_lead, _sequences = dmx.load_lights_config(dumped)
         self.assertTrue(enabled)
         self.assertEqual(output.mode, "opendmx")
         self.assertEqual(output.device, "/dev/ttyUSB1")
@@ -476,7 +520,11 @@ class ConfigTests(unittest.TestCase):
             "lights_scene_name",
             "lights_scene_channel",
             "lights_scene_hint",
+            "lights_scene_fade",
+            "lights_sequence_add",
+            "lights_sequence_mark",
             "scene_new",
+            "sequence_new",
         )
         for key in keys:
             self.assertTrue(language.STRINGS["en"][key], key)
