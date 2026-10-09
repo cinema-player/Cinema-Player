@@ -701,6 +701,7 @@ class PlaylistEntry:
     volume: int = 100
     colorspace: str = "--"
     color_range: str = ""
+    hdr_status: str = "Unknown"
     loudness_lufs: float | None = None
     audio_envelope: list | None = None
     light_start: str = ""
@@ -1492,6 +1493,8 @@ def probe_media(path):
         entry.video_bitrate = stream_bitrate_bps(video, entry.duration)
         entry.colorspace = format_colorspace(video)
         entry.color_range = format_color_range(video)
+        from video_color_status import classify_video_stream
+        entry.hdr_status = classify_video_stream(video)
 
     if audios:
         names = []
