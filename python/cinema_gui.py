@@ -7,6 +7,7 @@ import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import threading
@@ -45,6 +46,8 @@ from cinema_player import (
     clamp_volume,
     find_mpv,
     find_ffmpeg,
+    about_package_rows,
+    read_copyright,
     header_version_text,
     read_mpv_version,
     format_bitrate,
@@ -116,6 +119,7 @@ def sync_fonts():
 
 
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
+LOGO_ABOUT_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
 LOGO_ICON_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-icon.png")
 BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.png")
 # mpv log2 zoom: -0.8 ≈ 57% size, so the wide logo does not fill the screen width.
@@ -850,19 +854,68 @@ class IconTooltip:
         if self._window is not None or not self.text:
             return
         try:
-            x = self.widget.winfo_rootx()
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+            anchor_x = self.widget.winfo_rootx()
+            below = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+            above_anchor = self.widget.winfo_rooty() - 6
         except tk.TclError:
             return
         tip = tk.Toplevel(self.widget)
         tip.wm_overrideredirect(True)
         tip.configure(bg=COLOR_TIP_BG)
-        tip.wm_geometry(f"+{x}+{y}")
-        tk.Label(
+        label = tk.Label(
             tip, text=self.text, font=FONT_TOOLTIP, bg=COLOR_TIP_BG, fg=COLOR_TIP_FG,
-            relief="flat", bd=0, padx=10, pady=6,
-        ).pack()
+            relief="flat", bd=0, padx=10, pady=6, justify="left",
+        )
+        label.pack()
+        try:
+            tip.update_idletasks()
+            width = max(tip.winfo_reqwidth(), 1)
+            height = max(tip.winfo_reqheight(), 1)
+            left, top, right, bottom = self._monitor_edges()
+            margin = 4
+            room = max(40, right - left - 2 * margin)
+            if width > room:
+                label.configure(wraplength=max(20, room - 20))
+                tip.update_idletasks()
+                width = max(tip.winfo_reqwidth(), 1)
+                height = max(tip.winfo_reqheight(), 1)
+            x = anchor_x
+            y = below
+            if x + width > right - margin:
+                x = right - margin - width
+            if x < left + margin:
+                x = left + margin
+            if y + height > bottom - margin:
+                y = above_anchor - height
+            if y < top + margin:
+                y = top + margin
+            if y + height > bottom - margin:
+                y = max(top + margin, bottom - margin - height)
+            tip.wm_geometry(f"{width}x{height}+{int(x)}+{int(y)}")
+        except tk.TclError:
+            tip.destroy()
+            return
         self._window = tip
+
+    def _monitor_edges(self):
+        """Control-monitor rectangle. Falls back to the window that owns the widget."""
+        root = self.widget.winfo_toplevel()
+        getter = getattr(root, "tooltip_screen_bounds", None)
+        bounds = None
+        if callable(getter):
+            try:
+                bounds = getter()
+            except Exception:
+                bounds = None
+        if bounds:
+            width, height, x, y = bounds
+            return x, y, x + width, y + height
+        try:
+            x = root.winfo_rootx()
+            y = root.winfo_rooty()
+            return x, y, x + max(root.winfo_width(), 1), y + max(root.winfo_height(), 1)
+        except tk.TclError:
+            return 0, 0, self.widget.winfo_screenwidth(), self.widget.winfo_screenheight()
 
 
 class DropdownMenu(tk.Frame):
@@ -1839,7 +1892,9 @@ class VideoPlayerGUI:
         self.remote_api_token = tk.StringVar(value=str(self.settings.get("remote_api_token", "") or ""))
         self.remote_api = RemoteAPIServer(self)
         self.remote_window = None
+        self.remote_window_indicator = None
         self.lights_window = None
+        self.lights_window_indicator = None
         self.patch_window = None
         self.output_manager.set_audio_patch(self.settings.get("audio_patch"))
         lights_cfg = self.settings.get("lights") if isinstance(self.settings.get("lights"), dict) else {}
@@ -1903,6 +1958,7 @@ class VideoPlayerGUI:
         self.beamer_details_open = False
         self._volume_preview_key = None
         self._volume_program_key = None
+        self.root.tooltip_screen_bounds = self._tooltip_screen_bounds
 
         self.create_gui()
         self._arm_menu_dismiss_binds()
@@ -2103,6 +2159,14 @@ class VideoPlayerGUI:
         except OSError:
             pass
         self.rebuild_gui()
+
+    def _tooltip_screen_bounds(self):
+        """Rectangle tooltips must stay inside: the control monitor, never the projector."""
+        try:
+            geometry = self._control_fullscreen_geometry()
+        except Exception:
+            geometry = None
+        return geometry
 
     def _control_fullscreen_geometry(self):
         """Size/position of the control monitor; never the beamer output."""
@@ -2840,24 +2904,34 @@ class VideoPlayerGUI:
         canvas.tooltip = IconTooltip(canvas, t("manual"))
         return canvas
 
-    def _build_remote_indicator(self, parent):
-        """Radio icon in the header; grey while the smartphone API is off."""
+    def _make_indicator_canvas(self, parent, command, tooltip):
+        """36-pixel header icon. The same drawing is used in the settings windows."""
         size = 36
         canvas = tk.Canvas(
             parent, width=size, height=size, bg=parent.cget("bg"),
             highlightthickness=0, bd=0, cursor="hand2",
         )
-        canvas.bind("<Button-1>", lambda _event: self.show_remote_control())
-        canvas.tooltip = IconTooltip(canvas, t("remote_control"))
-        self.remote_indicator = canvas
-        self._refresh_header_indicators()
+        canvas.bind("<Button-1>", command)
+        canvas.tooltip = IconTooltip(canvas, tooltip)
         return canvas
 
-    def _paint_remote_indicator(self, color):
-        canvas = getattr(self, "remote_indicator", None)
+    def _build_remote_indicator(self, parent):
+        """Radio icon in the header; grey while the smartphone API is off."""
+        self.remote_indicator = self._make_indicator_canvas(
+            parent, lambda _event: self.show_remote_control(), t("remote_control"),
+        )
+        self._refresh_header_indicators()
+        return self.remote_indicator
+
+    def _paint_remote_indicator(self, canvas, color):
         if canvas is None:
             return
-        canvas.delete("all")
+        try:
+            if not int(canvas.winfo_exists()):
+                return
+            canvas.delete("all")
+        except tk.TclError:
+            return
         cx, cy = 18, 25.2
         canvas.create_oval(cx - 2.5, cy - 2.5, cx + 2.5, cy + 2.5, fill=color, outline="")
         for radius, start in ((8, 48), (14, 38)):
@@ -2869,22 +2943,21 @@ class VideoPlayerGUI:
 
     def _build_lights_indicator(self, parent):
         """Bulb in the header; grey while house-light control is off."""
-        size = 36
-        canvas = tk.Canvas(
-            parent, width=size, height=size, bg=parent.cget("bg"),
-            highlightthickness=0, bd=0, cursor="hand2",
+        self.lights_indicator = self._make_indicator_canvas(
+            parent, lambda _event: self.show_lights(), t("lights"),
         )
-        canvas.bind("<Button-1>", lambda _event: self.show_lights())
-        canvas.tooltip = IconTooltip(canvas, t("lights"))
-        self.lights_indicator = canvas
         self._refresh_header_indicators()
-        return canvas
+        return self.lights_indicator
 
-    def _paint_lights_indicator(self, color, lit=True):
-        canvas = getattr(self, "lights_indicator", None)
+    def _paint_lights_indicator(self, canvas, color, lit=True):
         if canvas is None:
             return
-        canvas.delete("all")
+        try:
+            if not int(canvas.winfo_exists()):
+                return
+            canvas.delete("all")
+        except tk.TclError:
+            return
         canvas.create_oval(11, 4, 25, 21, outline=color, width=2)
         if lit:
             canvas.create_oval(14, 8, 22, 16, outline="", fill=color)
@@ -2893,10 +2966,58 @@ class VideoPlayerGUI:
         canvas.create_line(16, 29, 20, 29, fill=color, width=2)
         canvas.create_line(17, 32, 19, 32, fill=color, width=2)
 
+    def _place_window_indicator(self, window, kind):
+        """Pin the header icon at the top right; a click switches that function."""
+        bar = tk.Frame(window, bg=COLOR_BG)
+        bar.pack(side="top", fill="x", padx=10, pady=(8, 0))
+        if kind == "remote":
+            canvas = self._make_indicator_canvas(
+                bar, self._toggle_remote_window, t("remote_control"),
+            )
+            self.remote_window_indicator = canvas
+        else:
+            canvas = self._make_indicator_canvas(
+                bar, self._toggle_lights_window, t("lights"),
+            )
+            self.lights_window_indicator = canvas
+        canvas.pack(side="right")
+        self._refresh_header_indicators()
+        return canvas
+
+    def _toggle_remote_window(self, _event=None):
+        enabled = getattr(self, "remote_api_enabled", None)
+        if enabled is None:
+            return "break"
+        enabled.set(not bool(enabled.get()))
+        self._apply_remote_api_settings()
+        return "break"
+
+    def _toggle_lights_window(self, _event=None):
+        control = getattr(self, "lights_control", None)
+        if control is None or not self._dmx_ready():
+            return "break"
+        control.set(not bool(control.get()))
+        self._on_lights_control()
+        return "break"
+
     def _refresh_header_indicators(self):
         """Keep radio and bulb visible; grey when the function is off."""
         remote = getattr(self, "remote_indicator", None)
         lights = getattr(self, "lights_indicator", None)
+        running = bool(getattr(self, "remote_api", None) and self.remote_api.running)
+        lights_on = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
+        remote_color = COLOR_VOLUME if running else COLOR_PLAYED
+        lights_color = COLOR_PREVIEW if lights_on else COLOR_PLAYED
+        self._paint_remote_indicator(remote, remote_color)
+        self._paint_remote_indicator(getattr(self, "remote_window_indicator", None), remote_color)
+        self._paint_lights_indicator(lights, lights_color, lit=lights_on)
+        window_lights = getattr(self, "lights_window_indicator", None)
+        self._paint_lights_indicator(window_lights, lights_color, lit=lights_on)
+        if window_lights is not None:
+            try:
+                window_lights.configure(cursor="hand2" if self._dmx_ready() else "arrow")
+            except tk.TclError:
+                self.lights_window_indicator = None
         for canvas in (remote, lights):
             if canvas is None:
                 continue
@@ -2906,12 +3027,8 @@ class VideoPlayerGUI:
                 pass
         try:
             if remote is not None:
-                running = bool(self.remote_api and self.remote_api.running)
-                self._paint_remote_indicator(COLOR_VOLUME if running else COLOR_PLAYED)
                 remote.pack(side="right", padx=(0, 4))
             if lights is not None:
-                on = bool(self.lights_control.get())
-                self._paint_lights_indicator(COLOR_PREVIEW if on else COLOR_PLAYED, lit=on)
                 lights.pack(side="right", padx=(0, 4))
         except tk.TclError:
             pass
@@ -3058,7 +3175,154 @@ class VideoPlayerGUI:
             except tk.TclError:
                 pass
 
+    def _tcl_tk_version(self):
+        try:
+            tcl = self.root.tk.call("info", "patchlevel")
+            toolkit = self.root.tk.call("package", "require", "Tk")
+        except tk.TclError:
+            return ""
+        return f"Tk {toolkit}, Tcl {tcl}"
+
+    def _about_version_line(self):
+        return header_version_text(
+            APP_VERSION,
+            read_mpv_version(getattr(self, "mpv_path", "") or ""),
+            session_display_name(),
+        )
+
+    def show_about(self):
+        window = getattr(self, "about_window", None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.deiconify()
+                    window.lift()
+                    window.focus_force()
+                    return
+            except tk.TclError:
+                self.about_window = None
+        window = tk.Toplevel(self.root)
+        window.title(t("about_app"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(420, 360)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_about_window)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("remote_control_close"), font=FONT_UI, command=self._close_about_window,
+        ).pack(side="right")
+        body = self._install_popup_scroll(window, COLOR_BG, padx=16, pady=(12, 8))
+        logo = self._load_image(LOGO_ABOUT_FILE)
+        window._about_logo_source = logo
+        self.about_logo = logo
+        logo_label = tk.Label(body, bg=COLOR_BG, bd=0)
+        window._about_logo_label = logo_label
+        if logo is not None:
+            logo_label.configure(image=logo)
+            logo_label.pack(pady=(4, 10))
+        window._popup_canvas.bind(
+            "<Configure>", lambda _event, window=window: self._fit_about_logo(window), add="+",
+        )
+        tk.Label(
+            body, text=self._about_version_line(), bg=COLOR_BG, fg=COLOR_TEXT,
+            font=FONT_UI_BOLD, justify="center",
+        ).pack(pady=(0, 8))
+        copyright_info = read_copyright()
+        if copyright_info["notice"]:
+            tk.Label(
+                body, text=copyright_info["notice"], bg=COLOR_BG, fg=COLOR_TEXT, font=FONT_UI,
+            ).pack()
+        if copyright_info["email"]:
+            self._about_link(body, copyright_info["email"], f"mailto:{copyright_info['email']}")
+        if copyright_info["url"]:
+            self._about_link(body, copyright_info["url"], copyright_info["url"])
+        tk.Frame(body, bg=COLOR_BORDER, height=1).pack(fill="x", pady=(12, 8))
+        tk.Label(
+            body, text=t("about_components"), bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_SMALL,
+        ).pack(anchor="w", pady=(0, 4))
+        table = tk.Frame(body, bg=COLOR_BG)
+        table.pack(fill="x")
+        rows = about_package_rows(
+            getattr(self, "mpv_path", "") or "",
+            platform.python_version(),
+            self._tcl_tk_version(),
+        )
+        for index, (name, version) in enumerate(rows):
+            tk.Label(
+                table, text=name, bg=COLOR_BG, fg=COLOR_TEXT, font=FONT_UI, anchor="w",
+            ).grid(row=index, column=0, sticky="w", pady=1)
+            tk.Label(
+                table, text=self._about_version_value(version), bg=COLOR_BG, fg=COLOR_MUTED,
+                font=FONT_UI, anchor="w",
+            ).grid(row=index, column=1, sticky="w", padx=(18, 0), pady=1)
+        self.about_window = window
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 520, 560)
+        self._fit_about_logo(window)
+
+    def _fit_about_logo(self, window):
+        """Shrink the about logo so both sides stay inside the popup."""
+        if getattr(window, "_about_logo_guard", False):
+            return
+        source = getattr(window, "_about_logo_source", None)
+        label = getattr(window, "_about_logo_label", None)
+        canvas = getattr(window, "_popup_canvas", None)
+        if source is None or label is None or canvas is None:
+            return
+        window._about_logo_guard = True
+        try:
+            if not window.winfo_exists() or not canvas.winfo_exists():
+                return
+            self._fit_popup_scroll(window)
+            available = canvas.winfo_width() - 8
+            if available <= 1:
+                return
+            factor = max(1, math.ceil(source.width() / available))
+            if getattr(window, "_about_logo_factor", None) == factor:
+                return
+            scaled = source if factor == 1 else source.subsample(factor, factor)
+            window._about_logo_factor = factor
+            window._about_logo_scaled = scaled
+            self.about_logo = scaled
+            label.configure(image=scaled)
+        except tk.TclError:
+            pass
+        finally:
+            window._about_logo_guard = False
+
+    def _about_version_value(self, version):
+        if version is None:
+            return t("about_missing")
+        text = str(version).strip()
+        return text or "—"
+
+    def _about_link(self, parent, text, url):
+        label = tk.Label(
+            parent, text=text, bg=COLOR_BG, fg=COLOR_VOLUME, font=FONT_UI, cursor="hand2",
+        )
+        label.pack()
+        label.bind("<Button-1>", lambda _event, target=url: webbrowser.open(target))
+        return label
+
+    def _close_about_window(self):
+        window = getattr(self, "about_window", None)
+        self.about_window = None
+        self.about_logo = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
     def _fill_app_menu(self, menu):
+        menu.add_command(label=t("about_app"), command=self.show_about)
+        menu.add_separator()
         menu.add_checkbutton(
             label=t("window_fullscreen"),
             variable=self.window_fullscreen,
@@ -5849,6 +6113,7 @@ class VideoPlayerGUI:
                     window.lift()
                     window.focus_force()
                     self._fill_remote_urls()
+                    self._refresh_header_indicators()
                     return
             except tk.TclError:
                 self.remote_window = None
@@ -5865,6 +6130,7 @@ class VideoPlayerGUI:
         window.protocol("WM_DELETE_WINDOW", self._close_remote_window)
         buttons = tk.Frame(window, bg=COLOR_BG)
         buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        self._place_window_indicator(window, "remote")
         body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
         tk.Label(
             body, text=t("remote_control_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
@@ -5872,10 +6138,6 @@ class VideoPlayerGUI:
         ).pack(fill="x", pady=(0, 6))
         holder = tk.Frame(body, bg=COLOR_PANEL)
         holder.pack(fill="both", expand=True, pady=(0, 10))
-        self._checkbutton(
-            holder, t("remote_control_enable"), self.remote_api_enabled,
-            self._apply_remote_api_settings, COLOR_PANEL,
-        ).pack(anchor="w", padx=8, pady=(8, 4))
         port_row = tk.Frame(holder, bg=COLOR_PANEL)
         port_row.pack(fill="x", padx=8, pady=4)
         tk.Label(port_row, text=t("remote_control_port"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI).pack(side="left")
@@ -5922,6 +6184,7 @@ class VideoPlayerGUI:
     def _close_remote_window(self):
         window = getattr(self, "remote_window", None)
         self.remote_window = None
+        self.remote_window_indicator = None
         self.remote_url_box = None
         self.remote_qr_canvas = None
         if window is not None:
@@ -7154,6 +7417,7 @@ class VideoPlayerGUI:
                     window.lift()
                     window.focus_force()
                     self._refresh_light_buttons()
+                    self._refresh_header_indicators()
                     return
             except tk.TclError:
                 self.lights_window = None
@@ -7175,6 +7439,7 @@ class VideoPlayerGUI:
             side="right", padx=(0, 8),
         )
         self.lights_window = window
+        self._place_window_indicator(window, "lights")
         holder = self._install_popup_scroll(window, COLOR_PANEL, padx=10, pady=(10, 10))
         self._lights_body = window._popup_canvas
         self._lights_body_frame = holder
@@ -7185,13 +7450,6 @@ class VideoPlayerGUI:
             holder, text=t("lights_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=620, justify="left",
         ).pack(fill="x", padx=8, pady=(8, 6))
-        tools = tk.Frame(holder, bg=COLOR_PANEL)
-        tools.pack(fill="x", padx=8, pady=(8, 4))
-        box = self._checkbutton(
-            tools, t("lights_control"), self.lights_control, self._on_lights_control, COLOR_PANEL,
-        )
-        box.pack(side="right")
-        self.settings_lights_check = box
         output = getattr(self, "dmx_output", None) or dmx.DmxOutput()
         self.lights_mode = tk.StringVar(value=self._lights_mode_label(output.mode))
         self.lights_host = tk.StringVar(value=output.host or dmx.DEFAULT_HOST)
@@ -7350,6 +7608,7 @@ class VideoPlayerGUI:
         self.settings_light_buttons = {}
         self.settings_light_bar = None
         self.settings_lights_check = None
+        self.lights_window_indicator = None
         self.lights_host_entry = None
         self.lights_universe_entry = None
         self.lights_device_combo = None

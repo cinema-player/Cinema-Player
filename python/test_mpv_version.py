@@ -53,6 +53,58 @@ class ReadMpvVersionTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class ToolVersionTests(unittest.TestCase):
+    def test_ffmpeg_version_line(self):
+        text = "ffmpeg version 8.0.1-3ubuntu2 Copyright (c) 2000-2025 the FFmpeg developers\n"
+        self.assertEqual(player.parse_tool_version(text), "8.0.1-3ubuntu2")
+
+    def test_edid_decode_sha(self):
+        self.assertEqual(
+            player.parse_tool_version("edid-decode SHA: cb74358c2896 2025-12-10 22:39:09\n"),
+            "cb74358c2896",
+        )
+
+    def test_usage_text_has_no_version(self):
+        self.assertEqual(player.parse_tool_version("usage: gdctl [-h] COMMAND ...\n"), "")
+
+    def test_missing_program(self):
+        with patch.object(player.shutil, "which", return_value=None):
+            self.assertIsNone(player.read_tool_version("ffmpeg", ["-version"]))
+
+    def test_about_rows_start_with_python_tk_and_mpv(self):
+        found = {"ffmpeg": "8.0.1", "ffprobe": None}
+
+        def lookup(binary, _args):
+            return found.get(binary, "")
+
+        with patch.object(player, "read_mpv_version", return_value="0.41.0"), \
+                patch.object(player, "read_tool_version", side_effect=lookup):
+            rows = dict(player.about_package_rows(
+                "/usr/bin/mpv", "3.12.13", "Tk 8.6.16, Tcl 8.6.16",
+            ))
+        self.assertEqual(rows["Python"], "3.12.13")
+        self.assertEqual(rows["Tcl/Tk"], "Tk 8.6.16, Tcl 8.6.16")
+        self.assertEqual(rows["mpv"], "0.41.0")
+        self.assertEqual(rows["FFmpeg"], "8.0.1")
+        self.assertIsNone(rows["FFprobe"])
+        self.assertIn("xrandr", rows)
+        self.assertIn("gdctl", rows)
+
+
+class CopyrightFileTests(unittest.TestCase):
+    def test_reads_the_usual_notice(self):
+        info = player.read_copyright()
+        self.assertEqual(info["notice"], "Copyright (C) 2026 Thomas Winkler")
+        self.assertEqual(info["email"], "thomas.winkler@iggmp.net")
+        self.assertEqual(info["url"], "http://cinema-player.github.io")
+
+    def test_missing_file_is_empty(self):
+        self.assertEqual(
+            player.read_copyright("/tmp/cinema-player-no-such-copyright"),
+            {"notice": "", "email": "", "url": ""},
+        )
+
+
 class HeaderVersionTextTests(unittest.TestCase):
     def test_places_mpv_beside_program_version(self):
         self.assertEqual(

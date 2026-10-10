@@ -191,6 +191,96 @@ def header_version_text(app_version, mpv_ver="", session_name=""):
     return "  ·  ".join(parts)
 
 
+# Programs Cinema Player starts or queries. The binary name differs from the label
+# when the package is FFmpeg or FFprobe.
+ABOUT_TOOLS = (
+    ("FFmpeg", "ffmpeg", ["-version"]),
+    ("FFprobe", "ffprobe", ["-version"]),
+    ("xrandr", "xrandr", ["--version"]),
+    ("gdctl", "gdctl", ["--version"]),
+    ("kscreen-doctor", "kscreen-doctor", ["--version"]),
+    ("edid-decode", "edid-decode", ["--version"]),
+    ("drm_info", "drm_info", ["--version"]),
+)
+
+
+def parse_tool_version(text):
+    """Version token from a program's --version output, or '' when none is printed."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sha = re.search(r"SHA:\s*([0-9a-fA-F]+)", line)
+        if sha:
+            return sha.group(1)
+        match = re.search(r"\bversion[:\s]+v?(\d+\.\d+[\w.+-]*)", line, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        return ""
+    return ""
+
+
+def read_tool_version(binary, args):
+    """Installed program version, '' when the program has none, None when it is missing."""
+    path = shutil.which(binary) if binary else ""
+    if not path:
+        return None
+    try:
+        result = subprocess.run(
+            [path, *args], capture_output=True, text=True, timeout=3,
+        )
+        text = f"{result.stdout}\n{result.stderr}"
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return parse_tool_version(text)
+
+
+def read_copyright(path=None):
+    """Notice, e-mail and URL from the project COPYRIGHT file.
+
+    The file uses the usual notice form::
+
+        Copyright (C) 2026 Thomas Winkler <name@example.net>
+        https://example.net
+    """
+    path = path or os.path.join(ROOT_DIR, "COPYRIGHT")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        return {"notice": "", "email": "", "url": ""}
+    notice = ""
+    email = ""
+    url = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        found = re.search(r"<([^<>\s]+@[^<>\s]+)>", line)
+        if found and not email:
+            email = found.group(1)
+            line = (line[:found.start()] + line[found.end():]).strip(" ,")
+            line = re.sub(r"\s{2,}", " ", line)
+        if re.match(r"https?://\S+$", line) and not url:
+            url = line
+            continue
+        if not notice and line:
+            notice = line
+    return {"notice": notice, "email": email, "url": url}
+
+
+def about_package_rows(mpv_path, python_version, tcl_tk_version):
+    """Python, Tcl/Tk, mpv, and the external programs the booth uses."""
+    rows = [
+        ("Python", python_version or ""),
+        ("Tcl/Tk", tcl_tk_version or ""),
+        ("mpv", read_mpv_version(mpv_path) if mpv_path else ""),
+    ]
+    for label, binary, args in ABOUT_TOOLS:
+        rows.append((label, read_tool_version(binary, args)))
+    return rows
+
+
 def mpv_gpu_context_help(path):
     try:
         result = subprocess.run(

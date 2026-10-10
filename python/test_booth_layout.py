@@ -456,6 +456,110 @@ class BoothChromeTests(unittest.TestCase):
             cinema_gui.VideoPlayerGUI._apply_audiosync_outputs(self.app, payload)
         self.assertEqual(applied["video"], "HDMI-A-1")
 
+    def test_tooltips_stay_inside_the_control_monitor(self):
+        self.root.geometry("500x320+80+80")
+        button = tk.Label(self.root, text="Einstellung")
+        button.place(x=440, y=260, width=40, height=30)
+        self.root.update()
+
+        def inside(window, origin_x, origin_y, width, height):
+            self.root.update()
+            right = window.winfo_rootx() + window.winfo_width()
+            bottom = window.winfo_rooty() + window.winfo_height()
+            self.assertGreaterEqual(window.winfo_rootx(), origin_x)
+            self.assertGreaterEqual(window.winfo_rooty(), origin_y)
+            self.assertLessEqual(right, origin_x + width)
+            self.assertLessEqual(bottom, origin_y + height)
+
+        left = button.winfo_rootx() + button.winfo_width() - 160
+        top = button.winfo_rooty() + button.winfo_height() - 100
+        self.root.tooltip_screen_bounds = lambda: (160, 100, left, top)
+        tip = cinema_gui.IconTooltip(button, "Einstellungen")
+        tip._show()
+        inside(tip._window, left, top, 160, 100)
+        self.assertLess(tip._window.winfo_rooty() + tip._window.winfo_height(), button.winfo_rooty())
+        self.assertLess(tip._window.winfo_rootx(), button.winfo_rootx())
+        tip._hide()
+
+        long_tip = cinema_gui.IconTooltip(
+            button, "Einstellungen und Beamerausgabe bleiben auf diesem Monitor",
+        )
+        long_tip._show()
+        inside(long_tip._window, left, top, 160, 100)
+        long_tip._hide()
+
+        corner = tk.Label(self.root, text="x")
+        corner.place(x=0, y=0, width=20, height=20)
+        self.root.update()
+        cleft = corner.winfo_rootx() + 30
+        ctop = corner.winfo_rooty()
+        self.root.tooltip_screen_bounds = lambda: (120, 70, cleft, ctop)
+        corner_tip = cinema_gui.IconTooltip(corner, "Kurz")
+        corner_tip._show()
+        inside(corner_tip._window, cleft, ctop, 120, 70)
+        corner_tip._hide()
+
+    def test_about_sits_above_fullscreen_and_lists_the_stack(self):
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.mpv_path = "/usr/bin/mpv"
+        self.app.theme = "dark"
+        self.app.language = "de"
+        self.app.program_state = "OFF"
+        self.app.calibration_mode = None
+        self.app.window_fullscreen = tk.BooleanVar(master=self.root, value=False)
+        self.app._menu = lambda _parent: cinema_gui.DropdownMenu(self.root, self.app)
+        self.app._menu_check_fg = lambda: "#ffffff"
+        self.app._fill_program_menu = lambda menu: None
+        self.app._fill_playlist_menu = lambda menu: None
+        self.app._fill_beamer_output_menu = lambda menu: None
+        self.app._fill_calibration_kind_menu = lambda menu, kind: None
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+30+30"
+        )
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        cinema_gui.VideoPlayerGUI._fill_app_menu(self.app, menu)
+        labels = [
+            child.cget("text")
+            for child in menu.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        self.assertEqual(labels[0], "Über Cinema-Player")
+        self.assertIn("Vollbildmodus", labels[1])
+        with patch.object(cinema_gui, "read_mpv_version", return_value="0.41.0"), \
+                patch.object(cinema_gui, "about_package_rows", return_value=[
+                    ("Python", "3.12.13"),
+                    ("Tcl/Tk", "Tk 8.6.16, Tcl 8.6.16"),
+                    ("mpv", "0.41.0"),
+                    ("FFmpeg", "8.0.1"),
+                    ("gdctl", None),
+                ]):
+            cinema_gui.VideoPlayerGUI.show_about(self.app)
+        window = self.app.about_window
+        window.update()
+        texts = []
+
+        def walk(widget):
+            if isinstance(widget, tk.Label):
+                texts.append(widget.cget("text"))
+            for child in widget.winfo_children():
+                walk(child)
+
+        walk(window)
+        self.assertTrue(any(text.startswith("v") and "mpv 0.41.0" in text for text in texts))
+        self.assertIn("Copyright (C) 2026 Thomas Winkler", texts)
+        self.assertIn("thomas.winkler@iggmp.net", texts)
+        self.assertIn("http://cinema-player.github.io", texts)
+        self.assertIn("FFmpeg", texts)
+        self.assertIn("8.0.1", texts)
+        self.assertIn("nicht gefunden", texts)
+        self.assertIsNotNone(self.app.about_logo)
+        canvas = window._popup_canvas
+        label = window._about_logo_label
+        self.assertLessEqual(label.winfo_reqwidth(), canvas.winfo_width())
+        self.assertLessEqual(self.app.about_logo.width(), canvas.winfo_width())
+        window.destroy()
+
 
 class BeamerSummaryTests(unittest.TestCase):
     def setUp(self):
@@ -777,6 +881,100 @@ class BeamerSummaryTests(unittest.TestCase):
         window.update()
         self.assertEqual(bar.winfo_manager(), "")
         window.destroy()
+
+    def _open_lights_window(self, ready):
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=False)
+        self.app.dmx_output = cinema_gui.dmx.DmxOutput(mode="artnet", host="127.0.0.1", channels=[1])
+        self.app.lights_scenes = [cinema_gui.dmx.Scene("dark", "", {1: 0})]
+        self.app.lights_sequences = []
+        self.app.lights_transition_ms = 0
+        self.app.lights_start_lead_ms = 0
+        self.app.lights_end_lead_ms = 0
+        self.app.lights_current = ""
+        self.app.lights_fading = False
+        self.app.lights_fade_after = None
+        self.app.lights_blink_after = None
+        self.app.lights_meter_after = None
+        self.app.lights_blink_on = False
+        self.app._light_meter_fade = None
+        self.app._sequence_run = None
+        self.app.program_light_buttons = {}
+        self.app.settings_light_buttons = {}
+        self.app.settings = {}
+        self.app._dmx_ready = lambda: ready["value"]
+        self.app._save_lights_settings = lambda: None
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+30+30"
+        )
+        cinema_gui.VideoPlayerGUI.show_lights(self.app)
+        self.app.lights_window.update()
+
+    def test_light_and_remote_windows_switch_with_the_header_icons(self):
+        ready = {"value": False}
+        self._open_lights_window(ready)
+        window = self.app.lights_window
+        icon = self.app.lights_window_indicator
+        reference = tk.Canvas(self.root, width=36, height=36)
+        cinema_gui.VideoPlayerGUI._paint_lights_indicator(self.app, reference, "#c9a227", lit=True)
+        cinema_gui.VideoPlayerGUI._paint_lights_indicator(self.app, icon, "#c9a227", lit=True)
+
+        def shapes(canvas):
+            return [(canvas.type(item), canvas.coords(item)) for item in canvas.find_all()]
+
+        self.assertEqual(shapes(icon), shapes(reference))
+        self.assertLess(icon.winfo_rooty(), self.app._lights_body.winfo_rooty())
+        self.assertGreater(icon.winfo_rootx(), window.winfo_rootx() + window.winfo_width() / 2)
+        icon.event_generate("<Button-1>")
+        window.update()
+        self.assertFalse(self.app.lights_control.get())
+        ready["value"] = True
+        icon.event_generate("<Button-1>")
+        window.update()
+        self.assertTrue(self.app.lights_control.get())
+        window.destroy()
+
+        class Api:
+            running = False
+            error = ""
+            port = 8765
+            token = "secret"
+
+            def connect_urls(self, _lang):
+                return ["http://127.0.0.1/"]
+
+            def start(self, port, token):
+                self.running = True
+                self.port = port
+                self.token = token
+                return True
+
+            def stop(self):
+                self.running = False
+
+        self.app.remote_api = Api()
+        self.app.remote_api_enabled = tk.BooleanVar(master=self.root, value=False)
+        self.app.remote_api_port = tk.StringVar(master=self.root, value="8765")
+        self.app.remote_api_token = tk.StringVar(master=self.root, value="secret")
+        self.app.remote_window = None
+        self.app.remote_window_indicator = None
+        with patch.object(cinema_gui, "save_settings"):
+            cinema_gui.VideoPlayerGUI.show_remote_control(self.app)
+            remote = self.app.remote_window
+            radio = self.app.remote_window_indicator
+            remote.update()
+            other = tk.Canvas(self.root, width=36, height=36)
+            cinema_gui.VideoPlayerGUI._paint_remote_indicator(self.app, other, "#4477aa")
+            cinema_gui.VideoPlayerGUI._paint_remote_indicator(self.app, radio, "#4477aa")
+            self.assertEqual(shapes(radio), shapes(other))
+            self.assertLess(radio.winfo_rooty(), self.app.remote_qr_canvas.winfo_rooty())
+            self.assertGreater(radio.winfo_rootx(), remote.winfo_rootx() + remote.winfo_width() / 2)
+            radio.event_generate("<Button-1>")
+            remote.update()
+        self.assertTrue(self.app.remote_api_enabled.get())
+        self.assertTrue(self.app.remote_api.running)
+        remote.destroy()
 
 
 class ProgramClockTests(unittest.TestCase):
