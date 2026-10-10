@@ -2,7 +2,9 @@
 """Booth layout: playlist columns, show chrome, beamer short form, clocks."""
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -304,6 +306,81 @@ class BoothChromeTests(unittest.TestCase):
             abs(self.app.idle_status.winfo_rooty() - self.app.next_clip.winfo_rooty()),
             8,
         )
+
+    def test_media_folder_window_keeps_its_buttons_on_screen(self):
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.media_directories = [{"path": "/tmp", "name": "Filme"}]
+        self.app.last_import_dir = ""
+        self.app.settings = {}
+        self.app.copy_imported_media = tk.BooleanVar(master=self.root, value=False)
+        self.app.copy_imported_media_dir = ""
+        self.app.copy_imported_media_label = tk.StringVar(master=self.root, value="")
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        held = {}
+
+        def capture(window):
+            held["window"] = window
+
+        self.root.wait_window = capture
+        cinema_gui.VideoPlayerGUI._choose_import_action(
+            self.app, [{"path": "/tmp", "name": "Filme", "removable": False}],
+        )
+        window = held["window"]
+        window.update()
+        self.assertGreaterEqual(window.winfo_height(), 560)
+        bottom = window.winfo_rooty() + window.winfo_height()
+        labels = {
+            child.cget("text"): child
+            for child in window.winfo_children()
+            if isinstance(child, tk.Frame)
+            for child in child.winfo_children()
+            if isinstance(child, tk.Button)
+        }
+        for text in ("Dateien importieren", "Ordner importieren", "Anderer Speicherort…", "Schließen"):
+            button = labels[text]
+            self.assertTrue(button.winfo_viewable())
+            self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), bottom)
+        window.geometry("680x320+20+20")
+        window.update()
+        self.assertEqual(window._popup_bar.winfo_manager(), "grid")
+        self.assertEqual(str(window._popup_bar.cget("orient")), "vertical")
+        close = labels["Schließen"]
+        self.assertTrue(close.winfo_viewable())
+        self.assertLessEqual(close.winfo_rooty() + close.winfo_height(), window.winfo_rooty() + window.winfo_height())
+        window.destroy()
+
+    def test_file_dialog_creates_a_folder_in_the_open_directory(self):
+        cinema_gui.install_file_dialog_new_folder(self.root)
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        parent = str(self.root)
+        window = ".__tk_choosedir" if parent == "." else f"{parent}.__tk_choosedir"
+        self.root.tk.call(
+            "::tk::dialog::file::chooseDir::Config",
+            "__tk_choosedir",
+            ["-parent", parent, "-initialdir", directory, "-title", "test"],
+        )
+        if self.root.tk.call("winfo", "exists", window):
+            self.root.tk.call("destroy", window)
+        self.root.tk.call("::tk::dialog::file::Create", window, "TkChooseDir")
+        button = window + ".contents.f2.newfolder"
+        self.assertIn("Verzeichnis", str(self.root.tk.call(button, "cget", "-text")))
+        with patch.object(cinema_gui.simpledialog, "askstring", return_value="Abend"):
+            self.root.tk.call(button, "invoke")
+        self.root.update()
+        created = os.path.join(directory, "Abend")
+        self.assertTrue(os.path.isdir(created))
+        current = str(self.root.tk.call("set", "::tk::dialog::file::__tk_choosedir(selectPath)"))
+        self.assertEqual(os.path.realpath(current), os.path.realpath(created))
+        with patch.object(cinema_gui.simpledialog, "askstring", return_value="a/b"), \
+                patch.object(cinema_gui.messagebox, "showerror") as error:
+            self.root.tk.call(button, "invoke")
+        self.assertFalse(os.path.exists(os.path.join(directory, "a")))
+        error.assert_called_once()
+        self.root.tk.call("destroy", window)
 
     def test_program_menu_holds_idle_media_above_the_default(self):
         self.app.root = self.root

@@ -14,7 +14,7 @@ import time
 import webbrowser
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from language import LANGUAGES, t, set_language, current_language
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
@@ -1579,6 +1579,120 @@ class ImportFolderList(tk.Frame):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
 
+_file_dialog_new_folder_ready = False
+
+
+def install_file_dialog_new_folder(root):
+    """Add a New-folder button to the Tk file and directory dialogs."""
+    global _file_dialog_new_folder_ready
+    if _file_dialog_new_folder_ready:
+        return
+    root.tk.call("auto_load", "::tk::dialog::file::")
+    root.tk.call("auto_load", "::tk::dialog::file::chooseDir::")
+    root.tk.createcommand("cinema_new_folder_label", lambda: t("file_dialog_new_folder"))
+    root.tk.createcommand(
+        "cinema_new_folder",
+        lambda window_path: _create_folder_in_file_dialog(root, window_path),
+    )
+    root.tk.eval(
+        r"""
+        namespace eval ::cinema {}
+        if {[info commands ::tk::dialog::file::CreateOriginal] eq ""} {
+            rename ::tk::dialog::file::Create ::tk::dialog::file::CreateOriginal
+        }
+        proc ::tk::dialog::file::Create {w class} {
+            ::tk::dialog::file::CreateOriginal $w $class
+            if {![winfo exists $w.contents.f2.newfolder]} {
+                set btn [::tk::AmpWidget ttk::button $w.contents.f2.newfolder \
+                    -command [list cinema_new_folder $w]]
+                if {$class eq "TkFDialog"} {
+                    grid $btn -row 3 -column 0 -columnspan 2 -padx 4 -pady 3 -sticky w
+                } else {
+                    grid $btn -row 2 -column 0 -columnspan 2 -padx 4 -pady 3 -sticky w
+                }
+            }
+            bind $w <Map> +[list ::cinema::refreshFileDialogFolder $w]
+            ::cinema::refreshFileDialogFolder $w
+        }
+        proc ::cinema::refreshFileDialogFolder {w} {
+            if {[winfo exists $w.contents.f2.newfolder]} {
+                ::tk::SetAmpText $w.contents.f2.newfolder [cinema_new_folder_label]
+            }
+        }
+        """
+    )
+    _file_dialog_new_folder_ready = True
+
+
+def _folder_name_is_plain(name):
+    if not name or name in (".", "..") or "\\" in name or "\0" in name:
+        return False
+    return os.path.basename(name) == name
+
+
+class _ExistingWindow(tk.Misc):
+    """A Tk window created in Tcl, usable as a dialog parent."""
+
+    def __init__(self, root, path):
+        self.tk = root.tk
+        self._w = path
+        self.children = {}
+        self._last_child_ids = {}
+        self.master = root
+
+
+def _create_folder_in_file_dialog(root, window_path):
+    if not root.tk.call("winfo", "exists", window_path):
+        return
+    window = _ExistingWindow(root, window_path)
+    data_name = window_path.split(".")[-1]
+    try:
+        current = str(root.tk.call("set", f"::tk::dialog::file::{data_name}(selectPath)"))
+    except tk.TclError:
+        current = ""
+    if not current or not os.path.isdir(current):
+        current = os.getcwd()
+    title = t("file_dialog_new_folder").replace("&", "")
+    name = simpledialog.askstring(
+        title,
+        t("file_dialog_new_folder_prompt"),
+        parent=window,
+    )
+    if name is None:
+        return
+    name = name.strip()
+    if not name:
+        return
+    if not _folder_name_is_plain(name):
+        messagebox.showerror(title, t("file_dialog_new_folder_invalid"), parent=window)
+        return
+    path = os.path.abspath(os.path.join(current, name))
+    try:
+        os.mkdir(path)
+    except OSError as exc:
+        messagebox.showerror(
+            title,
+            t("file_dialog_new_folder_error").format(error=exc),
+            parent=window,
+        )
+        return
+    try:
+        root.tk.call("set", f"::tk::dialog::file::{data_name}(selectPath)", path)
+    except tk.TclError:
+        return
+    if str(root.tk.call("winfo", "class", window_path)) == "TkChooseDir":
+        entry = window_path + ".contents.f2.ent"
+        try:
+            root.tk.call(entry, "delete", 0, "end")
+            root.tk.call(entry, "insert", 0, path)
+        except tk.TclError:
+            pass
+    try:
+        root.tk.call("::tk::dialog::file::UpdateWhenIdle", window_path)
+    except tk.TclError:
+        pass
+
+
 class VideoPlayerGUI:
     def __init__(self, root):
         self.root = root
@@ -1591,6 +1705,7 @@ class VideoPlayerGUI:
 
         self.settings = load_settings()
         self.language = set_language(self.settings.get("language", "en"))
+        install_file_dialog_new_folder(self.root)
         self.text_size = apply_text_size(self.settings.get("text_size", 0))
         sync_fonts()
         self.theme = apply_theme(self.settings.get("theme", DEFAULT_THEME))
@@ -2710,13 +2825,15 @@ class VideoPlayerGUI:
 
     def _help_button(self, parent):
         """Open the operator manual; sits left of the settings menu."""
-        size = 36
+        points = int(FONT_STATUS[1]) * 2
+        font = (FONT_STATUS[0], points, *FONT_STATUS[2:])
+        size = points + 20
         canvas = tk.Canvas(
             parent, width=size, height=size, bg=parent.cget("bg"),
             highlightthickness=0, bd=0, cursor="hand2",
         )
         canvas.create_text(
-            size / 2, size / 2, text="?", fill=COLOR_TEXT, font=FONT_STATUS,
+            size / 2, size / 2, text="?", fill=COLOR_TEXT, font=font,
         )
         canvas.bind("<Button-1>", lambda _event: self.open_manual())
         canvas.pack(side="right", padx=(0, 4))
@@ -3079,12 +3196,15 @@ class VideoPlayerGUI:
                 pass
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", self._close_patch_window)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
         tk.Label(
-            window, text=t("patch_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            body, text=t("patch_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=680, justify="left",
-        ).pack(fill="x", padx=10, pady=(10, 6))
-        holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        ).pack(fill="x", pady=(0, 6))
+        holder = tk.Frame(body, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, pady=(0, 10))
         table = tk.Frame(holder, bg=COLOR_PANEL)
         table.pack(fill="x", padx=8, pady=(8, 4))
         table.columnconfigure(1, weight=1)
@@ -3139,8 +3259,6 @@ class VideoPlayerGUI:
             hints, text="", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL, anchor="w",
         )
         self.patch_preview_hint.grid(row=1, column=1, sticky="ew")
-        buttons = tk.Frame(holder, bg=COLOR_PANEL)
-        buttons.pack(fill="x", padx=8, pady=(4, 8))
         tk.Button(
             buttons, text=t("patch_close"), font=FONT_UI, command=self._close_patch_window,
         ).pack(side="right")
@@ -3155,7 +3273,8 @@ class VideoPlayerGUI:
         self._patch_beamer_audio_ids = {}
         self._patch_preview_audio_ids = {}
         self._fill_patch_form()
-        self._place_on_control_monitor(window, 760, 340)
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 760, 460)
 
     def _close_patch_window(self):
         window = getattr(self, "patch_window", None)
@@ -4767,9 +4886,11 @@ class VideoPlayerGUI:
                 pass
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", self._close_edid_window)
-
-        holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=10)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        pane = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=10)
+        holder = tk.Frame(pane, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True)
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
 
@@ -4798,8 +4919,6 @@ class VideoPlayerGUI:
         text.bind("<Control-a>", self._select_all_text)
         text.bind("<Control-A>", self._select_all_text)
 
-        buttons = tk.Frame(window, bg=COLOR_BG)
-        buttons.pack(fill="x", padx=10, pady=(0, 10))
         tk.Button(
             buttons, text=t("edid_close"), command=self._close_edid_window, font=FONT_UI,
         ).pack(side="right")
@@ -4807,7 +4926,8 @@ class VideoPlayerGUI:
         window._edid_text = text
         self.edid_window = window
         self._fill_edid_window(report["output"], body)
-        self._place_on_control_monitor(window, 820, 700)
+        self._bind_popup_wheel(window, pane)
+        self._open_popup(window, 820, 700)
 
     def _edid_window_alive(self):
         window = getattr(self, "edid_window", None)
@@ -5492,9 +5612,9 @@ class VideoPlayerGUI:
                 pass
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", lambda: None)
-
-        body = tk.Frame(window, bg=COLOR_PANEL)
-        body.pack(fill="both", expand=True, padx=10, pady=10)
+        pane = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=10)
+        body = tk.Frame(pane, bg=COLOR_PANEL)
+        body.pack(fill="both", expand=True)
         status = tk.Label(
             body, text=t("copy_files_progress", current=0, total=total),
             bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI, anchor="w",
@@ -5517,7 +5637,8 @@ class VideoPlayerGUI:
         size.pack(fill="x", pady=(6, 0))
 
         widgets = {"status": status, "name": name, "bar": bar, "size": size, "total": total}
-        self._place_on_control_monitor(window, 480, 160)
+        self._bind_popup_wheel(window, pane)
+        self._open_popup(window, 480, 200)
         window.grab_set()
         window.lift()
         window.update_idletasks()
@@ -5742,12 +5863,15 @@ class VideoPlayerGUI:
                 pass
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", self._close_remote_window)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
         tk.Label(
-            window, text=t("remote_control_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            body, text=t("remote_control_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=620, justify="left",
-        ).pack(fill="x", padx=10, pady=(10, 6))
-        holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        ).pack(fill="x", pady=(0, 6))
+        holder = tk.Frame(body, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, pady=(0, 10))
         self._checkbutton(
             holder, t("remote_control_enable"), self.remote_api_enabled,
             self._apply_remote_api_settings, COLOR_PANEL,
@@ -5784,8 +5908,6 @@ class VideoPlayerGUI:
         )
         urls.pack(fill="both", expand=True)
         self.remote_url_box = urls
-        buttons = tk.Frame(window, bg=COLOR_BG)
-        buttons.pack(fill="x", padx=10, pady=(0, 10))
         tk.Button(
             buttons, text=t("remote_control_close"), command=self._close_remote_window, font=FONT_UI,
         ).pack(side="right")
@@ -5794,7 +5916,8 @@ class VideoPlayerGUI:
         ).pack(side="right", padx=(0, 8))
         self.remote_window = window
         self._fill_remote_urls()
-        self._place_on_control_monitor(window, 640, 420)
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 640, 520)
 
     def _close_remote_window(self):
         window = getattr(self, "remote_window", None)
@@ -6708,22 +6831,44 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
-    def _track_lights_vscroll(self, bar, first, last):
+    def _install_popup_scroll(self, window, bg, padx=0, pady=0):
+        """Scroll the popup body when it is taller than the window. Buttons stay outside."""
+        scroller = tk.Frame(window, bg=bg)
+        scroller.pack(fill="both", expand=True, padx=padx, pady=pady)
+        scroller.rowconfigure(0, weight=1)
+        scroller.columnconfigure(0, weight=1)
+        canvas = tk.Canvas(scroller, bg=bg, highlightthickness=0, bd=0)
+        bar = ttk.Scrollbar(scroller, orient="vertical", command=canvas.yview)
+        canvas.configure(
+            yscrollcommand=lambda first, last, bar=bar: self._track_popup_vscroll(bar, first, last),
+        )
+        canvas.grid(row=0, column=0, sticky="nsew")
+        body = tk.Frame(canvas, bg=bg)
+        window._popup_canvas = canvas
+        window._popup_body = body
+        window._popup_item = canvas.create_window((0, 0), window=body, anchor="nw")
+        window._popup_bar = bar
+        window._popup_fit_guard = False
+        body.bind("<Configure>", lambda _event, window=window: self._fit_popup_scroll(window))
+        canvas.bind("<Configure>", lambda _event, window=window: self._fit_popup_scroll(window))
+        self._bind_popup_wheel(window, canvas)
+        return body
+
+    def _track_popup_vscroll(self, bar, first, last):
         try:
             bar.set(first, last)
         except tk.TclError:
             pass
 
-    def _fit_lights_body(self, _event=None):
-        """Stretch the settings form to the window and scroll it when it is taller."""
-        if getattr(self, "_lights_fit_guard", False):
+    def _fit_popup_scroll(self, window):
+        if window is None or getattr(window, "_popup_fit_guard", False):
             return
-        canvas = getattr(self, "_lights_body", None)
-        body = getattr(self, "_lights_body_frame", None)
-        window_id = getattr(self, "_lights_body_window", None)
-        if canvas is None or body is None or window_id is None:
+        canvas = getattr(window, "_popup_canvas", None)
+        body = getattr(window, "_popup_body", None)
+        item = getattr(window, "_popup_item", None)
+        if canvas is None or body is None or item is None:
             return
-        self._lights_fit_guard = True
+        window._popup_fit_guard = True
         try:
             if not canvas.winfo_exists() or not body.winfo_exists():
                 return
@@ -6731,21 +6876,21 @@ class VideoPlayerGUI:
             height = canvas.winfo_height()
             if width <= 1 or height <= 1:
                 return
-            canvas.itemconfigure(window_id, width=width)
+            canvas.itemconfigure(item, width=width)
             canvas.update_idletasks()
             bbox = canvas.bbox("all")
             if not bbox:
                 return
             canvas.configure(scrollregion=bbox)
-            self._show_lights_vscroll(bbox[3] - bbox[1] > height + 1)
+            self._show_popup_vscroll(window, bbox[3] - bbox[1] > height + 1)
         except tk.TclError:
             pass
         finally:
-            self._lights_fit_guard = False
+            window._popup_fit_guard = False
 
-    def _show_lights_vscroll(self, needed):
-        bar = getattr(self, "_lights_vscroll", None)
-        canvas = getattr(self, "_lights_body", None)
+    def _show_popup_vscroll(self, window, needed):
+        bar = getattr(window, "_popup_bar", None)
+        canvas = getattr(window, "_popup_canvas", None)
         if bar is None or canvas is None:
             return
         try:
@@ -6760,22 +6905,29 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
-    def _bind_lights_scroll(self, widget):
-        """Scroll the settings form with the wheel, and leave lists to scroll themselves."""
+    def _bind_popup_wheel(self, window, widget):
+        """Scroll the popup under the pointer. Lists and their own canvases keep the wheel."""
+        popup_canvas = getattr(window, "_popup_canvas", None)
+        skip_bind = isinstance(widget, (tk.Listbox, tk.Text)) or (
+            isinstance(widget, tk.Canvas) and widget is not popup_canvas
+        )
+        if not skip_bind:
+            try:
+                widget.bind("<Button-4>", lambda event, window=window: self._on_popup_wheel(window, event))
+                widget.bind("<Button-5>", lambda event, window=window: self._on_popup_wheel(window, event))
+                widget.bind("<MouseWheel>", lambda event, window=window: self._on_popup_wheel(window, event))
+            except tk.TclError:
+                return
         if isinstance(widget, (tk.Listbox, tk.Text)):
             return
-        try:
-            widget.bind("<Button-4>", self._on_lights_wheel)
-            widget.bind("<Button-5>", self._on_lights_wheel)
-            widget.bind("<MouseWheel>", self._on_lights_wheel)
-        except tk.TclError:
-            return
         for child in widget.winfo_children():
-            self._bind_lights_scroll(child)
+            self._bind_popup_wheel(window, child)
 
-    def _on_lights_wheel(self, event):
-        canvas = getattr(self, "_lights_body", None)
-        bar = getattr(self, "_lights_vscroll", None)
+    def _on_popup_wheel(self, window, event):
+        if window is None:
+            return
+        canvas = getattr(window, "_popup_canvas", None)
+        bar = getattr(window, "_popup_bar", None)
         if canvas is None or bar is None or not bar.winfo_manager():
             return
         if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
@@ -6783,6 +6935,38 @@ class VideoPlayerGUI:
         else:
             canvas.yview_scroll(3, "units")
         return "break"
+
+    def _open_popup(self, window, width, height):
+        """Open a popup tall enough for its contents, then scroll whatever still does not fit."""
+        try:
+            window.update_idletasks()
+            height = max(int(height), int(window.winfo_reqheight()))
+            width = max(int(width), 1)
+        except (tk.TclError, TypeError, ValueError):
+            pass
+        width, height = self._lights_window_size(width, height)
+        self._place_on_control_monitor(window, width, height)
+        self._fit_popup_scroll(window)
+
+    def _track_lights_vscroll(self, bar, first, last):
+        self._track_popup_vscroll(bar, first, last)
+
+    def _fit_lights_body(self, _event=None):
+        """Stretch the settings form to the window and scroll it when it is taller."""
+        self._fit_popup_scroll(getattr(self, "lights_window", None))
+
+    def _show_lights_vscroll(self, needed):
+        self._show_popup_vscroll(getattr(self, "lights_window", None), needed)
+
+    def _bind_lights_scroll(self, widget):
+        """Scroll the settings form with the wheel, and leave lists to scroll themselves."""
+        window = getattr(self, "lights_window", None)
+        if window is None:
+            return
+        self._bind_popup_wheel(window, widget)
+
+    def _on_lights_wheel(self, event):
+        return self._on_popup_wheel(getattr(self, "lights_window", None), event)
 
     def _lights_window_size(self, width, height):
         """Keep the lights window on the control screen so its buttons stay reachable."""
@@ -6990,27 +7174,13 @@ class VideoPlayerGUI:
         tk.Button(buttons, text=t("remote_control_apply"), font=FONT_UI, command=self._commit_lights_settings).pack(
             side="right", padx=(0, 8),
         )
-        scroller = tk.Frame(window, bg=COLOR_BG)
-        scroller.pack(fill="both", expand=True, padx=10, pady=(10, 10))
-        scroller.rowconfigure(0, weight=1)
-        scroller.columnconfigure(0, weight=1)
-        canvas = tk.Canvas(scroller, bg=COLOR_PANEL, highlightthickness=0, bd=0)
-        bar = ttk.Scrollbar(scroller, orient="vertical", command=canvas.yview)
-        canvas.configure(
-            yscrollcommand=lambda first, last, bar=bar: self._track_lights_vscroll(bar, first, last),
-        )
-        canvas.grid(row=0, column=0, sticky="nsew")
-        holder = tk.Frame(canvas, bg=COLOR_PANEL)
-        self._lights_body = canvas
+        self.lights_window = window
+        holder = self._install_popup_scroll(window, COLOR_PANEL, padx=10, pady=(10, 10))
+        self._lights_body = window._popup_canvas
         self._lights_body_frame = holder
-        self._lights_body_window = canvas.create_window((0, 0), window=holder, anchor="nw")
-        self._lights_vscroll = bar
+        self._lights_body_window = window._popup_item
+        self._lights_vscroll = window._popup_bar
         self._lights_fit_guard = False
-        holder.bind("<Configure>", self._fit_lights_body)
-        canvas.bind("<Configure>", self._fit_lights_body)
-        canvas.bind("<Button-4>", self._on_lights_wheel)
-        canvas.bind("<Button-5>", self._on_lights_wheel)
-        canvas.bind("<MouseWheel>", self._on_lights_wheel)
         tk.Label(
             holder, text=t("lights_hint"), bg=COLOR_PANEL, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=620, justify="left",
@@ -7111,9 +7281,7 @@ class VideoPlayerGUI:
         self._fill_light_buttons(self.settings_light_bar, self.settings_light_buttons, self._test_lights)
         self._refresh_light_buttons()
         self._bind_lights_scroll(holder)
-        self.lights_window = window
-        self._place_on_control_monitor(window, *self._lights_window_size(820, 640))
-        self._fit_lights_body()
+        self._open_popup(window, 820, 640)
 
     def _lights_mode_label(self, key):
         mode = dmx.normalize_mode(key)
@@ -7460,14 +7628,17 @@ class VideoPlayerGUI:
                 pass
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", self._close_media_dirs_window)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
 
         tk.Label(
-            window, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            body, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=620, justify="left",
-        ).pack(fill="x", padx=10, pady=(10, 6))
+        ).pack(fill="x", pady=(0, 6))
 
-        holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        holder = tk.Frame(body, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, pady=(0, 10))
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
 
@@ -7477,7 +7648,7 @@ class VideoPlayerGUI:
         listbox.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
 
-        name_row = tk.Frame(window, bg=COLOR_BG)
+        name_row = tk.Frame(body, bg=COLOR_BG)
         name_row.pack(fill="x", padx=10, pady=(0, 2))
         tk.Label(
             name_row, text=t("media_directories_name"), bg=COLOR_BG, fg=COLOR_TEXT,
@@ -7493,12 +7664,10 @@ class VideoPlayerGUI:
         name_entry.bind("<Return>", self._commit_media_directory_name)
         name_entry.bind("<FocusOut>", self._commit_media_directory_name)
         tk.Label(
-            window, text=t("media_directories_name_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            body, text=t("media_directories_name_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=640, justify="left",
-        ).pack(fill="x", padx=10, pady=(0, 8))
+        ).pack(fill="x", pady=(0, 8))
 
-        buttons = tk.Frame(window, bg=COLOR_BG)
-        buttons.pack(fill="x", padx=10, pady=(0, 10))
         tk.Button(
             buttons, text=t("media_directories_close"),
             command=self._close_media_dirs_window, font=FONT_UI,
@@ -7521,7 +7690,8 @@ class VideoPlayerGUI:
             listbox.selection_set(0)
             listbox.activate(0)
         self._load_media_directory_name_field(listbox)
-        self._place_on_control_monitor(window, 720, 420)
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 720, 560)
 
     def _media_dirs_window_alive(self):
         window = getattr(self, "media_dirs_window", None)
@@ -7814,15 +7984,18 @@ class VideoPlayerGUI:
             except tk.TclError:
                 pass
         window.transient(self.root)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
 
         tk.Label(
-            window,
+            body,
             text=t("media_directories_hint") + "\n" + t("media_directories_drives"),
             bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_SMALL, wraplength=600, justify="left",
-        ).pack(fill="x", padx=10, pady=(10, 6))
+        ).pack(fill="x", pady=(0, 6))
 
-        holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        holder = tk.Frame(body, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, pady=(0, 8))
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
 
@@ -7834,8 +8007,8 @@ class VideoPlayerGUI:
         ])
         folder_list.select(self._import_choice_index(choices))
 
-        copy_row = tk.Frame(window, bg=COLOR_BG)
-        copy_row.pack(fill="x", padx=10, pady=(0, 8))
+        copy_row = tk.Frame(body, bg=COLOR_BG)
+        copy_row.pack(fill="x", pady=(0, 8))
         path_holder = tk.Frame(copy_row, bg=COLOR_BG)
         path_button = tk.Button(
             path_holder,
@@ -7920,8 +8093,6 @@ class VideoPlayerGUI:
         window.bind("<Return>", import_files)
         window.protocol("WM_DELETE_WINDOW", cancel)
 
-        buttons = tk.Frame(window, bg=COLOR_BG)
-        buttons.pack(fill="x", padx=10, pady=(0, 10))
         tk.Button(
             buttons, text=t("media_directories_import_files"),
             command=import_files, font=FONT_UI,
@@ -7939,7 +8110,8 @@ class VideoPlayerGUI:
             command=cancel, font=FONT_UI,
         ).pack(side="right")
 
-        self._place_on_control_monitor(window, 680, 380)
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 680, 560)
         folder_list.focus_set()
         window.grab_set()
         self.root.wait_window(window)
@@ -8362,8 +8534,11 @@ class VideoPlayerGUI:
                 pass
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", self._close_audiosync_list_window)
-        holder = tk.Frame(window, bg=COLOR_PANEL)
-        holder.pack(fill="both", expand=True, padx=10, pady=10)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=10)
+        holder = tk.Frame(body, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True)
         holder.rowconfigure(0, weight=1)
         holder.columnconfigure(0, weight=1)
         listbox = self._styled_listbox(holder)
@@ -8371,8 +8546,6 @@ class VideoPlayerGUI:
         listbox.configure(yscrollcommand=scroll.set)
         listbox.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
-        buttons = tk.Frame(window, bg=COLOR_BG)
-        buttons.pack(fill="x", padx=10, pady=(0, 10))
         tk.Button(
             buttons, text=t("media_directories_close"),
             command=self._close_audiosync_list_window, font=FONT_UI,
@@ -8380,7 +8553,8 @@ class VideoPlayerGUI:
         window._listbox = listbox
         self.audiosync_list_window = window
         self._fill_audiosync_list(window)
-        self._place_on_control_monitor(window, 520, 320)
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 520, 360)
 
     def _fill_audiosync_list(self, window):
         listbox = window._listbox
