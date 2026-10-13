@@ -13,6 +13,7 @@ import shutil
 import threading
 import time
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -92,6 +93,7 @@ FONT_TOOLTIP = (FONT_FAMILY, 11)
 FONT_EDID = ("DejaVu Sans Mono", 10)
 FONT_PLACEHOLDER = (FONT_FAMILY, 16)
 FONT_CLOCK = (FONT_FAMILY, 18, "bold")
+FONT_HEADER_CLOCK = ("DejaVu Sans Mono", 20, "bold")
 
 
 def sync_fonts():
@@ -99,6 +101,7 @@ def sync_fonts():
     global FONT_FAMILY, FONT_ROW, FONT_ROW_BOLD, FONT_SMALL, FONT_STATUS
     global FONT_UI, FONT_UI_BOLD, FONT_LOGO, FONT_LOGO_LIGHT
     global FONT_BEAMER_PICK, FONT_TOOLTIP, FONT_EDID, FONT_PLACEHOLDER, FONT_CLOCK
+    global FONT_HEADER_CLOCK
     import cinema_player as player
 
     FONT_FAMILY = player.FONT_FAMILY
@@ -116,6 +119,7 @@ def sync_fonts():
     FONT_EDID = ("DejaVu Sans Mono", max(6, 10 + delta))
     FONT_PLACEHOLDER = (FONT_FAMILY, max(6, 16 + delta))
     FONT_CLOCK = (FONT_FAMILY, max(6, 18 + delta), "bold")
+    FONT_HEADER_CLOCK = ("DejaVu Sans Mono", max(6, 20 + delta), "bold")
 
 
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
@@ -1746,6 +1750,11 @@ def _create_folder_in_file_dialog(root, window_path):
         pass
 
 
+def header_clock_text(moment):
+    """Local wall time for the header. Always 24-hour, with seconds."""
+    return moment.strftime("%H:%M:%S")
+
+
 class VideoPlayerGUI:
     def __init__(self, root):
         self.root = root
@@ -2022,12 +2031,16 @@ class VideoPlayerGUI:
         header = tk.Frame(self.root, bg=COLOR_BG)
         header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 6))
 
+        tools = tk.Frame(header, bg=COLOR_BG)
+        tools.pack(side="right")
+        self.header_tools = tools
         self.app_menu = self._burger_button(
-            header, t("app_menu"), self._fill_app_menu, side="right",
+            tools, t("app_menu"), self._fill_app_menu, side="right",
         )
-        self._help_button(header)
-        self._build_remote_indicator(header)
-        self._build_lights_indicator(header)
+        self._help_button(tools)
+        self._build_remote_indicator(tools)
+        self._build_lights_indicator(tools)
+        self._build_header_clock(header)
 
         self.logo_image = self._load_image(LOGO_HEADER_FILE)
         if self.logo_image is not None:
@@ -2051,6 +2064,45 @@ class VideoPlayerGUI:
             bg=COLOR_BG, fg=COLOR_MUTED, font=FONT_UI,
         )
         self.header_version.pack(side="left", padx=(10, 0), pady=(0, 8), anchor="s")
+
+    def _build_header_clock(self, parent):
+        """Wall clock immediately left of the header icons."""
+        self.header_clock = tk.Label(
+            parent,
+            text=header_clock_text(datetime.now()),
+            bg=COLOR_BG,
+            fg=COLOR_TEXT,
+            font=FONT_HEADER_CLOCK,
+        )
+        self.header_clock.pack(side="right", padx=(12, 16))
+        self._start_header_clock()
+
+    def _start_header_clock(self):
+        self._cancel_header_clock()
+        self._tick_header_clock()
+
+    def _tick_header_clock(self):
+        label = getattr(self, "header_clock", None)
+        try:
+            if label is None or not label.winfo_exists():
+                self.header_clock_after = None
+                return
+            label.configure(text=header_clock_text(datetime.now()))
+        except tk.TclError:
+            self.header_clock_after = None
+            return
+        self._cancel_header_clock()
+        self.header_clock_after = self.root.after(250, self._tick_header_clock)
+
+    def _cancel_header_clock(self):
+        after_id = getattr(self, "header_clock_after", None)
+        self.header_clock_after = None
+        if not after_id:
+            return
+        try:
+            self.root.after_cancel(after_id)
+        except tk.TclError:
+            pass
 
     def _load_image(self, path):
         try:
@@ -2314,6 +2366,7 @@ class VideoPlayerGUI:
 
     def rebuild_gui(self):
         """Rebuild the window for the current design and re-embed the preview player."""
+        self._cancel_header_clock()
         if getattr(self, "lights_window", None) is not None:
             self._commit_lights_settings()
             self._scene_draft = None
@@ -10393,6 +10446,7 @@ class VideoPlayerGUI:
             return "break"
         self._close_menus()
         self._stop_remote_api()
+        self._cancel_header_clock()
         for after_id in (
             self.autoplay_after_id, self.idle_after_id, self.still_after_id, self._meter_after_id,
             self.lights_fade_after, self.lights_blink_after, self.lights_play_after,
