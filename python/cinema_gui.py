@@ -13,7 +13,7 @@ import shutil
 import threading
 import time
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -67,6 +67,8 @@ from cinema_player import (
     list_removable_volumes,
     merge_import_directories,
     normalize_media_directories,
+    path_is_on_removable_volume,
+    playlist_folder_name,
     playlist_location_label,
     playlist_location_short,
     probe_audio,
@@ -1651,6 +1653,7 @@ class ImportFolderList(tk.Frame):
                 widget.bind("<Button-5>", lambda _event: self.canvas.yview_scroll(3, "units"))
             self._rows.append({
                 "path": item.get("path") or "",
+                "removable": bool(item.get("removable")),
                 "frame": row,
                 "slot": slot,
                 "label": label,
@@ -1672,6 +1675,11 @@ class ImportFolderList(tk.Frame):
         if not 0 <= self._selected < len(self._rows):
             return ""
         return self._rows[self._selected]["path"]
+
+    def selected_removable(self):
+        if not 0 <= self._selected < len(self._rows):
+            return False
+        return bool(self._rows[self._selected].get("removable"))
 
     def has_icon(self, index):
         if not 0 <= index < len(self._rows):
@@ -1958,15 +1966,7 @@ class VideoPlayerGUI:
         self._media_dir_name_entry = None
         self._media_dir_name_index = None
         self._media_dir_name_guard = False
-        self.copy_imported_media = tk.BooleanVar(
-            value=bool(self.settings.get("copy_imported_media", False))
-        )
-        self.copy_imported_media_dir = self.settings.get("copy_imported_media_dir") or ""
-        if self.copy_imported_media_dir:
-            self.copy_imported_media_dir = os.path.abspath(
-                os.path.expanduser(self.copy_imported_media_dir)
-            )
-        self.copy_imported_media_label = tk.StringVar(value=self._copy_path_label_text())
+        self.import_path = self._stored_import_path()
         self.audiosync_delays = self._normalize_audiosync_delays(
             self.settings.get("audiosync_delays", {})
         )
@@ -2496,7 +2496,6 @@ class VideoPlayerGUI:
         self.root.configure(bg=COLOR_BG)
         sync_fonts()
         self.apply_widget_defaults()
-        self.copy_imported_media_label.set(self._copy_path_label_text())
         self.create_gui()
         self._show_audiosync_controls(self.calibration_mode == "audio")
         self.refresh_all()
@@ -2997,7 +2996,7 @@ class VideoPlayerGUI:
         ).grid(row=0, column=0, sticky="w", padx=(0, 8))
 
         self.playlist_name = tk.Entry(header, font=FONT_UI)
-        self.playlist_name.insert(0, "untitled.pls")
+        self.playlist_name.insert(0, t("playlist_untitled"))
         self.playlist_name.grid(row=0, column=1, sticky="ew")
 
         buttons = tk.Frame(header, bg=COLOR_PANEL)
@@ -5939,42 +5938,65 @@ class VideoPlayerGUI:
             return existing[0]
         return last if last and os.path.isdir(last) else ""
 
-    def _copy_path_label_text(self):
-        path = self.copy_imported_media_dir
-        if not path:
-            return t("copy_files_none")
-        if os.path.isdir(path):
-            return path
-        return f"{path}  ({t('media_directories_missing')})"
+    def _stored_import_path(self):
+        """Import directory from settings, including the older copy-destination key."""
+        raw = self.settings.get("import_path") or self.settings.get("copy_imported_media_dir") or ""
+        if not isinstance(raw, str) or not raw.strip():
+            return ""
+        try:
+            return os.path.abspath(os.path.expanduser(raw.strip()))
+        except (OSError, ValueError):
+            return ""
 
-    def _copy_destination(self):
-        path = self.copy_imported_media_dir
-        if path and os.path.isdir(path):
-            return os.path.abspath(path)
-        return ""
+    def _import_path_ready(self):
+        path = getattr(self, "import_path", "") or ""
+        return bool(path) and os.path.isdir(path)
 
-    def _save_copy_imported_media(self):
-        self.settings["copy_imported_media"] = bool(self.copy_imported_media.get())
-        self.settings["copy_imported_media_dir"] = self.copy_imported_media_dir
-        self.copy_imported_media_label.set(self._copy_path_label_text())
+    def _save_import_path(self):
+        self.settings["import_path"] = self.import_path
+        self.settings["copy_imported_media_dir"] = self.import_path
         try:
             save_settings(self.settings)
         except OSError:
             pass
 
-    def _choose_copy_destination(self, parent=None):
-        options = {"title": t("copy_files_choose")}
+    def _choose_import_path(self, parent=None):
+        options = {"title": t("import_path_choose")}
         if parent is not None:
             options["parent"] = parent
-        start = self._copy_destination() or self._preferred_import_dir()
+        start = self.import_path if self._import_path_ready() else self._preferred_import_dir()
         if start:
             options["initialdir"] = start
         path = filedialog.askdirectory(**options)
         if not path:
             return False
-        self.copy_imported_media_dir = os.path.abspath(path)
-        self._save_copy_imported_media()
+        self.import_path = os.path.abspath(path)
+        self._save_import_path()
+        if self._media_dirs_window_alive():
+            listbox = getattr(self.media_dirs_window, "_listbox", None)
+            if listbox is not None:
+                self._refresh_media_directory_list(listbox, select_import=True)
+                self._load_media_directory_name_field(listbox)
         return True
+
+    def _current_playlist_name(self):
+        entry = getattr(self, "playlist_name", None)
+        if entry is None:
+            return ""
+        try:
+            return entry.get().strip()
+        except tk.TclError:
+            return ""
+
+    def _set_playlist_name(self, name):
+        entry = getattr(self, "playlist_name", None)
+        if entry is None:
+            return
+        try:
+            entry.delete(0, "end")
+            entry.insert(0, name)
+        except tk.TclError:
+            pass
 
     def _unique_copy_path(self, directory, filename):
         base, ext = os.path.splitext(filename)
@@ -6114,9 +6136,13 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
-    def _copy_imported_paths(self, paths):
-        dest_dir = self._copy_destination()
-        if not dest_dir:
+    def _copy_imported_paths(self, paths, dest_dir):
+        """Copy ``paths`` into ``dest_dir``.
+
+        The result lines up with ``paths``. A missing destination aborts with
+        an empty list. A file that could not be copied is ``None``.
+        """
+        if not dest_dir or not os.path.isdir(dest_dir):
             messagebox.showerror(t("copy_files"), t("copy_files_missing"))
             return []
         jobs = []
@@ -6151,6 +6177,7 @@ class VideoPlayerGUI:
                             )
 
                     if not self._copy_file_with_progress(source, dest, on_progress, parent=window):
+                        results.append(None)
                         continue
                     done_bytes += size
                 results.append(dest)
@@ -8069,6 +8096,10 @@ class VideoPlayerGUI:
         tk.Label(
             body, text=t("media_directories_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
             font=FONT_SMALL, wraplength=620, justify="left",
+        ).pack(fill="x", pady=(0, 2))
+        tk.Label(
+            body, text=t("import_path_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=620, justify="left",
         ).pack(fill="x", pady=(0, 6))
 
         holder = tk.Frame(body, bg=COLOR_PANEL)
@@ -8114,15 +8145,16 @@ class VideoPlayerGUI:
             buttons, text=t("media_directories_add"),
             command=lambda: self._add_media_directory(window, listbox), font=FONT_UI,
         ).pack(side="right", padx=(0, 8))
+        tk.Button(
+            buttons, text=t("import_path_choose"),
+            command=lambda: self._choose_import_path(window), font=FONT_UI,
+        ).pack(side="left")
 
         window._listbox = listbox
         self.media_dirs_window = window
         listbox.bind("<<ListboxSelect>>", self._on_media_directory_select)
         listbox.bind("<Double-Button-1>", lambda _event: self._focus_media_directory_name())
-        self._refresh_media_directory_list(listbox)
-        if self.media_directories and not listbox.curselection():
-            listbox.selection_set(0)
-            listbox.activate(0)
+        self._refresh_media_directory_list(listbox, select_import=True)
         self._load_media_directory_name_field(listbox)
         self._bind_popup_wheel(window, body)
         self._open_popup(window, 720, 560)
@@ -8145,26 +8177,63 @@ class VideoPlayerGUI:
             text = f"{text}  ({t('media_directories_missing')})"
         return text
 
+    def _import_path_label(self):
+        mark = t("import_path_mark")
+        path = getattr(self, "import_path", "") or ""
+        if not path:
+            return f"{mark}  —  {t('import_path_missing')}"
+        text = f"{mark}  —  {path}"
+        if not os.path.isdir(path):
+            text = f"{text}  ({t('media_directories_missing')})"
+        return text
+
+    def _mark_import_path_row(self, listbox):
+        """Keep the import path visibly distinct, including while it is selected."""
+        try:
+            if listbox.size() > 0:
+                listbox.itemconfig(
+                    0,
+                    foreground=ACCENT,
+                    selectforeground=COLOR_WHITE,
+                    selectbackground=ACCENT,
+                )
+        except tk.TclError:
+            pass
+
     def _media_directory_choice_label(self, path):
         index = self._media_directory_index(path)
         if index < 0:
             return path
         return self._media_directory_label(self.media_directories[index])
 
-    def _refresh_media_directory_list(self, listbox, select_path=None):
+    def _refresh_media_directory_list(self, listbox, select_path=None, select_import=False):
+        """Redraw the list. Row 0 is always the import path."""
         current = select_path
-        if current is None:
+        keep_import = select_import
+        if current is None and not keep_import:
             selection = listbox.curselection()
-            if selection and 0 <= selection[0] < len(self.media_directories):
-                current = self.media_directories[selection[0]]["path"]
+            if selection:
+                if selection[0] == 0:
+                    keep_import = True
+                else:
+                    media_index = selection[0] - 1
+                    if 0 <= media_index < len(self.media_directories):
+                        current = self.media_directories[media_index]["path"]
         listbox.delete(0, "end")
+        listbox.insert("end", self._import_path_label())
         for item in self.media_directories:
             listbox.insert("end", self._media_directory_label(item))
+        self._mark_import_path_row(listbox)
+        if keep_import or not current:
+            listbox.selection_set(0)
+            listbox.activate(0)
+            listbox.see(0)
+            return
         index = self._media_directory_index(current)
-        if index >= 0:
-            listbox.selection_set(index)
-            listbox.activate(index)
-            listbox.see(index)
+        row = index + 1 if index >= 0 else 0
+        listbox.selection_set(row)
+        listbox.activate(row)
+        listbox.see(row)
 
     def _load_media_directory_name_field(self, listbox):
         entry = getattr(self, "_media_dir_name_entry", None)
@@ -8180,18 +8249,29 @@ class VideoPlayerGUI:
                 entry.configure(state="disabled")
                 return
             index = selection[0]
-            if not 0 <= index < len(self.media_directories):
+            media_index = index - 1
+            if index < 1 or not 0 <= media_index < len(self.media_directories):
                 self._media_dir_name_index = None
                 var.set("")
                 entry.configure(state="disabled")
                 return
             self._media_dir_name_index = index
             entry.configure(state="normal")
-            var.set(self.media_directories[index]["name"])
+            var.set(self.media_directories[media_index]["name"])
         finally:
             self._media_dir_name_guard = False
 
     def _focus_media_directory_name(self):
+        window = getattr(self, "media_dirs_window", None)
+        listbox = getattr(window, "_listbox", None) if window is not None else None
+        if listbox is not None:
+            try:
+                selection = listbox.curselection()
+            except tk.TclError:
+                selection = ()
+            if selection and selection[0] == 0:
+                self._choose_import_path(window)
+                return
         entry = getattr(self, "_media_dir_name_entry", None)
         if entry is None:
             return
@@ -8219,8 +8299,12 @@ class VideoPlayerGUI:
         self._load_media_directory_name_field(listbox)
 
     def _replace_media_directory_row(self, listbox, index):
-        """Update one list row without moving the current selection."""
-        if listbox is None or not 0 <= index < len(self.media_directories):
+        """Update one media-folder row without moving the current selection.
+
+        ``index`` is the listbox row. Row 0 is the import path.
+        """
+        media_index = (index or 0) - 1
+        if listbox is None or index < 1 or not 0 <= media_index < len(self.media_directories):
             return
         try:
             if index >= listbox.size():
@@ -8231,7 +8315,8 @@ class VideoPlayerGUI:
         self._media_dir_name_guard = True
         try:
             listbox.delete(index)
-            listbox.insert(index, self._media_directory_label(self.media_directories[index]))
+            listbox.insert(index, self._media_directory_label(self.media_directories[media_index]))
+            self._mark_import_path_row(listbox)
             listbox.selection_clear(0, "end")
             for item in selected:
                 if 0 <= item < listbox.size():
@@ -8248,12 +8333,13 @@ class VideoPlayerGUI:
             return "break"
         index = getattr(self, "_media_dir_name_index", None)
         var = getattr(self, "_media_dir_name_var", None)
-        if index is None or var is None:
+        media_index = (index if isinstance(index, int) else 0) - 1
+        if index is None or var is None or index < 1:
             return "break"
-        if not 0 <= index < len(self.media_directories):
+        if not 0 <= media_index < len(self.media_directories):
             return "break"
         name = var.get().strip()
-        if name == self.media_directories[index]["name"]:
+        if name == self.media_directories[media_index]["name"]:
             if var.get() != name:
                 self._media_dir_name_guard = True
                 try:
@@ -8261,10 +8347,10 @@ class VideoPlayerGUI:
                 finally:
                     self._media_dir_name_guard = False
             return "break"
-        self.media_directories[index]["name"] = name
+        self.media_directories[media_index]["name"] = name
         self._save_media_directories()
-        if var is not None and 0 <= index < len(self.media_directories):
-            stored = self.media_directories[index]["name"]
+        if var is not None and 0 <= media_index < len(self.media_directories):
+            stored = self.media_directories[media_index]["name"]
             if var.get() != stored:
                 self._media_dir_name_guard = True
                 try:
@@ -8295,16 +8381,16 @@ class VideoPlayerGUI:
 
     def _remove_media_directory(self, listbox):
         selection = listbox.curselection()
-        if not selection:
+        if not selection or selection[0] < 1:
             return
-        index = selection[0]
+        media_index = selection[0] - 1
         self._media_dir_name_index = None
-        del self.media_directories[index]
+        del self.media_directories[media_index]
         self._save_media_directories()
         next_path = ""
         if self.media_directories:
-            next_path = self.media_directories[min(index, len(self.media_directories) - 1)]["path"]
-        self._refresh_media_directory_list(listbox, select_path=next_path)
+            next_path = self.media_directories[min(media_index, len(self.media_directories) - 1)]["path"]
+        self._refresh_media_directory_list(listbox, select_path=next_path or None, select_import=not next_path)
         self._load_media_directory_name_field(listbox)
 
     def _close_media_dirs_window(self):
@@ -8390,20 +8476,34 @@ class VideoPlayerGUI:
 
     def import_media(self):
         choices = self._import_folder_choices()
-        if choices:
-            choice = self._choose_import_action(choices)
-            if not choice:
-                return
-            mode, directory = choice
-            if mode == "folder":
-                self._import_directory(directory)
-                return
-            if mode == "other":
-                self._import_files_or_directory(self.last_import_dir)
-                return
-            self._import_files_or_directory(directory, folder_fallback=False)
+        if not choices:
+            self._import_files_or_directory(self._preferred_import_dir())
             return
-        self._import_files_or_directory(self._preferred_import_dir())
+        choice = self._choose_import_action(choices)
+        if not choice:
+            return
+        mode, directory, removable = choice
+        copy_stem = ""
+        if mode != "other" and removable:
+            action = self._ask_link_or_copy()
+            if not action:
+                return
+            if action == "copy":
+                copy_stem = self._prompt_playlist_folder_name()
+                if not copy_stem:
+                    return
+        if mode == "folder":
+            options = {"title": t("import_directory")}
+            if directory and os.path.isdir(directory):
+                options["initialdir"] = directory
+            chosen = filedialog.askdirectory(**options)
+            if chosen:
+                self._import_directory(chosen, copy_stem=copy_stem)
+            return
+        if mode == "other":
+            self._import_files_or_directory(self.last_import_dir)
+            return
+        self._import_files_or_directory(directory, folder_fallback=False, copy_stem=copy_stem)
 
     def _choose_import_action(self, choices):
         """Let the operator pick a saved folder or a plugged-in drive."""
@@ -8441,57 +8541,8 @@ class VideoPlayerGUI:
         ])
         folder_list.select(self._import_choice_index(choices))
 
-        copy_row = tk.Frame(body, bg=COLOR_BG)
-        copy_row.pack(fill="x", pady=(0, 8))
-        path_holder = tk.Frame(copy_row, bg=COLOR_BG)
-        path_button = tk.Button(
-            path_holder,
-            textvariable=self.copy_imported_media_label,
-            command=lambda: self._choose_copy_destination(window),
-            font=FONT_SMALL,
-        )
-        path_button.pack(side="left", fill="x", expand=True)
-
-        def show_copy_path(visible):
-            if visible:
-                path_holder.pack(side="left", fill="x", expand=True, padx=(12, 0))
-            else:
-                path_holder.pack_forget()
-
-        def on_copy_toggle():
-            enabled = bool(self.copy_imported_media.get())
-            if enabled:
-                show_copy_path(True)
-                if not self._copy_destination():
-                    if not self._choose_copy_destination(window):
-                        self.copy_imported_media.set(False)
-                        show_copy_path(False)
-                        self._save_copy_imported_media()
-                        return
-            else:
-                show_copy_path(False)
-            self._save_copy_imported_media()
-
-        self._checkbutton(
-            copy_row, t("copy_files"), self.copy_imported_media, on_copy_toggle, COLOR_BG,
-        ).pack(side="left")
-        self.copy_imported_media_label.set(self._copy_path_label_text())
-        show_copy_path(bool(self.copy_imported_media.get()))
-
-        def ready_to_copy():
-            if not self.copy_imported_media.get():
-                return True
-            if self._copy_destination():
-                return True
-            if self._choose_copy_destination(window):
-                return True
-            messagebox.showerror(t("copy_files"), t("copy_files_missing"), parent=window)
-            return False
-
-        def finish(mode, directory=""):
-            if not ready_to_copy():
-                return
-            result["choice"] = (mode, directory)
+        def finish(mode, directory="", removable=False):
+            result["choice"] = (mode, directory, bool(removable))
             window.destroy()
 
         def selected_directory():
@@ -8500,18 +8551,13 @@ class VideoPlayerGUI:
         def import_files(_event=None):
             directory = selected_directory()
             if directory:
-                finish("files", directory)
+                finish("files", directory, folder_list.selected_removable())
 
         def import_folder():
             directory = selected_directory()
             if not directory:
                 return
-            options = {"title": t("import_directory"), "parent": window}
-            if os.path.isdir(directory):
-                options["initialdir"] = directory
-            chosen = filedialog.askdirectory(**options)
-            if chosen:
-                finish("folder", chosen)
+            finish("folder", directory, folder_list.selected_removable())
 
         def cancel():
             result["choice"] = None
@@ -8551,13 +8597,103 @@ class VideoPlayerGUI:
         self.root.wait_window(window)
         return result["choice"]
 
+    def _ask_link_or_copy(self):
+        """Ask whether a removable drive is linked or copied.
+
+        Returns ``"link"``, ``"copy"``, or ``None`` when the dialog is closed.
+        Copy stays unavailable until an import path exists.
+        """
+        result = {"action": None}
+        window = tk.Toplevel(self.root)
+        window.title(t("import_link_or_copy_title"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(460, 180)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = tk.Frame(window, bg=COLOR_BG)
+        body.pack(fill="both", expand=True, padx=16, pady=(16, 8))
+        tk.Label(
+            body, text=t("import_link_or_copy"), bg=COLOR_BG, fg=COLOR_TEXT,
+            font=FONT_UI, wraplength=480, justify="left",
+        ).pack(fill="x")
+        warning = tk.Label(
+            body, text=t("import_path_required"), bg=COLOR_BG, fg=COLOR_WARNING,
+            font=FONT_SMALL, wraplength=480, justify="left",
+        )
+        if not self._import_path_ready():
+            warning.pack(fill="x", pady=(10, 0))
+
+        def show_warning():
+            if not warning.winfo_manager():
+                warning.pack(fill="x", pady=(10, 0))
+            try:
+                window.update_idletasks()
+            except tk.TclError:
+                pass
+
+        def choose_copy():
+            if not self._import_path_ready():
+                show_warning()
+                return
+            result["action"] = "copy"
+            window.destroy()
+
+        def choose_link():
+            result["action"] = "link"
+            window.destroy()
+
+        def cancel():
+            result["action"] = None
+            window.destroy()
+
+        tk.Button(buttons, text=t("import_link"), command=choose_link, font=FONT_UI).pack(side="left")
+        tk.Button(buttons, text=t("import_copy"), command=choose_copy, font=FONT_UI).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("media_directories_close"), command=cancel, font=FONT_UI,
+        ).pack(side="right")
+        window.bind("<Escape>", lambda _event: cancel())
+        window.protocol("WM_DELETE_WINDOW", cancel)
+        self._open_popup(window, 520, 220)
+        window.grab_set()
+        self.root.wait_window(window)
+        return result["action"]
+
+    def _prompt_playlist_folder_name(self):
+        """Return a folder stem, asking when the playlist field is still a placeholder."""
+        stem = playlist_folder_name(self._current_playlist_name())
+        if stem:
+            return stem
+        while True:
+            name = simpledialog.askstring(
+                t("import_playlist_name_title"),
+                t("import_playlist_name_prompt"),
+                parent=self.root,
+            )
+            if name is None:
+                return ""
+            stem = playlist_folder_name(name)
+            if stem:
+                self._set_playlist_name(f"{stem}.pls")
+                return stem
+            messagebox.showerror(
+                t("import_playlist_name_title"),
+                t("import_playlist_name_invalid"),
+                parent=self.root,
+            )
+
     def _import_dialog_options(self, directory):
         options = {"parent": self.root}
         if directory and os.path.isdir(directory):
             options["initialdir"] = directory
         return options
 
-    def _import_files_or_directory(self, directory, folder_fallback=True):
+    def _import_files_or_directory(self, directory, folder_fallback=True, copy_stem=""):
         dialog_options = self._import_dialog_options(directory)
         paths = filedialog.askopenfilenames(
             title=t("import_media"),
@@ -8566,7 +8702,7 @@ class VideoPlayerGUI:
         )
         if paths:
             self.remember_import_dir(paths[0])
-            self._add_imported_paths(paths)
+            self._add_imported_paths(paths, copy_stem=copy_stem)
             return
         if not folder_fallback:
             return
@@ -8575,27 +8711,86 @@ class VideoPlayerGUI:
             **dialog_options,
         )
         if folder:
-            self._import_directory(folder)
+            self._import_directory(folder, copy_stem=copy_stem)
 
-    def _import_directory(self, directory):
+    def _import_directory(self, directory, copy_stem=""):
         if not directory or not os.path.isdir(directory):
             return
         self.remember_import_dir(directory)
-        self._add_imported_paths(self._media_paths_in_directory(directory))
+        self._add_imported_paths(self._media_paths_in_directory(directory), copy_stem=copy_stem)
 
-    def _add_imported_paths(self, paths):
-        playlist_paths = []
-        copy_enabled = bool(self.copy_imported_media.get())
-        if copy_enabled:
-            playlist_paths = self._copy_imported_paths(paths)
-        else:
-            playlist_paths = list(paths)
+    def _add_imported_paths(self, paths, copy_stem=""):
+        playlist_paths = list(paths)
+        copied_dir = ""
+        if copy_stem:
+            playlist_paths, copied_dir = self._copy_removable_imports(paths, copy_stem)
+            if playlist_paths is None:
+                return
         for path in playlist_paths:
             self.add_media(path)
         if self.playlist and self.preview_index is None:
             self.program_index = 0
             self.apply_beamer_mode_for_pointer()
         self.refresh_all()
+        if copied_dir:
+            self._save_playlist_into(copied_dir, copy_stem)
+
+    def _copy_removable_imports(self, paths, copy_stem):
+        """Copy files that sit on a removable volume into the playlist folder.
+
+        Internal files stay linked. Returns ``(playlist_paths, copied_dir)``.
+        ``playlist_paths`` is ``None`` when the import folder cannot be created.
+        ``copied_dir`` is set only after at least one file was copied.
+        """
+        try:
+            volumes = list_removable_volumes()
+        except OSError:
+            volumes = []
+        removable = []
+        linked = []
+        for path in paths:
+            if path_is_on_removable_volume(path, volumes):
+                removable.append(path)
+            else:
+                linked.append(path)
+        if not removable:
+            return list(paths), ""
+        if not self._import_path_ready():
+            messagebox.showerror(t("copy_files"), t("import_path_required"))
+            return None, ""
+        dest_dir = os.path.join(self.import_path, copy_stem)
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror(t("copy_files"), t("import_folder_failed", error=exc))
+            return None, ""
+        copied = self._copy_imported_paths(removable, dest_dir)
+        if len(copied) != len(removable):
+            return None, ""
+        playlist_paths = []
+        copied_any = False
+        copy_index = 0
+        for path in paths:
+            if path_is_on_removable_volume(path, volumes):
+                dest = copied[copy_index]
+                copy_index += 1
+                if dest:
+                    playlist_paths.append(dest)
+                    copied_any = True
+            else:
+                playlist_paths.append(path)
+        return playlist_paths, dest_dir if copied_any else ""
+
+    def _save_playlist_into(self, directory, stem):
+        path = os.path.join(directory, f"{stem}.pls")
+        try:
+            self._write_playlist(path)
+        except OSError as exc:
+            messagebox.showerror(t("save_playlist"), t("import_playlist_save_failed", error=exc))
+            return
+        self.playlist_path = path
+        self._set_playlist_name(os.path.basename(path))
+        self.remember_playlist_dir(path)
 
     def add_media(self, path):
         try:
@@ -8636,7 +8831,7 @@ class VideoPlayerGUI:
         self._close_audiosync_list_window()
         self.blank_output()
         self.playlist_name.delete(0, "end")
-        self.playlist_name.insert(0, "untitled.pls")
+        self.playlist_name.insert(0, t("playlist_untitled"))
         self.refresh_all()
 
     def start_video_calibration(self):
@@ -8789,7 +8984,7 @@ class VideoPlayerGUI:
         self._reset_preview_meter()
         self.main_mpv.set_audio_delay(0)
         self.playlist_name.delete(0, "end")
-        self.playlist_name.insert(0, "untitled.pls")
+        self.playlist_name.insert(0, t("playlist_untitled"))
         self._show_audiosync_controls(False)
         self._close_audiosync_list_window()
         self.blank_output()

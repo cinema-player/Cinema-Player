@@ -208,6 +208,42 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertEqual(set(language.STRINGS["en"]), set(language.STRINGS["de"]))
         self.assertIn("Plugged-in", language.STRINGS["en"]["media_directories_drives"])
         self.assertIn("Wechseldatenträger", language.STRINGS["de"]["media_directories_drives"])
+        self.assertEqual(language.STRINGS["de"]["import_path_mark"], "Importpfad")
+        self.assertEqual(language.STRINGS["de"]["playlist_untitled"], "unbekannt.pls")
+        self.assertEqual(language.STRINGS["en"]["playlist_untitled"], "untitled.pls")
+
+
+class PlaylistFolderNameTests(unittest.TestCase):
+    def test_placeholders_and_blank_names_are_rejected(self):
+        for name in ("", "   ", "untitled.pls", "Unbekannt.pls", "UNTITLED", "unbekannt"):
+            self.assertTrue(player.playlist_name_is_placeholder(name), name)
+            self.assertEqual(player.playlist_folder_name(name), "")
+
+    def test_a_real_name_becomes_the_folder(self):
+        self.assertEqual(player.playlist_folder_name("Abend.pls"), "Abend")
+        self.assertEqual(player.playlist_folder_name("Abend.json"), "Abend")
+        self.assertEqual(player.playlist_folder_name("  Abend  "), "Abend")
+        self.assertFalse(player.playlist_name_is_placeholder("Abend.pls"))
+
+    def test_path_segments_are_rejected(self):
+        self.assertEqual(player.playlist_folder_name("../Abend.pls"), "")
+        self.assertEqual(player.playlist_folder_name("Abend/Film.pls"), "")
+        self.assertEqual(player.playlist_folder_name("."), "")
+        self.assertEqual(player.playlist_folder_name(".."), "")
+
+
+class RemovablePathTests(unittest.TestCase):
+    def test_files_inside_a_volume_count_and_siblings_do_not(self):
+        volumes = [{"path": "/run/media/booth/STICK", "name": "STICK"}]
+        self.assertTrue(player.path_is_on_removable_volume(
+            "/run/media/booth/STICK/day/clip.mp4", volumes,
+        ))
+        self.assertTrue(player.path_is_on_removable_volume("/run/media/booth/STICK", volumes))
+        self.assertFalse(player.path_is_on_removable_volume(
+            "/run/media/booth/STICK-extra/clip.mp4", volumes,
+        ))
+        self.assertFalse(player.path_is_on_removable_volume("/data/films/clip.mp4", volumes))
+        self.assertFalse(player.path_is_on_removable_volume("", volumes))
 
 
 if __name__ == "__main__":

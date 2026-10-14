@@ -381,9 +381,6 @@ class BoothChromeTests(unittest.TestCase):
         self.app.media_directories = [{"path": "/tmp", "name": "Filme"}]
         self.app.last_import_dir = ""
         self.app.settings = {}
-        self.app.copy_imported_media = tk.BooleanVar(master=self.root, value=False)
-        self.app.copy_imported_media_dir = ""
-        self.app.copy_imported_media_label = tk.StringVar(master=self.root, value="")
         self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
             f"{width}x{height}+20+20"
         )
@@ -411,6 +408,7 @@ class BoothChromeTests(unittest.TestCase):
             button = labels[text]
             self.assertTrue(button.winfo_viewable())
             self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), bottom)
+        self.assertNotIn("Files kopieren", labels)
         window.geometry("680x320+20+20")
         window.update()
         self.assertEqual(window._popup_bar.winfo_manager(), "grid")
@@ -419,6 +417,164 @@ class BoothChromeTests(unittest.TestCase):
         self.assertTrue(close.winfo_viewable())
         self.assertLessEqual(close.winfo_rooty() + close.winfo_height(), window.winfo_rooty() + window.winfo_height())
         window.destroy()
+
+    def test_media_directories_pin_the_import_path(self):
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.media_dirs_window = None
+        self.app.import_path = ""
+        self.app.media_directories = [{"path": "/tmp", "name": "Filme"}]
+        self.app.settings = {"media_directories": self.app.media_directories}
+        self.app.refresh_playlist = lambda: None
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        cinema_gui.VideoPlayerGUI.show_media_directories(self.app)
+        window = self.app.media_dirs_window
+        window.update()
+        box = window._listbox
+        self.assertTrue(box.get(0).startswith("Importpfad"))
+        self.assertIn("nicht gesetzt", box.get(0))
+        self.assertEqual(box.get(1), "Filme  —  /tmp")
+        self.assertEqual(str(box.itemcget(0, "foreground")).lower(), cinema_gui.ACCENT.lower())
+        self.assertEqual(str(box.itemcget(0, "selectbackground")).lower(), cinema_gui.ACCENT.lower())
+        self.assertEqual(str(self.app._media_dir_name_entry.cget("state")), "disabled")
+        labels = [
+            child.cget("text")
+            for child in window.winfo_children()
+            if isinstance(child, tk.Frame)
+            for child in child.winfo_children()
+            if isinstance(child, tk.Button)
+        ]
+        self.assertIn("Importpfad festlegen", labels)
+        cinema_gui.VideoPlayerGUI._remove_media_directory(self.app, box)
+        self.assertEqual(self.app.media_directories, [{"path": "/tmp", "name": "Filme"}])
+        box.selection_clear(0, "end")
+        box.selection_set(1)
+        box.event_generate("<<ListboxSelect>>")
+        window.update()
+        self.assertEqual(str(self.app._media_dir_name_entry.cget("state")), "normal")
+        self.assertEqual(self.app._media_dir_name_var.get(), "Filme")
+        with patch.object(cinema_gui, "save_settings"):
+            cinema_gui.VideoPlayerGUI._remove_media_directory(self.app, box)
+        self.assertEqual(self.app.media_directories, [])
+        self.assertEqual(box.get(0).startswith("Importpfad"), True)
+        self.assertEqual(box.size(), 1)
+        window.destroy()
+
+    def test_copy_from_a_drive_needs_an_import_path_and_a_playlist_name(self):
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.import_path = ""
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        held = {}
+        self.root.wait_window = lambda window: held.update(window=window)
+        action = cinema_gui.VideoPlayerGUI._ask_link_or_copy(self.app)
+        self.assertIsNone(action)
+        window = held["window"]
+        window.update()
+        labels = {
+            child.cget("text"): child
+            for child in window.winfo_children()
+            if isinstance(child, tk.Frame)
+            for child in child.winfo_children()
+            if isinstance(child, tk.Button)
+        }
+        warning = [
+            child for child in window.winfo_children()
+            if isinstance(child, tk.Frame)
+            for child in child.winfo_children()
+            if isinstance(child, tk.Label)
+            and str(child.cget("fg")).lower() == cinema_gui.COLOR_WARNING.lower()
+        ]
+        self.assertTrue(warning)
+        self.assertTrue(warning[0].winfo_viewable())
+        labels["Kopieren"].invoke()
+        window.update()
+        self.assertTrue(window.winfo_exists())
+        labels["Verlinken"].invoke()
+        window.update()
+        self.assertFalse(window.winfo_exists())
+
+        self.app.playlist_name = tk.Entry(self.root)
+        self.app.playlist_name.insert(0, "unbekannt.pls")
+        with patch.object(cinema_gui.simpledialog, "askstring", return_value="Abend") as ask:
+            stem = cinema_gui.VideoPlayerGUI._prompt_playlist_folder_name(self.app)
+        self.assertEqual(stem, "Abend")
+        self.assertEqual(self.app.playlist_name.get(), "Abend.pls")
+        ask.assert_called_once()
+        with patch.object(cinema_gui.simpledialog, "askstring") as ask:
+            self.assertEqual(
+                cinema_gui.VideoPlayerGUI._prompt_playlist_folder_name(self.app),
+                "Abend",
+            )
+        ask.assert_not_called()
+
+    def test_copied_drive_files_share_the_playlist_folder(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        stick = os.path.join(root, "stick")
+        internal = os.path.join(root, "internal")
+        dest = os.path.join(root, "import")
+        os.makedirs(stick)
+        os.makedirs(internal)
+        os.makedirs(dest)
+        stick_file = os.path.join(stick, "clip.mp4")
+        internal_file = os.path.join(internal, "still.jpg")
+        with open(stick_file, "wb") as handle:
+            handle.write(b"video-bytes")
+        with open(internal_file, "wb") as handle:
+            handle.write(b"still-bytes")
+        added = []
+        written = {}
+
+        def write_playlist(path):
+            written["path"] = path
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.import_path = dest
+        self.app.add_media = lambda path: added.append(path)
+        self.app.playlist = []
+        self.app.preview_index = None
+        self.app.refresh_all = lambda: None
+        self.app._write_playlist = write_playlist
+        self.app.playlist_path = ""
+        self.app.playlist_name = tk.Entry(self.root)
+        self.app.playlist_name.insert(0, "Abend.pls")
+        self.app.remember_playlist_dir = lambda path: None
+        self.app._open_copy_progress = lambda total: (None, None)
+        self.app._close_copy_progress = lambda window: None
+        self.app._update_copy_progress = lambda *args, **kwargs: None
+        volumes = [{"path": stick, "name": "Stick"}]
+        with patch.object(cinema_gui, "list_removable_volumes", return_value=volumes):
+            cinema_gui.VideoPlayerGUI._add_imported_paths(
+                self.app, [internal_file, stick_file], copy_stem="Abend",
+            )
+        copied = os.path.join(dest, "Abend", "clip.mp4")
+        self.assertEqual(added, [internal_file, copied])
+        with open(copied, "rb") as handle:
+            self.assertEqual(handle.read(), b"video-bytes")
+        self.assertFalse(os.path.exists(os.path.join(dest, "Abend", "still.jpg")))
+        self.assertEqual(written["path"], os.path.join(dest, "Abend", "Abend.pls"))
+        self.assertTrue(os.path.isfile(written["path"]))
+        added.clear()
+        with patch.object(cinema_gui, "list_removable_volumes", return_value=volumes):
+            cinema_gui.VideoPlayerGUI._add_imported_paths(self.app, [stick_file], copy_stem="")
+        self.assertEqual(added, [stick_file])
+        before = dict(written)
+        added.clear()
+        with patch.object(cinema_gui, "list_removable_volumes", return_value=volumes):
+            cinema_gui.VideoPlayerGUI._add_imported_paths(
+                self.app, [internal_file], copy_stem="Abend",
+            )
+        self.assertEqual(added, [internal_file])
+        self.assertEqual(written, before)
+        self.assertFalse(os.path.exists(os.path.join(dest, "Abend", "still.jpg")))
 
     def test_file_dialog_creates_a_folder_in_the_open_directory(self):
         cinema_gui.install_file_dialog_new_folder(self.root)
