@@ -1904,6 +1904,7 @@ class VideoPlayerGUI:
         self.playlist = []
         self.playlist_path = ""
         self.program_state = "OFF"
+        self.playlist_tools_open = False
         self.calibration_mode = None
         self.program_index = 0
         self.zoom_confirmed_index = None
@@ -3006,6 +3007,20 @@ class VideoPlayerGUI:
         self._icon_button(buttons, "playlist_new", self.new_playlist, t("new"), t("new_playlist"))
         self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
         self._icon_button(buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"))
+
+        toggle = tk.Canvas(
+            header, width=28, height=28, bg=COLOR_PANEL,
+            highlightthickness=0, bd=0, cursor="hand2",
+        )
+        toggle.grid(row=0, column=3, sticky="e", padx=(2, 0))
+        toggle.grid_remove()
+        self.playlist_tools_toggle = toggle
+        self._playlist_tools_hover = False
+        toggle.bind("<Button-1>", self._toggle_playlist_tools)
+        toggle.bind("<Enter>", self._playlist_tools_enter)
+        toggle.bind("<Leave>", self._playlist_tools_leave)
+        toggle.bind("<Configure>", lambda _event: self._paint_playlist_tools_arrow())
+        self.playlist_tools_tip = IconTooltip(toggle, t("playlist_tools_show"))
 
         self.playlist_header = header
 
@@ -4551,15 +4566,65 @@ class VideoPlayerGUI:
         return self.program_state in ("PROGRAM", "PLAYING")
 
     def _apply_booth_chrome(self):
-        """Fold preparation tools while a show is armed or playing."""
+        """Hide the playlist buttons while a show is armed or playing.
+
+        The arrow brings them back. Preview settings such as autoplay and loop
+        stay on screen.
+        """
         show = self._booth_show_mode()
         previous = getattr(self, "_booth_chrome_show", None)
         self._booth_chrome_show = show
-        if show and previous is not True and getattr(self, "beamer_details_open", False):
-            self.beamer_details_open = False
-            self._apply_beamer_fold()
-        self._set_grid_visible(getattr(self, "playlist_tool_buttons", None), not show)
-        self._set_grid_visible(getattr(self, "preview_settings", None), not show)
+        if show and previous is not True:
+            self.playlist_tools_open = False
+            if getattr(self, "beamer_details_open", False):
+                self.beamer_details_open = False
+                self._apply_beamer_fold()
+        tools_visible = (not show) or bool(getattr(self, "playlist_tools_open", False))
+        self._set_grid_visible(getattr(self, "playlist_tool_buttons", None), tools_visible)
+        self._set_grid_visible(getattr(self, "playlist_tools_toggle", None), show)
+        self._paint_playlist_tools_arrow()
+
+    def _toggle_playlist_tools(self, _event=None):
+        if not self._booth_show_mode():
+            return "break"
+        self.playlist_tools_open = not bool(getattr(self, "playlist_tools_open", False))
+        self._apply_booth_chrome()
+        return "break"
+
+    def _playlist_tools_enter(self, _event=None):
+        self._playlist_tools_hover = True
+        self._paint_playlist_tools_arrow()
+
+    def _playlist_tools_leave(self, _event=None):
+        self._playlist_tools_hover = False
+        self._paint_playlist_tools_arrow()
+
+    def _paint_playlist_tools_arrow(self):
+        canvas = getattr(self, "playlist_tools_toggle", None)
+        if canvas is None:
+            return
+        canvas.delete("all")
+        try:
+            width = canvas.winfo_width()
+            height = canvas.winfo_height()
+        except tk.TclError:
+            return
+        if width <= 1:
+            width = int(canvas.cget("width") or 28)
+        if height <= 1:
+            height = int(canvas.cget("height") or 28)
+        cx = width / 2
+        cy = height / 2
+        color = ACCENT if getattr(self, "_playlist_tools_hover", False) else COLOR_TEXT
+        shown = (not self._booth_show_mode()) or bool(getattr(self, "playlist_tools_open", False))
+        if shown:
+            points = [cx - 5, cy - 6, cx - 5, cy + 6, cx + 6, cy]
+        else:
+            points = [cx + 5, cy - 6, cx + 5, cy + 6, cx - 6, cy]
+        canvas.create_polygon(points, fill=color, outline=color)
+        tip = getattr(self, "playlist_tools_tip", None)
+        if tip is not None:
+            tip.text = t("playlist_tools_hide" if shown else "playlist_tools_show")
 
     @staticmethod
     def _set_grid_visible(widget, visible):

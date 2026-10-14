@@ -324,16 +324,35 @@ class BoothChromeTests(unittest.TestCase):
         tools.grid(row=0, column=0)
         settings = tk.Frame(self.root)
         settings.grid(row=1, column=0)
+        arrow = tk.Canvas(self.root, width=28, height=28, bg="black")
+        arrow.grid(row=0, column=1)
+        arrow.grid_remove()
         self.app.playlist_tool_buttons = tools
         self.app.preview_settings = settings
+        self.app.playlist_tools_toggle = arrow
+        self.app.playlist_tools_open = False
+        self.app.playlist_tools_tip = None
+        self.app._playlist_tools_hover = False
         self.app.program_state = "PLAYING"
+        self.app.calibration_mode = None
         cinema_gui.VideoPlayerGUI._apply_booth_chrome(self.app)
+        self.root.update()
         self.assertEqual(tools.winfo_manager(), "")
-        self.assertEqual(settings.winfo_manager(), "")
+        self.assertEqual(settings.winfo_manager(), "grid")
+        self.assertEqual(arrow.winfo_manager(), "grid")
+        self.assertEqual(len(arrow.find_all()), 1)
+        cinema_gui.VideoPlayerGUI._toggle_playlist_tools(self.app)
+        self.assertTrue(self.app.playlist_tools_open)
+        self.assertEqual(tools.winfo_manager(), "grid")
+        cinema_gui.VideoPlayerGUI._toggle_playlist_tools(self.app)
+        self.assertFalse(self.app.playlist_tools_open)
+        self.assertEqual(tools.winfo_manager(), "")
+        self.assertEqual(settings.winfo_manager(), "grid")
         self.app.calibration_mode = "video"
         cinema_gui.VideoPlayerGUI._apply_booth_chrome(self.app)
         self.assertEqual(tools.winfo_manager(), "grid")
         self.assertEqual(settings.winfo_manager(), "grid")
+        self.assertEqual(arrow.winfo_manager(), "")
 
     def test_remaining_clock_is_larger_than_elapsed(self):
         parent = tk.Frame(self.root)
