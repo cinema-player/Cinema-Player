@@ -354,10 +354,33 @@ class HdmiKeepaliveTests(unittest.TestCase):
         ctl.load_file("/tmp/clip.mp4", start=1.0, play=True, aid=2, sid="no")
         payload = json.loads(ctl.socket.sendall.call_args[0][0].decode())
         self.assertEqual(payload["command"][0], "loadfile")
+        self.assertEqual(payload["command"][3], -1)
         options = payload["command"][4]
         self.assertEqual(options["aid"], "2")
         self.assertEqual(options["sid"], "no")
         self.assertEqual(options["start"], "1.0")
+
+    def test_load_file_clears_end_on_the_new_file_only(self):
+        ctl = player.MPVController("main", "/usr/bin/mpv")
+        ctl.socket = MagicMock()
+        ctl.load_file("/tmp/clip.mp4", play=True, sid="no", loop=False, clear_end=True)
+        payload = json.loads(ctl.socket.sendall.call_args[0][0].decode())
+        options = payload["command"][4]
+        self.assertEqual(payload["command"][3], -1)
+        self.assertEqual(options["end"], "none")
+        self.assertEqual(options["loop-file"], "no")
+
+    def test_pending_range_clears_end_with_none(self):
+        ctl = player.MPVController("main", "/usr/bin/mpv")
+        sent = []
+        ctl.socket = object()
+        ctl.command = lambda *args: sent.append(args)
+        ctl.pending_start = None
+        ctl.pending_end = None
+        ctl.play_on_load = True
+        ctl.apply_pending_range()
+        self.assertIn(("set_property", "end", "none"), sent)
+        self.assertNotIn(("set_property", "end", "no"), sent)
 
 
 if __name__ == "__main__":
