@@ -95,6 +95,16 @@
       width: 0;
       background: var(--playing);
     }
+    .bar[hidden], #seek[hidden], #save-volume[hidden], #volume-setup[hidden] { display: none; }
+    #seek { margin: 0 0 16px; accent-color: var(--cal); }
+    #volume-setup {
+      width: 100%;
+      margin-bottom: 10px;
+      background: var(--cal);
+      color: #fff;
+      min-height: 52px;
+    }
+    #save-volume { width: 100%; min-height: 44px; margin-top: 8px; padding: 10px 12px; }
     .actions {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -203,6 +213,7 @@
     <div class="meta" id="clip"></div>
   </div>
   <div class="bar"><i id="progress"></i></div>
+  <input id="seek" type="range" min="0" max="1" step="0.1" value="0" hidden>
   <div class="clocks">
     <div class="clock primary"><span data-i="remaining">Remaining</span><b id="t-remaining">--:--</b></div>
     <div class="clock primary"><span data-i="end">End</span><b id="t-end">--:--</b></div>
@@ -215,6 +226,7 @@
     <div class="caption" id="light-caption">Lights</div>
     <div id="light-scenes" class="scenes"></div>
   </div>
+  <button id="volume-setup" type="button" hidden>Set volume</button>
   <div class="actions">
     <button id="resume" type="button">Resume</button>
     <button id="pause" type="button">Pause</button>
@@ -224,6 +236,7 @@
   <div class="vol">
     <label><span data-i="volume">Volume</span><b id="vol-label">100</b></label>
     <input id="volume" type="range" min="0" max="100" value="100">
+    <button id="save-volume" type="button" hidden>Save volume</button>
   </div>
   </div>
   <div class="modal" id="confirm" hidden>
@@ -249,7 +262,9 @@
             stop_title: "Stop",
             stop_message: "Stop the current clip?",
             set_program: "Set program pointer",
-            program_message: "Set the program pointer to {name}?" },
+            program_message: "Set the program pointer to {name}?",
+            volume_setup: "Set volume",
+            save_volume: "Save volume" },
       de: { resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
             total: "Gesamt", elapsed: "Gelaufen", remaining: "Rest", end: "Ende",
             lights_control: "Lichtsteuerung",
@@ -261,12 +276,16 @@
             stop_title: "Stop",
             stop_message: "Aktuellen Clip stoppen?",
             set_program: "Programmzeiger setzen",
-            program_message: "Programmzeiger auf {name} setzen?" }
+            program_message: "Programmzeiger auf {name} setzen?",
+            volume_setup: "Lautstärke einstellen",
+            save_volume: "Lautstärke speichern" }
     };
     const tokenInput = document.getElementById("token");
     const colors = { OFF: "var(--off)", PROGRAM: "var(--program)", PLAYING: "var(--playing)" };
     let lastVolume = 100;
     let dragging = false;
+    let seeking = false;
+    let skipTransportConfirm = false;
     let uiLang = "en";
     const params = new URLSearchParams(location.search);
     const qToken = (params.get("token") || "").trim();
@@ -319,6 +338,8 @@
       tokenInput.placeholder = table.token;
       document.getElementById("confirm-yes").textContent = table.yes;
       document.getElementById("confirm-no").textContent = table.no;
+      document.getElementById("volume-setup").textContent = table.volume_setup;
+      document.getElementById("save-volume").textContent = table.save_volume;
     }
     applyLang(uiLang);
 
@@ -332,7 +353,7 @@
       const state = data.state || "OFF";
       document.getElementById("state").textContent = data.state_label || state;
       document.getElementById("status").style.background =
-        data.calibration ? "var(--cal)" : (colors[state] || colors.OFF);
+        (data.calibration || data.volume_setup) ? "var(--cal)" : (colors[state] || colors.OFF);
       const clip = data.clip || {};
       document.getElementById("clip").textContent = clip.filename
         ? `${(clip.index || 0) + 1} · ${clip.filename}`
@@ -351,6 +372,17 @@
       document.getElementById("stop").disabled = !actions.stop;
       document.getElementById("pause").classList.toggle("active", !!data.paused);
       document.getElementById("still").classList.toggle("active", !!data.still);
+      skipTransportConfirm = actions.confirm_transport === false;
+      document.getElementById("volume-setup").hidden = !actions.start_volume_setup;
+      document.getElementById("save-volume").hidden = !actions.save_volume;
+      const seek = document.getElementById("seek");
+      const canSeek = !!actions.seek && Number(clip.duration) > 0;
+      seek.hidden = !canSeek;
+      document.querySelector(".bar").hidden = canSeek;
+      if (canSeek && !seeking) {
+        seek.max = clip.duration;
+        seek.value = clip.position || 0;
+      }
       const lights = data.lights || {};
       const lightsOn = lights.enabled === true;
       const preset = lights.preset || "";
@@ -448,10 +480,17 @@
       });
     }
 
+    function transport(kind, path) {
+      if (skipTransportConfirm) command(path, "POST");
+      else askConfirm(kind, path);
+    }
+
     document.getElementById("resume").onclick = () => command("/api/resume", "POST");
-    document.getElementById("pause").onclick = () => askConfirm("pause", "/api/pause");
-    document.getElementById("still").onclick = () => askConfirm("still", "/api/still");
-    document.getElementById("stop").onclick = () => askConfirm("stop", "/api/stop");
+    document.getElementById("pause").onclick = () => transport("pause", "/api/pause");
+    document.getElementById("still").onclick = () => transport("still", "/api/still");
+    document.getElementById("stop").onclick = () => transport("stop", "/api/stop");
+    document.getElementById("volume-setup").onclick = () => command("/api/volume-setup", "POST");
+    document.getElementById("save-volume").onclick = () => command("/api/volume/save", "POST");
     document.getElementById("confirm-yes").onclick = () => {
       const action = confirmAction;
       closeConfirm();
@@ -477,6 +516,13 @@
     });
     slider.addEventListener("change", () => {
       command("/api/volume", "PUT", { volume: Number(slider.value) });
+    });
+    const seek = document.getElementById("seek");
+    seek.addEventListener("pointerdown", () => { seeking = true; });
+    seek.addEventListener("pointerup", () => { seeking = false; });
+    seek.addEventListener("change", () => {
+      seeking = false;
+      command("/api/seek", "POST", { position: Number(seek.value) });
     });
     tokenInput.addEventListener("change", () => {
       sessionStorage.setItem("cinema-token", tokenInput.value.trim());

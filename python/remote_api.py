@@ -234,6 +234,19 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
         if path == "/api/stop":
             self._send_json(self.server.api.invoke("remote_stop"))
             return
+        if path == "/api/volume-setup":
+            self._send_json(self.server.api.invoke("remote_start_volume_setup"))
+            return
+        if path == "/api/volume/save":
+            self._send_json(self.server.api.invoke("remote_save_volume"))
+            return
+        if path == "/api/seek":
+            value = body.get("position", query.get("position", [None])[0])
+            if value is None:
+                self._send_json({"ok": False, "error": "position_required"}, 400)
+                return
+            self._send_json(self.server.api.invoke("remote_seek", value))
+            return
         if path == "/api/volume":
             value = body.get("volume", query.get("volume", [None])[0])
             if value is None:
@@ -286,6 +299,9 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
                 "pause": "POST /api/pause",
                 "still": "POST /api/still",
                 "stop": "POST /api/stop",
+                "volume_setup": "POST /api/volume-setup",
+                "save_volume": "POST /api/volume/save",
+                "seek": "POST /api/seek",
                 "volume": "PUT /api/volume",
                 "program": "POST /api/program",
                 "lights": "POST /api/lights",
