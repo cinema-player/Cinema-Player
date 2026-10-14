@@ -1077,6 +1077,60 @@ def merge_import_directories(saved, volumes):
     return rows + extras
 
 
+_PLAYLIST_PLACEHOLDER_STEMS = frozenset({"untitled", "unbekannt"})
+
+
+def playlist_stem(name):
+    """Playlist title without a trailing ``.pls`` or ``.json``."""
+    text = str(name or "").strip()
+    folded = text.casefold()
+    for ext in (".pls", ".json"):
+        if folded.endswith(ext):
+            return text[: -len(ext)].strip()
+    return text
+
+
+def playlist_name_is_placeholder(name):
+    """True for an empty name and for the default untitled playlist."""
+    stem = playlist_stem(name)
+    return not stem or stem.casefold() in _PLAYLIST_PLACEHOLDER_STEMS
+
+
+def playlist_folder_name(name):
+    """Directory name for a copied import, or '' when the name cannot be used.
+
+    Placeholders (``untitled.pls``, ``unbekannt.pls``) and names that contain a
+    path are rejected so the import folder stays a single path segment.
+    """
+    if playlist_name_is_placeholder(name):
+        return ""
+    stem = playlist_stem(name)
+    if stem in (".", "..") or any(char in stem for char in "/\\\0"):
+        return ""
+    return stem
+
+
+def path_is_on_removable_volume(path, volumes):
+    """True when ``path`` is a removable volume or a file inside one."""
+    if not isinstance(path, str) or not path.strip():
+        return False
+    try:
+        path = os.path.abspath(path)
+    except (OSError, ValueError):
+        return False
+    for volume in volumes or []:
+        root = volume.get("path") if isinstance(volume, dict) else volume
+        if not isinstance(root, str) or not root.strip():
+            continue
+        try:
+            root = os.path.abspath(root)
+            if os.path.commonpath([path, root]) == root:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def playlist_location_label(file_path, directories):
     """Folder line for a playlist row.
 
