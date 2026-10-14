@@ -211,6 +211,8 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertEqual(language.STRINGS["de"]["import_path_mark"], "Importpfad")
         self.assertEqual(language.STRINGS["de"]["playlist_untitled"], "unbekannt.pls")
         self.assertEqual(language.STRINGS["en"]["playlist_untitled"], "untitled.pls")
+        self.assertEqual(language.STRINGS["de"]["copy_files_cancel"], "Abbrechen")
+        self.assertEqual(language.STRINGS["en"]["copy_files_cancel"], "Cancel")
 
 
 class PlaylistFolderNameTests(unittest.TestCase):

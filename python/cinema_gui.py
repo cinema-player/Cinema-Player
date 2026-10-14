@@ -1864,6 +1864,10 @@ def header_clock_text(moment):
     return moment.strftime("%H:%M:%S")
 
 
+class _CopyCancelled(Exception):
+    """The operator stopped a file copy from the progress dialog."""
+
+
 class VideoPlayerGUI:
     def __init__(self, root):
         self.root = root
@@ -6035,11 +6039,14 @@ class VideoPlayerGUI:
             dest = self._unique_copy_path(dest_dir, os.path.basename(source))
         return dest, source
 
-    def _copy_file_with_progress(self, source, dest, on_progress, parent=None):
+    def _copy_file_with_progress(self, source, dest, on_progress, parent=None, should_stop=None):
+        """Copy one file. ``None`` means the operator cancelled; ``False`` is an error."""
         copied = 0
         try:
             with open(source, "rb") as src, open(dest, "wb") as dst:
                 while True:
+                    if should_stop and should_stop():
+                        raise _CopyCancelled
                     chunk = src.read(8 * 1024 * 1024)
                     if not chunk:
                         break
@@ -6047,7 +6054,15 @@ class VideoPlayerGUI:
                     copied += len(chunk)
                     if on_progress:
                         on_progress(copied)
+                    if should_stop and should_stop():
+                        raise _CopyCancelled
             shutil.copystat(source, dest)
+        except _CopyCancelled:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            return None
         except OSError as exc:
             try:
                 os.remove(dest)
@@ -6072,8 +6087,18 @@ class VideoPlayerGUI:
             except tk.TclError:
                 pass
         window.transient(self.root)
-        window.protocol("WM_DELETE_WINDOW", lambda: None)
-        pane = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=10)
+        state = {"cancel": False}
+
+        def request_cancel():
+            state["cancel"] = True
+
+        window.protocol("WM_DELETE_WINDOW", request_cancel)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("copy_files_cancel"), command=request_cancel, font=FONT_UI,
+        ).pack(side="right")
+        pane = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
         body = tk.Frame(pane, bg=COLOR_PANEL)
         body.pack(fill="both", expand=True)
         status = tk.Label(
@@ -6097,7 +6122,10 @@ class VideoPlayerGUI:
         )
         size.pack(fill="x", pady=(6, 0))
 
-        widgets = {"status": status, "name": name, "bar": bar, "size": size, "total": total}
+        widgets = {
+            "status": status, "name": name, "bar": bar, "size": size,
+            "total": total, "cancel": state,
+        }
         self._bind_popup_wheel(window, pane)
         self._open_popup(window, 480, 200)
         window.grab_set()
@@ -6164,8 +6192,16 @@ class VideoPlayerGUI:
             window, widgets = self._open_copy_progress(len(jobs))
         results = []
         done_bytes = 0
+
+        def cancelled():
+            state = widgets.get("cancel") if widgets else None
+            return bool(state and state.get("cancel"))
+
         try:
             for index, (dest, source, size) in enumerate(jobs, 1):
+                if cancelled():
+                    results.extend([None] * (len(jobs) - index + 1))
+                    break
                 name = os.path.basename(source or dest)
                 if widgets is not None:
                     self._update_copy_progress(window, widgets, index, name, done_bytes, total_bytes)
@@ -6176,7 +6212,14 @@ class VideoPlayerGUI:
                                 window, widgets, index, name, base + copied, total_bytes,
                             )
 
-                    if not self._copy_file_with_progress(source, dest, on_progress, parent=window):
+                    outcome = self._copy_file_with_progress(
+                        source, dest, on_progress, parent=window, should_stop=cancelled,
+                    )
+                    if outcome is None:
+                        results.append(None)
+                        results.extend([None] * (len(jobs) - index))
+                        break
+                    if not outcome:
                         results.append(None)
                         continue
                     done_bytes += size

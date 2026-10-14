@@ -576,6 +576,60 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(written, before)
         self.assertFalse(os.path.exists(os.path.join(dest, "Abend", "still.jpg")))
 
+    def test_cancel_stops_the_copy_and_keeps_finished_files(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        source = os.path.join(root, "source")
+        dest = os.path.join(root, "dest")
+        os.makedirs(source)
+        os.makedirs(dest)
+        names = ("one.mp4", "two.mp4", "three.mp4")
+        paths = []
+        for name in names:
+            path = os.path.join(source, name)
+            with open(path, "wb") as handle:
+                handle.write(b"x" * (64 * 1024))
+            paths.append(path)
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        window, widgets = cinema_gui.VideoPlayerGUI._open_copy_progress(self.app, 3)
+        window.update()
+        buttons = {
+            child.cget("text"): child
+            for child in window.winfo_children()
+            if isinstance(child, tk.Frame)
+            for child in child.winfo_children()
+            if isinstance(child, tk.Button)
+        }
+        cancel = buttons["Abbrechen"]
+        self.assertTrue(cancel.winfo_viewable())
+        self.assertFalse(widgets["cancel"]["cancel"])
+        cancel.invoke()
+        self.assertTrue(widgets["cancel"]["cancel"])
+        self.assertTrue(window.winfo_exists())
+        cinema_gui.VideoPlayerGUI._close_copy_progress(self.app, window)
+
+        real_update = cinema_gui.VideoPlayerGUI._update_copy_progress
+
+        def update(progress, widgets, current, name, done, total):
+            real_update(self.app, progress, widgets, current, name, done, total)
+            if name == "two.mp4" and done:
+                widgets["cancel"]["cancel"] = True
+
+        self.app._update_copy_progress = update
+        results = cinema_gui.VideoPlayerGUI._copy_imported_paths(self.app, paths, dest)
+        self.assertEqual(
+            results,
+            [os.path.join(dest, "one.mp4"), None, None],
+        )
+        with open(results[0], "rb") as handle:
+            self.assertEqual(handle.read(), b"x" * (64 * 1024))
+        self.assertFalse(os.path.exists(os.path.join(dest, "two.mp4")))
+        self.assertFalse(os.path.exists(os.path.join(dest, "three.mp4")))
+
     def test_file_dialog_creates_a_folder_in_the_open_directory(self):
         cinema_gui.install_file_dialog_new_folder(self.root)
         directory = tempfile.mkdtemp()
