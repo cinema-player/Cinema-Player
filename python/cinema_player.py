@@ -4455,8 +4455,16 @@ class MPVController:
     def set_position(self, position):
         self.command("set_property", "time-pos", float(position))
 
-    def set_volume(self, volume):
-        """Software volume (0–100). Also clear mute so HDMI is not left silenced."""
+    def set_volume(self, volume, *, muted=None):
+        """Software volume (0–100).
+
+        The default clears mute so HDMI is not left silenced. Pass muted=True
+        to silence this output while leaving the volume value in place.
+        """
+        if muted:
+            self.command("set_property", "mute", True)
+            self.command("set_property", "volume", float(volume))
+            return
         self.command("set_property", "mute", False)
         self.command("set_property", "volume", float(volume))
 

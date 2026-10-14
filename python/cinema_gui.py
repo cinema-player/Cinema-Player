@@ -2065,6 +2065,7 @@ class VideoPlayerGUI:
         self.light_end_var = tk.StringVar(value="")
         self.program_volume = tk.DoubleVar(value=100)
         self.preview_volume = tk.DoubleVar(value=100)
+        self.preview_muted = False
         self.beamer_output = tk.StringVar(value=self.output_manager.video_output or "")
         self.beamer_details_open = False
         self._volume_preview_key = None
@@ -2767,6 +2768,14 @@ class VideoPlayerGUI:
         if save:
             self.preview_volume_bar = bar
             self.preview_volume_label = label
+            mute = tk.Button(
+                row, text=t("preview_mute"), font=FONT_SMALL, width=8,
+                command=self._toggle_preview_mute, cursor="hand2",
+            )
+            mute.pack(side="left", padx=(8, 0))
+            mute.tooltip = IconTooltip(mute, t("preview_mute_tip"))
+            self.preview_mute_button = mute
+            self._paint_preview_mute()
             tk.Button(
                 row, text=t("save_volume"), font=FONT_SMALL, command=self.save_preview_volume,
             ).pack(side="left", padx=(8, 0))
@@ -2795,7 +2804,39 @@ class VideoPlayerGUI:
         volume = clamp_volume(value)
         self.preview_volume.set(volume)
         self._set_volume_label(self.preview_volume_label, volume)
-        self.preview_mpv.set_volume(volume)
+        self._apply_preview_speaker()
+
+    def _toggle_preview_mute(self):
+        """Silence the preview speaker. The fader value stays where it is."""
+        self.preview_muted = not bool(getattr(self, "preview_muted", False))
+        self._paint_preview_mute()
+        self._apply_preview_speaker()
+
+    def _paint_preview_mute(self):
+        button = getattr(self, "preview_mute_button", None)
+        if button is None:
+            return
+        muted = bool(getattr(self, "preview_muted", False))
+        if muted:
+            button.config(
+                text="✔ " + t("preview_mute"),
+                bg=LIGHT_ACTIVE, fg=LIGHT_ACTIVE_TEXT,
+                activebackground=LIGHT_ACTIVE, activeforeground=LIGHT_ACTIVE_TEXT,
+            )
+        else:
+            button.config(
+                text=t("preview_mute"),
+                bg=COLOR_BUTTON, fg=COLOR_TEXT,
+                activebackground=COLOR_BUTTON_ACTIVE, activeforeground=COLOR_TEXT,
+            )
+        tip = getattr(button, "tooltip", None)
+        if tip is not None:
+            tip.text = t("preview_unmute_tip" if muted else "preview_mute_tip")
+
+    def _apply_preview_speaker(self):
+        volume = clamp_volume(self.preview_volume.get())
+        muted = bool(getattr(self, "preview_muted", False))
+        self.preview_mpv.set_volume(volume, muted=muted)
 
     def save_preview_volume(self):
         entry = self.selected_entry()
@@ -2821,7 +2862,7 @@ class VideoPlayerGUI:
         self._set_volume_label(self.preview_volume_label, volume)
         if getattr(self, "preview_volume_bar", None):
             self.preview_volume_bar.set_volume(volume)
-        self.preview_mpv.set_volume(volume)
+        self._apply_preview_speaker()
 
     def _load_program_volume(self, entry, force=False):
         key = id(entry) if entry else None
@@ -9814,7 +9855,7 @@ class VideoPlayerGUI:
         try:
             self.preview_mpv.start(arguments)
             self.preview_mpv.observe("af-metadata/meter", 5)
-            self.preview_mpv.set_volume(clamp_volume(self.preview_volume.get()))
+            self._apply_preview_speaker()
             self.preview_placeholder.place_forget()
         except Exception as exc:
             self.preview_placeholder.config(text=t("preview_unavailable", error=exc))
@@ -10561,6 +10602,7 @@ class VideoPlayerGUI:
             mpv.apply_pending_range()
             self.preview_video_bps = 0
             self.preview_audio_bps = 0
+            self._apply_preview_speaker()
             entry = self.selected_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
