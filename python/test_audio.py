@@ -330,6 +330,24 @@ class HdmiKeepaliveTests(unittest.TestCase):
             [("ao", "pipewire"), ("audio-device", "pipewire/alsa_output.analog-stereo")],
         )
 
+    def test_set_volume_keeps_mute_when_asked(self):
+        ctl = player.MPVController("preview", "/usr/bin/mpv")
+        sent = []
+        ctl.socket = object()
+        ctl.command = lambda *args: sent.append(args)
+        ctl.set_volume(64)
+        self.assertEqual(
+            sent,
+            [("set_property", "mute", False), ("set_property", "volume", 64.0)],
+        )
+        sent.clear()
+        ctl.set_volume(64, muted=True)
+        self.assertEqual(
+            sent,
+            [("set_property", "mute", True), ("set_property", "volume", 64.0)],
+        )
+        self.assertNotIn(("set_property", "mute", False), sent)
+
     def test_load_file_passes_aid_before_playback(self):
         ctl = player.MPVController("t", "/usr/bin/mpv")
         ctl.socket = MagicMock()

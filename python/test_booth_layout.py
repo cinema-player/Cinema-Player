@@ -1322,5 +1322,55 @@ class HeaderClockTests(unittest.TestCase):
         self.assertEqual(self.app.header_clock.cget("text"), "21:04:05")
 
 
+class PreviewMuteTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.preview_volume = tk.DoubleVar(master=self.root, value=73)
+        self.app.preview_muted = False
+        self.sent = []
+
+        class Speaker:
+            def __init__(self, sent):
+                self.sent = sent
+
+            def set_volume(self, volume, muted=None):
+                self.sent.append((volume, muted))
+
+        self.app.preview_mpv = Speaker(self.sent)
+
+    def tearDown(self):
+        self.root.destroy()
+        set_language("en")
+
+    def test_mute_silences_the_speaker_and_keeps_the_fader(self):
+        parent = tk.Frame(self.root)
+        parent.pack(fill="x")
+        cinema_gui.VideoPlayerGUI._build_volume_row(
+            self.app, parent, self.app.preview_volume, self.app._on_preview_volume,
+            cinema_gui.COLOR_PANEL, save=True,
+        )
+        self.root.update()
+        button = self.app.preview_mute_button
+        self.assertEqual(button.cget("text"), "Stumm")
+        cinema_gui.VideoPlayerGUI._toggle_preview_mute(self.app)
+        self.assertTrue(self.app.preview_muted)
+        self.assertEqual(self.app.preview_volume.get(), 73)
+        self.assertEqual(self.app.preview_volume_label.cget("text"), "73")
+        self.assertEqual(self.sent[-1], (73, True))
+        self.assertIn("✔", button.cget("text"))
+        cinema_gui.VideoPlayerGUI._on_preview_volume(self.app, 40)
+        self.assertTrue(self.app.preview_muted)
+        self.assertEqual(self.app.preview_volume.get(), 40)
+        self.assertEqual(self.app.preview_volume_label.cget("text"), "40")
+        self.assertEqual(self.sent[-1], (40, True))
+        cinema_gui.VideoPlayerGUI._toggle_preview_mute(self.app)
+        self.assertFalse(self.app.preview_muted)
+        self.assertEqual(self.app.preview_volume.get(), 40)
+        self.assertEqual(self.sent[-1], (40, False))
+        self.assertEqual(button.cget("text"), "Stumm")
+
+
 if __name__ == "__main__":
     unittest.main()
