@@ -164,6 +164,73 @@ class PlaylistMarkTests(unittest.TestCase):
         self.assertEqual(cinema_gui.program_times_text("-", "--:--", videos), "- / --:--   02:00")
         self.assertEqual(cinema_gui.program_times_text("2", "01:30", videos), "2 / 01:30   02:00")
         self.assertEqual(cinema_gui.program_times_text("-", "--:--", []), "- / --:--   00:00")
+        self.assertEqual(
+            cinema_gui.program_times_text("2", "01:30", videos, "20:02:15"),
+            "2 / 01:30   02:00   Ende 20:02:15",
+        )
+
+    def test_program_end_runs_from_the_playhead_to_the_last_clip(self):
+        now = datetime(2026, 10, 13, 20, 0, 0)
+        first = _entry(duration=60, in_point=10, out_point=40)
+        second = _entry(duration=90)
+        still = _entry(path="/media/films/day/still.png", is_image=True, display_time=15)
+        playlist = [first, second, still]
+        self.assertEqual(cinema_gui.program_remaining_seconds(playlist, 0, 0, False), 135)
+        self.assertEqual(
+            cinema_gui.program_end_clock(playlist, 0, 0, False, now),
+            "20:02:15",
+        )
+        self.assertEqual(cinema_gui.program_remaining_seconds(playlist, 0, 20, True), 125)
+        self.assertEqual(cinema_gui.program_remaining_seconds(playlist, 1, 30, True), 75)
+        self.assertEqual(cinema_gui.program_remaining_seconds(playlist, 0, 0, True), 135)
+        self.assertEqual(cinema_gui.program_remaining_seconds(playlist, 0, 50, True), 105)
+
+    def test_program_end_includes_the_autoplay_gap_and_skips_missing_clips(self):
+        now = datetime(2026, 10, 13, 20, 0, 0)
+        first = _entry(duration=30, autoplay=True)
+        missing = _entry(path="/media/films/gone.mp4", duration=100, missing=True, autoplay=True)
+        second = _entry(duration=20)
+        playlist = [first, missing, second]
+        self.assertEqual(
+            cinema_gui.program_remaining_seconds(playlist, 0, 0, False, autoplay_delay=5),
+            55,
+        )
+        self.assertEqual(
+            cinema_gui.program_end_clock(playlist, 0, 0, False, now, autoplay_delay=5),
+            "20:00:55",
+        )
+
+    def test_program_end_is_open_while_a_clip_waits_for_the_operator(self):
+        now = datetime(2026, 10, 13, 20, 0, 0)
+        film = _entry(duration=30)
+        looping = _entry(duration=10, loop=True)
+        holding = _entry(path="/media/films/hold.png", is_image=True, display_time=0)
+        self.assertIsNone(cinema_gui.program_remaining_seconds([film, looping], 0, 0, False))
+        self.assertEqual(
+            cinema_gui.program_end_clock([film, looping], 0, 5, True, now),
+            "--:--",
+        )
+        self.assertIsNone(cinema_gui.program_remaining_seconds([film, holding], 0, 0, True))
+        self.assertEqual(cinema_gui.program_remaining_seconds([looping], 0, 3, False), None)
+
+    def test_stopped_show_ends_from_the_start_even_if_the_pointer_moved(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.playlist = [_entry(duration=60), _entry(duration=30)]
+            app.program_state = "OFF"
+            app.program_index = 1
+            app.position = 10
+            app.idle_showing = False
+            app.autoplay_delay = tk.StringVar(master=root, value="0")
+            now = datetime(2026, 10, 13, 20, 0, 0)
+            self.assertEqual(cinema_gui.VideoPlayerGUI._program_end_clock(app, now), "20:01:30")
+            app.program_state = "PLAYING"
+            self.assertEqual(cinema_gui.VideoPlayerGUI._program_end_clock(app, now), "20:00:20")
+            app.program_state = "PROGRAM"
+            self.assertEqual(cinema_gui.VideoPlayerGUI._program_end_clock(app, now), "20:00:30")
+        finally:
+            root.destroy()
 
     def test_next_clip_names_the_following_title_and_zoom(self):
         first = _entry(path="/media/films/a.mp4")

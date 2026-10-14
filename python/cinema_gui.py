@@ -1406,9 +1406,110 @@ def playlist_video_seconds(playlist):
     return sum(entry_video_seconds(entry) for entry in playlist or [])
 
 
-def program_times_text(index, clip_clock, playlist):
-    """Current clip index and length, then the runtime of every video."""
-    return f"{index} / {clip_clock}   {format_clock(playlist_video_seconds(playlist))}"
+def entry_waits_for_operator(entry):
+    """A looping video or a still without a display time does not end by itself."""
+    if entry is None:
+        return False
+    if getattr(entry, "is_image", False):
+        try:
+            return float(getattr(entry, "display_time", 0) or 0) <= 0
+        except (TypeError, ValueError):
+            return True
+    return bool(getattr(entry, "loop", False))
+
+
+def _later_program_entry(playlist, index):
+    for entry in playlist[index + 1:]:
+        if not getattr(entry, "missing", False):
+            return True
+    return False
+
+
+def _entry_remaining_seconds(entry, position, playing):
+    """Play time left in one clip. A clip that has not started counts in full."""
+    if getattr(entry, "is_image", False):
+        try:
+            span = max(0.0, float(getattr(entry, "display_time", 0) or 0))
+        except (TypeError, ValueError):
+            span = 0.0
+        if not playing:
+            return span
+        try:
+            pos = float(position or 0)
+        except (TypeError, ValueError):
+            pos = 0.0
+        if not math.isfinite(pos) or pos < 0:
+            pos = 0.0
+        return max(0.0, span - pos)
+    if not playing:
+        return entry_video_seconds(entry)
+    duration = getattr(entry, "duration", 0) or 0
+    in_point = getattr(entry, "in_point", None)
+    out_point = getattr(entry, "out_point", None)
+    start, end, total, _elapsed, _remaining = clip_span(
+        duration, position, in_point, out_point, playing=True,
+    )
+    try:
+        pos = float(position or 0)
+    except (TypeError, ValueError):
+        pos = 0.0
+    if not math.isfinite(pos) or pos < start:
+        return total
+    return max(0.0, min(total, end - pos))
+
+
+def program_remaining_seconds(playlist, index, position, playing, autoplay_delay=0.0):
+    """Seconds from the playhead to the end of the program.
+
+    Videos count from In to Out. The clip on air counts only what is left.
+    A still counts its display time. The autoplay gap is included before the
+    next clip. None means a remaining clip waits for the operator, so the
+    program has no fixed end.
+    """
+    items = list(playlist or [])
+    if not items:
+        return 0.0
+    try:
+        index = int(index)
+    except (TypeError, ValueError):
+        index = 0
+    if index < 0:
+        index = 0
+    if index >= len(items):
+        return 0.0
+    try:
+        delay = max(0.0, float(autoplay_delay or 0))
+    except (TypeError, ValueError):
+        delay = 0.0
+    total = 0.0
+    for cursor, entry in enumerate(items[index:], start=index):
+        if getattr(entry, "missing", False):
+            continue
+        if entry_waits_for_operator(entry):
+            return None
+        total += _entry_remaining_seconds(entry, position, playing and cursor == index)
+        if delay and getattr(entry, "autoplay", False) and _later_program_entry(items, cursor):
+            total += delay
+    return total
+
+
+def program_end_clock(playlist, index, position, playing, now, autoplay_delay=0.0):
+    """Wall time when the program finishes, or '--:--' when it cannot be known."""
+    remaining = program_remaining_seconds(
+        playlist, index, position, playing, autoplay_delay,
+    )
+    if remaining is None:
+        return "--:--"
+    return (now + timedelta(seconds=remaining)).strftime("%H:%M:%S")
+
+
+def program_times_text(index, clip_clock, playlist, end_clock=None):
+    """Clip index and length, the video runtime, then when the program ends."""
+    total = format_clock(playlist_video_seconds(playlist))
+    text = f"{index} / {clip_clock}   {total}"
+    if end_clock:
+        text = f"{text}   {t('end')} {end_clock}"
+    return text
 
 
 _DRIVE_ICON_ROWS = (
@@ -4347,6 +4448,24 @@ class VideoPlayerGUI:
         self.refresh_preview_meta()
         self.refresh_beamer()
 
+    def _program_end_clock(self, now=None):
+        """Finish time from the playhead. A stopped show is measured from the start."""
+        moment = datetime.now() if now is None else now
+        stopped = self.program_state == "OFF"
+        playing = (
+            self.program_state == "PLAYING"
+            and not stopped
+            and not getattr(self, "idle_showing", False)
+        )
+        return program_end_clock(
+            self.playlist,
+            0 if stopped else self.program_index,
+            0 if stopped else self.position,
+            playing,
+            moment,
+            self.autoplay_seconds(),
+        )
+
     def refresh_status(self):
         state_key = self._calibration_state_key()
         if not state_key:
@@ -4354,9 +4473,10 @@ class VideoPlayerGUI:
         self.state_label.config(text=t(state_key), bg=self.state_color())
         stopped = self.program_state == "OFF"
         entry = None if stopped else self.current_entry()
+        end_clock = self._program_end_clock()
         if stopped:
             self.now_playing.config(text=t("no_program"), bg=COLOR_READOUT, fg=COLOR_TEXT)
-            self.program_times.config(text=program_times_text("-", "--:--", self.playlist))
+            self.program_times.config(text=program_times_text("-", "--:--", self.playlist, end_clock))
         else:
             name = entry.filename if entry else t("no_program")
             self.now_playing.config(text=name, bg=self.state_color(), fg=COLOR_WHITE)
@@ -4367,7 +4487,9 @@ class VideoPlayerGUI:
                 in_point = entry.in_point
                 out_point = entry.out_point
             times = clip_times(self.program_state, file_duration, self.position, in_point, out_point)
-            self.program_times.config(text=program_times_text(index, times["total"], self.playlist))
+            self.program_times.config(
+                text=program_times_text(index, times["total"], self.playlist, end_clock),
+            )
         self._refresh_next_clip()
         if stopped:
             self.btn_play.icon_name = "start_program"
