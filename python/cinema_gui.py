@@ -6127,7 +6127,12 @@ class VideoPlayerGUI:
             "total": total, "cancel": state,
         }
         self._bind_popup_wheel(window, pane)
-        self._open_popup(window, 480, 200)
+        window.update_idletasks()
+        try:
+            window._popup_canvas.configure(height=max(1, body.winfo_reqheight()))
+        except tk.TclError:
+            pass
+        self._open_popup(window, 480, 168)
         window.grab_set()
         window.lift()
         window.update_idletasks()
