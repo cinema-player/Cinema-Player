@@ -1322,6 +1322,156 @@ class HeaderClockTests(unittest.TestCase):
         self.assertEqual(self.app.header_clock.cget("text"), "21:04:05")
 
 
+class VolumeSetupTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.program_state = "OFF"
+        self.app.calibration_mode = None
+        self.app.volume_setup = False
+        self.app.program_index = 0
+        self.app.preview_index = None
+        self.app.preview_live = True
+        self.app.playlist = [_entry(volume=40, duration=20, is_image=False)]
+        self.app.program_volume = tk.DoubleVar(master=self.root, value=40)
+        self.app.preview_volume = tk.DoubleVar(master=self.root, value=10)
+        self.app.main_pause = False
+        self.app.blackout = False
+        self.app.position = 0
+        self.app.duration = 20
+        self.app.idle_showing = False
+        self.app.still_waiting = False
+        self.app.still_started = None
+        self.app._remote_action = False
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=False)
+        self.app.lights_current = ""
+        self.app.lights_scenes = []
+        self.app.lights_sequences = []
+        self.app.lights_fading = False
+        self.app.dmx_output = None
+        self.app.playlist_name = tk.StringVar(master=self.root, value="abend.pls")
+        self.calls = []
+        self.app._skip_to_playable = lambda inclusive=True: True
+        self.app.ensure_main_output = lambda *args, **kwargs: self.calls.append("output")
+        self.app.blank_output = lambda *args, **kwargs: self.calls.append("blank")
+        self.app.refresh_all = lambda: self.calls.append("refresh")
+        self.app._cancel_light_after = lambda name: self.calls.append(name)
+        self.app._apply_lights = lambda preset, force=False: self.calls.append(preset)
+        self.app.repaint_playlist = lambda: self.calls.append("repaint")
+        self.sent = []
+        self.app.preview_mpv = type("Speaker", (), {
+            "set_volume": lambda _self, volume, muted=None: self.sent.append((volume, muted)),
+        })()
+
+    def tearDown(self):
+        self.root.destroy()
+        set_language("en")
+
+    def _menu_labels(self):
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        cinema_gui.VideoPlayerGUI._fill_playlist_menu(self.app, menu)
+        return [
+            child.cget("text")
+            for child in menu.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+
+    def test_menu_item_exists_only_while_stopped(self):
+        self.app.autosave_on_program_change = tk.BooleanVar(master=self.root, value=False)
+        self.app.load_last_playlist_at_start = tk.BooleanVar(master=self.root, value=False)
+        labels = self._menu_labels()
+        self.assertIn("Lautstärke einstellen", labels)
+        self.app.program_state = "PROGRAM"
+        self.assertNotIn("Lautstärke einstellen", self._menu_labels())
+        self.app.program_state = "PLAYING"
+        self.assertNotIn("Lautstärke einstellen", self._menu_labels())
+
+    def test_start_arms_the_program_in_purple_and_keeps_the_playlist(self):
+        self.assertTrue(cinema_gui.VideoPlayerGUI.start_volume_setup(self.app))
+        self.assertTrue(self.app.volume_setup)
+        self.assertEqual(self.app.program_state, "PROGRAM")
+        self.assertEqual(len(self.app.playlist), 1)
+        self.assertEqual(self.app.state_color(), cinema_gui.COLOR_CALIBRATION)
+        self.assertIn("refresh", self.calls)
+
+    def test_empty_playlist_stays_stopped(self):
+        self.app.playlist = []
+        with patch.object(cinema_gui.messagebox, "showinfo") as info:
+            self.assertFalse(cinema_gui.VideoPlayerGUI.start_volume_setup(self.app))
+        info.assert_called_once()
+        self.assertEqual(self.app.program_state, "OFF")
+        self.assertFalse(self.app.volume_setup)
+
+    def test_transport_skips_confirmation_and_stop_leaves_the_mode(self):
+        self.app.volume_setup = True
+        self.app.program_state = "PLAYING"
+        applied = []
+        self.app._apply_pause = lambda: applied.append("pause") or True
+        self.app._apply_still = lambda: applied.append("still") or True
+        self.app._apply_stop_clip = lambda: applied.append("clip") or True
+        with patch.object(cinema_gui.messagebox, "askyesno") as ask:
+            cinema_gui.VideoPlayerGUI.confirm_pause(self.app)
+            cinema_gui.VideoPlayerGUI.confirm_still(self.app)
+            cinema_gui.VideoPlayerGUI.confirm_stop(self.app)
+        ask.assert_not_called()
+        self.assertEqual(applied, ["pause", "still", "clip"])
+        self.assertTrue(self.app.volume_setup)
+        self.app.program_state = "PROGRAM"
+        cinema_gui.VideoPlayerGUI.confirm_stop(self.app)
+        self.assertFalse(self.app.volume_setup)
+        self.assertEqual(self.app.program_state, "OFF")
+        self.assertIn("bright", self.calls)
+
+    def test_program_can_be_scrubbed_and_saving_keeps_the_fader(self):
+        self.app.volume_setup = True
+        self.app.program_state = "PLAYING"
+        self.app.main_pause = False
+        self.assertTrue(cinema_gui.VideoPlayerGUI.program_seek_allowed(self.app))
+        self.app.volume_setup = False
+        self.assertFalse(cinema_gui.VideoPlayerGUI.program_seek_allowed(self.app))
+        self.app.volume_setup = True
+        self.app.program_volume.set(55)
+        cinema_gui.VideoPlayerGUI.save_program_volume(self.app)
+        self.assertEqual(self.app.playlist[0].volume, 55)
+        self.assertEqual(self.app.program_volume.get(), 55)
+        self.assertEqual(self.app.preview_volume.get(), 55)
+        self.assertEqual(self.sent[-1][0], 55)
+        sought = []
+        self.app._on_main_seek = lambda position, dragging=False: sought.append(position)
+        result = cinema_gui.VideoPlayerGUI.remote_seek(self.app, 12.5)
+        self.assertTrue(result["ok"])
+        self.assertEqual(sought, [12.5])
+        self.app.program_state = "PROGRAM"
+        status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
+        self.assertTrue(status["volume_setup"])
+        self.assertEqual(status["state_label"], "Lautstärke einstellen")
+        self.assertTrue(status["actions"]["save_volume"])
+        self.assertFalse(status["actions"]["confirm_transport"])
+        self.assertTrue(status["actions"]["stop"])
+        self.assertFalse(status["actions"]["seek"])
+
+    def test_save_button_appears_only_in_the_mode(self):
+        parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
+        parent.pack(fill="x")
+        cinema_gui.VideoPlayerGUI._build_volume_row(
+            self.app, parent, self.app.program_volume, lambda value: None,
+            cinema_gui.COLOR_PANEL,
+        )
+        self.root.update()
+        button = self.app.program_save_volume
+        self.assertEqual(button.cget("text"), "Lautstärke speichern")
+        self.assertEqual(button.winfo_manager(), "")
+        self.app.volume_setup = True
+        cinema_gui.VideoPlayerGUI._apply_volume_setup_chrome(self.app)
+        self.root.update()
+        self.assertEqual(button.winfo_manager(), "pack")
+        self.app.volume_setup = False
+        cinema_gui.VideoPlayerGUI._apply_volume_setup_chrome(self.app)
+        self.assertEqual(button.winfo_manager(), "")
+
+
 class PreviewMuteTests(unittest.TestCase):
     def setUp(self):
         set_language("de")

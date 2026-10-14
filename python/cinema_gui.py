@@ -403,6 +403,7 @@ class VolumeBar(tk.Canvas):
 
     def __init__(self, master, on_change, fill=None, **kwargs):
         kwargs.setdefault("height", 22)
+        kwargs.setdefault("width", 80)
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
         kwargs.setdefault("bg", COLOR_PANEL)
@@ -1906,6 +1907,7 @@ class VideoPlayerGUI:
         self.program_state = "OFF"
         self.playlist_tools_open = False
         self.calibration_mode = None
+        self.volume_setup = False
         self.program_index = 0
         self.zoom_confirmed_index = None
         self.preview_index = None
@@ -2782,11 +2784,18 @@ class VideoPlayerGUI:
         else:
             self.program_volume_bar = bar
             self.program_volume_label = label
+            save_program = tk.Button(
+                row, text=t("save_volume"), font=FONT_SMALL,
+                command=self.save_program_volume, cursor="hand2",
+            )
+            self.program_save_volume = save_program
             self.program_delay_readout = tk.Label(
                 row, text="", width=9, anchor="e",
                 bg=bg, fg=COLOR_MUTED, font=FONT_SMALL,
             )
             self.program_delay_readout.pack(side="left", padx=(8, 0))
+            save_program.pack(side="left", padx=(8, 0), before=self.program_delay_readout)
+            save_program.pack_forget()
         return row
 
     def _set_volume_label(self, label, volume):
@@ -2851,6 +2860,42 @@ class VideoPlayerGUI:
             if self.main_mpv.process and not self.idle_showing:
                 self.main_mpv.set_volume(entry.volume)
         self.repaint_playlist()
+
+    def save_program_volume(self):
+        """Write the program fader into the clip on the program pointer."""
+        entry = self.current_entry()
+        if not entry:
+            return
+        entry.volume = clamp_volume(self.program_volume.get())
+        if entry is self.selected_entry() and getattr(self, "preview_volume", None) is not None:
+            self.preview_volume.set(entry.volume)
+            self._set_volume_label(getattr(self, "preview_volume_label", None), entry.volume)
+            if getattr(self, "preview_volume_bar", None):
+                self.preview_volume_bar.set_volume(entry.volume)
+            self._apply_preview_speaker()
+        self.repaint_playlist()
+
+    def _apply_volume_setup_chrome(self):
+        button = getattr(self, "program_save_volume", None)
+        if button is None:
+            return
+        visible = bool(getattr(self, "volume_setup", False))
+        try:
+            managed = bool(button.winfo_manager())
+        except tk.TclError:
+            return
+        readout = getattr(self, "program_delay_readout", None)
+        if visible and not managed:
+            if readout is not None and not str(readout.cget("text") or "").strip():
+                readout.pack_forget()
+            button.pack(side="left", padx=(8, 0))
+        elif visible and readout is not None and not str(readout.cget("text") or "").strip():
+            if readout.winfo_manager():
+                readout.pack_forget()
+        elif not visible and managed:
+            button.pack_forget()
+            if readout is not None and not readout.winfo_manager():
+                readout.pack(side="left", padx=(8, 0))
 
     def _load_preview_volume(self, entry):
         key = id(entry) if entry else None
@@ -3981,6 +4026,9 @@ class VideoPlayerGUI:
             command=self.analyze_playlist_loudness,
             state="normal" if self.program_state == "OFF" else "disabled",
         )
+        if self.program_state == "OFF" and not getattr(self, "calibration_mode", None):
+            menu.add_separator()
+            menu.add_command(label=t("volume_setup"), command=self.start_volume_setup)
 
     def _fill_playlist_column_header(self, parent):
         """Column titles sit in the same column as the list, above the scrollbar."""
@@ -4470,7 +4518,7 @@ class VideoPlayerGUI:
         self._build_light_dimmer(tracks)
 
     def state_color(self):
-        if self.calibration_mode:
+        if self.calibration_mode or getattr(self, "volume_setup", False):
             return COLOR_CALIBRATION
         return {"OFF": COLOR_OFF, "PROGRAM": COLOR_PROGRAM, "PLAYING": COLOR_PLAYING}[self.program_state]
 
@@ -4522,7 +4570,10 @@ class VideoPlayerGUI:
         )
 
     def refresh_status(self):
-        state_key = self._calibration_state_key()
+        if getattr(self, "volume_setup", False):
+            state_key = "state_volume_setup"
+        else:
+            state_key = self._calibration_state_key()
         if not state_key:
             state_key = {"OFF": "state_off", "PROGRAM": "state_program", "PLAYING": "state_playing"}[self.program_state]
         self.state_label.config(text=t(state_key), bg=self.state_color())
@@ -4578,6 +4629,7 @@ class VideoPlayerGUI:
             self._sync_audiosync_slider(entry)
         if getattr(self, "lights_fading", False):
             self._refresh_light_buttons()
+        self._apply_volume_setup_chrome()
         self._apply_booth_chrome()
 
     def _refresh_next_clip(self):
@@ -8030,7 +8082,11 @@ class VideoPlayerGUI:
         frozen = self.program_state == "PLAYING" and self.main_pause and not self.blackout
         rolling = self.program_state == "PLAYING" and not self.main_pause
         clip_rolling = rolling and not self.still_waiting and not self._program_loop_active()
-        state_key = self._calibration_state_key()
+        volume_setup = bool(getattr(self, "volume_setup", False))
+        if volume_setup:
+            state_key = "state_volume_setup"
+        else:
+            state_key = self._calibration_state_key()
         if not state_key:
             state_key = {
                 "OFF": "state_off",
@@ -8068,6 +8124,7 @@ class VideoPlayerGUI:
             "state": self.program_state,
             "state_label": t(state_key),
             "calibration": self.calibration_mode,
+            "volume_setup": volume_setup,
             "paused": paused,
             "still": frozen,
             "idle": bool(self.idle_showing),
@@ -8095,8 +8152,18 @@ class VideoPlayerGUI:
                 "resume": bool(self.playlist) and not clip_rolling,
                 "pause": self.program_state == "PLAYING",
                 "still": self.program_state == "PLAYING",
-                "stop": self.program_state == "PLAYING",
+                "stop": self.program_state == "PLAYING" or (
+                    volume_setup and self.program_state == "PROGRAM"
+                ),
+                "confirm_transport": not volume_setup,
                 "volume": True,
+                "save_volume": volume_setup,
+                "seek": volume_setup and self.program_seek_allowed(),
+                "start_volume_setup": (
+                    self.program_state == "OFF"
+                    and bool(self.playlist)
+                    and not self.calibration_mode
+                ),
                 "set_program": bool(self.playlist) and self.program_state != "PLAYING",
                 "lights": bool(self.lights_control.get()),
             },
@@ -8127,11 +8194,51 @@ class VideoPlayerGUI:
     def remote_stop(self):
         self._remote_action = True
         try:
+            if getattr(self, "volume_setup", False) and self.program_state != "PLAYING":
+                if self.program_state == "OFF":
+                    return self._remote_result(False, "not_playing")
+                self._exit_volume_setup()
+                return self._remote_result(True)
             if not self._apply_stop_clip():
                 return self._remote_result(False, "not_playing")
             return self._remote_result(True)
         finally:
             self._remote_action = False
+
+    def remote_start_volume_setup(self):
+        self._remote_action = True
+        try:
+            if self.program_state != "OFF" or self.calibration_mode:
+                return self._remote_result(False, "not_stopped")
+            if not self.start_volume_setup():
+                return self._remote_result(False, "no_playlist")
+            return self._remote_result(True)
+        finally:
+            self._remote_action = False
+
+    def remote_save_volume(self):
+        if not getattr(self, "volume_setup", False):
+            return self._remote_result(False, "not_volume_setup")
+        if not self.current_entry():
+            return self._remote_result(False, "no_clip")
+        self.save_program_volume()
+        return self._remote_result(True)
+
+    def remote_seek(self, position):
+        if not self.program_seek_allowed():
+            return self._remote_result(False, "seek_unavailable")
+        try:
+            position = float(position)
+        except (TypeError, ValueError):
+            return self._remote_result(False, "position_required")
+        if position < 0:
+            position = 0.0
+        entry = self.current_entry()
+        duration = (entry.duration if entry and entry.duration else 0) or getattr(self, "duration", 0) or 0
+        if duration:
+            position = min(position, float(duration))
+        self._on_main_seek(position)
+        return self._remote_result(True)
 
     def remote_set_volume(self, value):
         volume = clamp_volume(value)
@@ -8924,6 +9031,7 @@ class VideoPlayerGUI:
             self.autoplay_after_id = None
         self.program_state = "OFF"
         self.calibration_mode = None
+        self.volume_setup = False
         self.playlist = []
         self.playlist_path = ""
         self.program_index = 0
@@ -8938,6 +9046,38 @@ class VideoPlayerGUI:
         self.blank_output()
         self.playlist_name.delete(0, "end")
         self.playlist_name.insert(0, t("playlist_untitled"))
+        self.refresh_all()
+
+    def start_volume_setup(self):
+        """Arm the current playlist so house volume can be set. Stop only."""
+        if self.program_state != "OFF" or self.calibration_mode or self.volume_setup:
+            return False
+        if not self.playlist:
+            if not getattr(self, "_remote_action", False):
+                messagebox.showinfo(t("volume_setup"), t("volume_setup_empty"))
+            return False
+        self.volume_setup = True
+        self.program_state = "PROGRAM"
+        self._skip_to_playable(inclusive=True)
+        self.ensure_main_output()
+        self.blank_output()
+        self.refresh_all()
+        return True
+
+    def _exit_volume_setup(self):
+        if not getattr(self, "volume_setup", False):
+            return
+        if getattr(self, "autoplay_after_id", None):
+            try:
+                self.root.after_cancel(self.autoplay_after_id)
+            except tk.TclError:
+                pass
+            self.autoplay_after_id = None
+        self._cancel_light_after("lights_play_after")
+        self.volume_setup = False
+        self.program_state = "OFF"
+        self.blank_output()
+        self._apply_lights("bright")
         self.refresh_all()
 
     def start_video_calibration(self):
@@ -10157,11 +10297,17 @@ class VideoPlayerGUI:
     def confirm_pause(self):
         if self.program_state != "PLAYING":
             return
+        if getattr(self, "volume_setup", False):
+            self._apply_pause()
+            return
         if messagebox.askyesno(t("pause_title"), t("pause_message")):
             self._apply_pause()
 
     def confirm_still(self):
         if self.program_state != "PLAYING":
+            return
+        if getattr(self, "volume_setup", False):
+            self._apply_still()
             return
         if messagebox.askyesno(t("still_title"), t("still_message")):
             self._apply_still()
@@ -10212,6 +10358,12 @@ class VideoPlayerGUI:
 
     def confirm_stop(self):
         if self.program_state == "OFF":
+            return
+        if getattr(self, "volume_setup", False):
+            if self.program_state == "PLAYING":
+                self._apply_stop_clip()
+                return
+            self._exit_volume_setup()
             return
         playing = self.program_state == "PLAYING"
         if self.calibration_mode and not playing:
@@ -10440,7 +10592,15 @@ class VideoPlayerGUI:
             self.live_parked = parked
 
     def program_seek_allowed(self):
-        """Scrubbing the program is only safe while the Still button holds a frame."""
+        """Scrubbing the program is only safe while the Still button holds a frame.
+
+        Volume setup may scrub whenever a clip is on air.
+        """
+        entry = self.current_entry()
+        if entry is not None and entry.is_image:
+            return False
+        if getattr(self, "volume_setup", False) and self.program_state == "PLAYING":
+            return True
         return self.program_state == "PLAYING" and self.main_pause and not self.blackout
 
     def _on_main_seek(self, position, dragging=False):
