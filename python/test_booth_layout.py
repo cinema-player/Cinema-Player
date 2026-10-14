@@ -1093,5 +1093,59 @@ class ProgressBarLayoutTests(unittest.TestCase):
             self.assertEqual(bar._x_for_time(40), playhead)
 
 
+class HeaderClockTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.root.geometry("1100x120+20+20")
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.mpv_path = ""
+        self.app.lights_control = None
+        self.app.remote_api = None
+
+    def tearDown(self):
+        cinema_gui.VideoPlayerGUI._cancel_header_clock(self.app)
+        self.root.destroy()
+        set_language("en")
+
+    def test_clock_text_is_24_hour_with_seconds(self):
+        self.assertEqual(
+            cinema_gui.header_clock_text(datetime(2026, 10, 13, 9, 5, 7)),
+            "09:05:07",
+        )
+
+    def test_clock_sits_left_of_the_header_icons(self):
+        with patch.object(cinema_gui.VideoPlayerGUI, "_fill_app_menu", lambda self, menu: None):
+            cinema_gui.VideoPlayerGUI._build_logo(self.app)
+        self.root.update()
+        clock = self.app.header_clock
+        self.assertRegex(clock.cget("text"), r"^\d{2}:\d{2}:\d{2}$")
+        icons = (
+            self.app.lights_indicator,
+            self.app.remote_indicator,
+            self.app.app_menu,
+        )
+        clock_right = clock.winfo_rootx() + clock.winfo_width()
+        clock_mid = clock.winfo_rooty() + clock.winfo_height() / 2
+        for icon in icons:
+            self.assertLess(clock_right, icon.winfo_rootx())
+            icon_mid = icon.winfo_rooty() + icon.winfo_height() / 2
+            self.assertLess(abs(clock_mid - icon_mid), icon.winfo_height())
+        cinema_gui.VideoPlayerGUI._refresh_header_indicators(self.app)
+        self.root.update()
+        clock_right = clock.winfo_rootx() + clock.winfo_width()
+        self.assertLess(clock_right, self.app.lights_indicator.winfo_rootx())
+
+    def test_clock_follows_the_wall_time(self):
+        with patch.object(cinema_gui.VideoPlayerGUI, "_fill_app_menu", lambda self, menu: None):
+            cinema_gui.VideoPlayerGUI._build_logo(self.app)
+        moment = datetime(2026, 10, 13, 21, 4, 5)
+        with patch("cinema_gui.datetime") as clock:
+            clock.now.return_value = moment
+            cinema_gui.VideoPlayerGUI._tick_header_clock(self.app)
+        self.assertEqual(self.app.header_clock.cget("text"), "21:04:05")
+
+
 if __name__ == "__main__":
     unittest.main()
