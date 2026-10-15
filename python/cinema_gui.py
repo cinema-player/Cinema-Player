@@ -2091,6 +2091,7 @@ class VideoPlayerGUI:
         self.idle_media_path = ""
         self.idle_showing = False
         self.hdmi_audio_keepalive = False
+        self._program_playback_started = False
         self._program_load_id = 0
         self._program_loaded_id = 0
         self._program_playhead = None

@@ -356,21 +356,63 @@ class HdmiKeepaliveTests(unittest.TestCase):
         ctl = player.MPVController("t", "/usr/bin/mpv")
         ctl.socket = MagicMock()
         ctl.load_file("/tmp/clip.mp4", start=1.0, play=True, aid=2, sid="no")
-        payload = json.loads(ctl.socket.sendall.call_args[0][0].decode())
-        self.assertEqual(payload["command"][0], "loadfile")
-        self.assertEqual(payload["command"][3], -1)
-        options = payload["command"][4]
+        commands = [
+            json.loads(call[0][0].decode())["command"]
+            for call in ctl.socket.sendall.call_args_list
+        ]
+        loadfile = next(cmd for cmd in commands if cmd[0] == "loadfile")
+        self.assertEqual(loadfile[:4], ["loadfile", "/tmp/clip.mp4", "replace", 0])
+        options = loadfile[4]
         self.assertEqual(options["aid"], "2")
         self.assertEqual(options["sid"], "no")
         self.assertEqual(options["start"], "1.0")
+        self.assertNotIn("loop-file", options)
+
+    def test_load_file_uses_option_string_on_mpv_037(self):
+        player._mpv_version_cache["/usr/bin/mpv"] = "0.37.0"
+        ctl = player.MPVController("t", "/usr/bin/mpv")
+        ctl.socket = MagicMock()
+        ctl.load_file("/tmp/clip.mp4", start=1.0, play=True, sid="no")
+        commands = [
+            json.loads(call[0][0].decode())["command"]
+            for call in ctl.socket.sendall.call_args_list
+        ]
+        loadfile = next(cmd for cmd in commands if cmd[0] == "loadfile")
+        self.assertEqual(loadfile[:3], ["loadfile", "/tmp/clip.mp4", "replace"])
+        self.assertEqual(loadfile[3], "start=1.0,sid=no")
+
+    def test_load_file_can_keep_looping(self):
+        player._mpv_version_cache["/usr/bin/mpv"] = "0.38.0"
+        ctl = player.MPVController("t", "/usr/bin/mpv")
+        ctl.socket = MagicMock()
+        ctl.load_file("/tmp/idle.mp4", play=True, loop=True)
+        commands = [
+            json.loads(call[0][0].decode())["command"]
+            for call in ctl.socket.sendall.call_args_list
+        ]
+        loadfile = next(cmd for cmd in commands if cmd[0] == "loadfile")
+        self.assertEqual(loadfile[4]["loop-file"], "inf")
+        self.assertFalse(any(cmd[:2] == ["set_property", "loop-file"] for cmd in commands))
+
+    def test_keepalive_follows_the_file_mpv_has_opened(self):
+        ctl = player.MPVController("t", "/usr/bin/mpv")
+        wav = player.audio_keepalive_path()
+        ctl.loaded_path = "/tmp/clip.mp4"
+        ctl.active_path = wav
+        self.assertTrue(ctl.is_audio_keepalive())
+        self.assertFalse(ctl.has_file("/tmp/clip.mp4"))
+        ctl.mark_file_loaded()
+        self.assertFalse(ctl.is_audio_keepalive())
+        self.assertTrue(ctl.has_file("/tmp/clip.mp4"))
 
     def test_load_file_clears_end_on_the_new_file_only(self):
+        player._mpv_version_cache["/usr/bin/mpv"] = "0.38.0"
         ctl = player.MPVController("main", "/usr/bin/mpv")
         ctl.socket = MagicMock()
         ctl.load_file("/tmp/clip.mp4", play=True, sid="no", loop=False, clear_end=True)
         payload = json.loads(ctl.socket.sendall.call_args[0][0].decode())
         options = payload["command"][4]
-        self.assertEqual(payload["command"][3], -1)
+        self.assertEqual(payload["command"][3], 0)
         self.assertEqual(options["end"], "none")
         self.assertEqual(options["loop-file"], "no")
 

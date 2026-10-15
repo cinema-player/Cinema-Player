@@ -4789,12 +4789,15 @@ class MPVController:
             options["aid"] = str(aid)
         if sid is not None:
             options["sid"] = str(sid)
-        if options:
-            # mpv 0.38+: loadfile <url> <flags> <index> <options-map>
-            # Index is ignored for replace; -1 is the documented placeholder.
-            self.command("loadfile", filename, "replace", -1, options)
-        else:
-            self.command("loadfile", filename, "replace")
+        # Per-file options, chosen for this mpv version. A follow-up
+        # loop-file property would hit the HDMI keepalive still on screen.
+        self.command(*mpv_loadfile_command(
+            filename, "replace", options, self.mpv_path,
+        ))
+
+    def mark_file_loaded(self):
+        """Record the path mpv actually opened. ``loaded_path`` is set earlier."""
+        self.active_path = self.loaded_path
 
     def is_audio_keepalive(self):
         path = self.active_path
