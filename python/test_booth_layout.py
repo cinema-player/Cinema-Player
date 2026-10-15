@@ -1645,5 +1645,87 @@ class PreviewMuteTests(unittest.TestCase):
         self.assertEqual(button.cget("text"), "Stumm")
 
 
+class UnsavedPlaylistQuitTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.output_manager = None
+
+    def tearDown(self):
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def test_a_changed_playlist_is_unsaved_until_it_is_remembered(self):
+        self.app._playlist_payload = lambda: {"entries": []}
+        cinema_gui.VideoPlayerGUI._remember_saved_playlist(self.app)
+        self.assertFalse(cinema_gui.VideoPlayerGUI._playlist_has_unsaved_changes(self.app))
+        self.app._playlist_payload = lambda: {"entries": ["clip.mp4"]}
+        self.assertTrue(cinema_gui.VideoPlayerGUI._playlist_has_unsaved_changes(self.app))
+        cinema_gui.VideoPlayerGUI._remember_saved_playlist(self.app)
+        self.assertFalse(cinema_gui.VideoPlayerGUI._playlist_has_unsaved_changes(self.app))
+
+    def test_cancel_keeps_the_window_open(self):
+        self.app.program_state = "OFF"
+        self.app._playlist_has_unsaved_changes = lambda: True
+        self.app._ask_unsaved_playlist = lambda: "cancel"
+        self.assertEqual(cinema_gui.VideoPlayerGUI.close(self.app), "break")
+        self.assertTrue(self.root.winfo_exists())
+
+    def test_quit_discards_the_playlist(self):
+        self.app._playlist_has_unsaved_changes = lambda: True
+        self.app._ask_unsaved_playlist = lambda: "quit"
+        self.app._save_playlist_for_quit = lambda: self.fail("save")
+        self.assertTrue(cinema_gui.VideoPlayerGUI._confirm_close_playlist(self.app))
+
+    def test_failed_save_keeps_the_program_open(self):
+        self.app._playlist_has_unsaved_changes = lambda: True
+        self.app._ask_unsaved_playlist = lambda: "save"
+        self.app._save_playlist_for_quit = lambda: False
+        self.assertFalse(cinema_gui.VideoPlayerGUI._confirm_close_playlist(self.app))
+
+    def test_save_writes_the_known_playlist_file(self):
+        written = []
+        self.app.playlist_path = "/films/abend.pls"
+        self.app._write_playlist = lambda path: written.append(path)
+        self.assertTrue(cinema_gui.VideoPlayerGUI._save_playlist_for_quit(self.app))
+        self.assertEqual(written, ["/films/abend.pls"])
+
+    def test_save_without_a_path_uses_the_save_dialog(self):
+        self.app.playlist_path = ""
+        self.app.save_playlist = lambda: False
+        self.assertFalse(cinema_gui.VideoPlayerGUI._save_playlist_for_quit(self.app))
+
+    def test_dialog_offers_cancel_save_and_quit(self):
+        labels = {
+            t("quit_cancel"): "cancel",
+            t("quit_save"): "save",
+            t("quit"): "quit",
+        }
+        for label, expected in labels.items():
+            self.root.after(80, lambda text=label: self._press(text))
+            choice = cinema_gui.VideoPlayerGUI._ask_unsaved_playlist(self.app)
+            self.assertEqual(choice, expected)
+
+    def _press(self, text):
+        def walk(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Button) and child.cget("text") == text:
+                    child.invoke()
+                    return True
+                if walk(child):
+                    return True
+            return False
+
+        for widget in self.root.winfo_children():
+            if walk(widget):
+                return
+        self.fail(f"button {text!r} was not shown")
+
+
 if __name__ == "__main__":
     unittest.main()

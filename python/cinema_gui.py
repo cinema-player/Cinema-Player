@@ -2257,6 +2257,7 @@ class VideoPlayerGUI:
         self._start_remote_api()
         self._sync_lights_control()
         self._apply_lights("bright", force=True)
+        self._remember_saved_playlist()
 
     def _warn_if_no_beamer_output(self):
         if self.output_manager.has_dedicated_beamer():
@@ -9224,6 +9225,7 @@ class VideoPlayerGUI:
         self.playlist_name.delete(0, "end")
         self.playlist_name.insert(0, t("playlist_untitled"))
         self.refresh_all()
+        self._remember_saved_playlist()
 
     def start_volume_setup(self):
         """Arm the current playlist so house volume can be set."""
@@ -9415,6 +9417,7 @@ class VideoPlayerGUI:
         self._close_audiosync_list_window()
         self.blank_output()
         self.refresh_all()
+        self._remember_saved_playlist()
 
     def _show_audiosync_controls(self, visible):
         frame = getattr(self, "audiosync_frame", None)
@@ -9739,6 +9742,7 @@ class VideoPlayerGUI:
         if self.program_state != "PLAYING":
             self.blank_output()
         self.refresh_all()
+        self._remember_saved_playlist()
         if missing:
             messagebox.showwarning(t("load_playlist"), t("missing_playlist", count=missing))
 
@@ -9774,12 +9778,17 @@ class VideoPlayerGUI:
             **options,
         )
         if not path:
-            return
-        self._write_playlist(path)
+            return False
+        try:
+            self._write_playlist(path)
+        except OSError as exc:
+            messagebox.showerror(t("save_playlist"), t("import_playlist_save_failed", error=exc))
+            return False
         self.playlist_path = path
         self.playlist_name.delete(0, "end")
         self.playlist_name.insert(0, os.path.basename(path))
         self.remember_playlist_dir(path)
+        return True
 
     def _playlist_payload(self):
         return {
@@ -9792,9 +9801,26 @@ class VideoPlayerGUI:
             "entries": [entry.__dict__ for entry in self.playlist],
         }
 
+    def _playlist_token(self):
+        return json.dumps(self._playlist_payload(), sort_keys=True, ensure_ascii=False)
+
+    def _remember_saved_playlist(self):
+        """The playlist now matches what is on disk, or there is nothing to keep."""
+        self._playlist_saved_token = self._playlist_token()
+
+    def _playlist_has_unsaved_changes(self):
+        saved = getattr(self, "_playlist_saved_token", None)
+        try:
+            current = self._playlist_token()
+        except (TypeError, ValueError):
+            return True
+        return current != saved
+
     def _write_playlist(self, path):
+        payload = self._playlist_payload()
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump(self._playlist_payload(), handle, indent=2)
+            json.dump(payload, handle, indent=2)
+        self._playlist_saved_token = json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
     def _on_autosave_program_change(self):
         self.settings["autosave_on_program_change"] = bool(self.autosave_on_program_change.get())
@@ -11251,9 +11277,75 @@ class VideoPlayerGUI:
             print(f"GUI-Aktualisierung: {exc}")
         self.root.after(250, self.update_gui)
 
+    def _ask_unsaved_playlist(self):
+        """Ask whether to cancel, save, or quit. Closing the window cancels."""
+        result = {"choice": "cancel"}
+        window = tk.Toplevel(self.root)
+        window.title(t("quit"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(420, 140)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        body = tk.Frame(window, bg=COLOR_BG)
+        body.pack(fill="both", expand=True, padx=16, pady=(16, 8))
+        tk.Label(
+            body, text=t("quit_unsaved"), bg=COLOR_BG, fg=COLOR_TEXT,
+            font=FONT_UI, wraplength=440, justify="left",
+        ).pack(fill="x")
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+
+        def choose(choice):
+            result["choice"] = choice
+            window.destroy()
+
+        tk.Button(
+            buttons, text=t("quit_cancel"), command=lambda: choose("cancel"), font=FONT_UI,
+        ).pack(side="left")
+        tk.Button(
+            buttons, text=t("quit_save"), command=lambda: choose("save"), font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("quit"), command=lambda: choose("quit"), font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        window.bind("<Escape>", lambda _event: choose("cancel"))
+        window.protocol("WM_DELETE_WINDOW", lambda: choose("cancel"))
+        self._open_popup(window, 480, 160)
+        window.grab_set()
+        self.root.wait_window(window)
+        return result["choice"]
+
+    def _save_playlist_for_quit(self):
+        """Write the current playlist. A new file asks for a path."""
+        if self.playlist_path:
+            try:
+                self._write_playlist(self.playlist_path)
+            except OSError as exc:
+                messagebox.showerror(
+                    t("save_playlist"), t("import_playlist_save_failed", error=exc),
+                )
+                return False
+            return True
+        return bool(self.save_playlist())
+
+    def _confirm_close_playlist(self):
+        """True when the window may close."""
+        if not self._playlist_has_unsaved_changes():
+            return True
+        choice = self._ask_unsaved_playlist()
+        if choice == "save":
+            return self._save_playlist_for_quit()
+        return choice == "quit"
+
     def close(self, _event=None):
         if self.program_state != "OFF":
             messagebox.showinfo(t("quit"), t("quit_busy"))
+            return "break"
+        if not self._confirm_close_playlist():
             return "break"
         self._close_menus()
         self._stop_remote_api()
