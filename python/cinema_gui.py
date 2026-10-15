@@ -620,6 +620,58 @@ def program_playback_restart_starts_clip(playing, keepalive, idle, file_matches)
     return bool(playing and file_matches and not keepalive and not idle)
 
 
+def playback_out_point(entry, looping=False):
+    """Out point that should stop this clip, or None to play through.
+
+    Zero and negative values are not a real Out. They used to be sent to mpv
+    and the file then ended on the first frame.
+    """
+    if looping or entry is None or entry.out_point is None:
+        return None
+    try:
+        end = float(entry.out_point)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(end) or end <= 0:
+        return None
+    return end
+
+
+def program_end_signal_is_real(position, duration, out_point):
+    """True when an mpv eof belongs to this clip, not to the file it replaced.
+
+    Between pictures the projector loops a one-second silent file. Opening the
+    next movie makes mpv report eof while the new picture is still at the
+    start. That report may advance the program only once the playhead has
+    reached this clip's end.
+    """
+    try:
+        position = float(position)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(position) or position < 0:
+        return False
+    end = None
+    if out_point is not None:
+        try:
+            end = float(out_point)
+        except (TypeError, ValueError):
+            end = None
+        if end is not None and (not math.isfinite(end) or end <= 0):
+            end = None
+    if end is None:
+        try:
+            end = float(duration)
+        except (TypeError, ValueError):
+            end = 0.0
+        if not math.isfinite(end) or end <= 0:
+            return position >= 1.0
+    # The keepalive playhead never gets far past one second. A clip has to be
+    # that close to its own end before eof is allowed to finish it.
+    margin = 0.08 if end <= 0.25 else 0.75
+    return position >= max(0.0, end - margin)
+
+
 def program_clock_drives_playhead(waiting_to_roll, playing, idle, file_matches):
     """The playhead follows mpv only for the clip that is actually on the projector.
 
@@ -2040,6 +2092,9 @@ class VideoPlayerGUI:
         self.idle_showing = False
         self.hdmi_audio_keepalive = False
         self._program_playback_started = False
+        self._program_load_id = 0
+        self._program_loaded_id = 0
+        self._program_playhead = None
         self.beamer_test_active = False
         self.edid_window = None
         self.media_dirs_window = None
@@ -10311,16 +10366,24 @@ class VideoPlayerGUI:
         self._load_program_volume(entry, force=True)
         self.main_mpv.set_volume(volume)
         self._apply_program_audio_delay(entry)
+        out_point = playback_out_point(entry, looping)
+        # Arm before the load so an eof from the silent keepalive cannot
+        # satisfy "this clip has reached its end".
+        self._program_load_id += 1
+        self._program_loaded_id = 0
+        self._program_playhead = None
         self.main_mpv.load_file(
             entry.path,
             start=entry.in_point,
-            end=None if looping else entry.out_point,
+            end=out_point,
             play=True,
             aid=aid,
             sid=sid,
             loop=looping,
+            clear_end=out_point is None,
         )
-        self._apply_program_loop(entry)
+        # Loop and Out are per-file options above. Setting them here would
+        # hit the keepalive that is still on screen and end it at once.
         if session_is_wayland():
             self._pin_main_output_to_beamer()
         self.apply_tracks(entry, self.main_mpv)
@@ -10354,14 +10417,11 @@ class VideoPlayerGUI:
             start = 0.0 if entry.in_point is None else float(entry.in_point)
             controller.set_ab_loop(start, entry.out_point)
             controller.set_loop_file(True)
-            controller.command("set_property", "end", "no")
+            controller.set_end(None)
             return
         controller.set_ab_loop(None, None)
         controller.set_loop_file(False)
-        if entry and entry.out_point is not None:
-            controller.command("set_property", "end", float(entry.out_point))
-        else:
-            controller.command("set_property", "end", "no")
+        controller.set_end(playback_out_point(entry, looping=False))
 
     def _release_preview_range(self):
         """Independent preview plays the whole file, including after Out."""
@@ -10374,7 +10434,7 @@ class VideoPlayerGUI:
         mpv.pending_end = None
         mpv.set_ab_loop(None, None)
         mpv.set_loop_file(False)
-        mpv.command("set_property", "end", "no")
+        mpv.set_end(None)
 
     def start_still_timer(self, entry):
         """A still runs on a timer; without a display time it waits for Resume."""
@@ -10779,19 +10839,24 @@ class VideoPlayerGUI:
         for prop, value in self.output_manager.program_clock_properties(has_audio):
             mpv.command("set_property", prop, value)
 
-    def _program_eof_applies(self, mpv):
-        """Ignore keepalive / stale EOF until the current clip has actually started."""
+    def _program_eof_should_advance(self):
+        """eof ends the clip only after this file itself has reached its end."""
+        if self.hdmi_audio_keepalive or self.main_mpv.is_audio_keepalive():
+            return False
+        if getattr(self, "lights_play_after", None):
+            return False
+        if self.beamer_test_active or self.idle_showing or self.still_active():
+            return False
+        if self._program_loop_active() or self.program_state != "PLAYING":
+            return False
+        if self._program_loaded_id != self._program_load_id or not self._program_load_id:
+            return False
         entry = self.current_entry()
-        return program_eof_should_finish(
-            self.program_state == "PLAYING",
-            bool(self.idle_showing),
-            bool(self.hdmi_audio_keepalive or mpv.is_audio_keepalive()),
-            bool(getattr(self, "lights_play_after", None)),
-            bool(self.beamer_test_active),
-            bool(self._program_loop_active()),
-            bool(self.still_active()),
-            bool(getattr(self, "_program_playback_started", False)),
-            bool(entry and mpv.has_file(entry.path)),
+        if not entry or not self.main_mpv.has_file(entry.path):
+            return False
+        duration = entry.duration or self.duration
+        return program_end_signal_is_real(
+            self._program_playhead, duration, playback_out_point(entry),
         )
 
     def main_mpv_event(self, mpv, message):
@@ -10814,6 +10879,8 @@ class VideoPlayerGUI:
             self.program_decoder_drops = 0
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
+                self._program_loaded_id = self._program_load_id
+                self._program_playhead = None
                 self.apply_tracks(entry, mpv)
                 self._apply_program_loop(entry, mpv)
                 if program_file_loaded_starts_clip(
@@ -10837,7 +10904,7 @@ class VideoPlayerGUI:
                 mpv.set_volume(clamp_volume(self.program_volume.get()))
             return
         if event == "end-file" and message.get("reason") in (None, "eof", "stop"):
-            if message.get("reason") == "eof" and self._program_eof_applies(mpv):
+            if message.get("reason") == "eof" and self._program_eof_should_advance():
                 self.root.after(0, self.on_clip_finished)
             return
         if event != "property-change":
@@ -10864,13 +10931,21 @@ class VideoPlayerGUI:
                 bool(entry and mpv.has_file(entry.path)),
             ):
                 return
-            self.position = position
             if (
                 self.program_state == "PLAYING"
-                and getattr(self, "_program_playback_started", False)
-                and entry
-                and entry.out_point is not None
-                and self.position >= entry.out_point - 0.04
+                and not self.idle_showing
+                and self._program_loaded_id != self._program_load_id
+            ):
+                # The keepalive clock is still running until this file confirms.
+                return
+            self.position = position
+            if self.program_state == "PLAYING" and not self.idle_showing:
+                self._program_playhead = position
+            end = playback_out_point(entry)
+            if (
+                self.program_state == "PLAYING"
+                and end is not None
+                and self.position >= end - 0.04
             ):
                 if self._program_loop_active():
                     start = 0.0 if entry.in_point is None else entry.in_point
@@ -10889,7 +10964,7 @@ class VideoPlayerGUI:
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)
         elif name == "eof-reached" and value:
-            if self._program_eof_applies(mpv):
+            if self._program_eof_should_advance():
                 self.root.after(0, self.on_clip_finished)
         elif name == "af-metadata/meter":
             self.program_levels = parse_preview_levels(value)[:2]
