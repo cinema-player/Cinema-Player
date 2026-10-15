@@ -1233,6 +1233,91 @@ class BeamerSummaryTests(unittest.TestCase):
         remote.destroy()
 
 
+class ProgramEndTests(unittest.TestCase):
+    def test_keepalive_clock_is_not_the_end_of_the_movie(self):
+        self.assertFalse(cinema_gui.program_end_signal_is_real(None, 600, None))
+        self.assertFalse(cinema_gui.program_end_signal_is_real(0.0, 600, None))
+        self.assertFalse(cinema_gui.program_end_signal_is_real(0.9, 600, None))
+        self.assertFalse(cinema_gui.program_end_signal_is_real(1.0, 90, 40))
+
+    def test_playhead_at_the_real_end_counts(self):
+        self.assertTrue(cinema_gui.program_end_signal_is_real(599.4, 600, None))
+        self.assertTrue(cinema_gui.program_end_signal_is_real(39.5, 120, 40))
+        self.assertFalse(cinema_gui.program_end_signal_is_real(10, 120, 40))
+
+    def test_zero_out_point_does_not_stop_on_the_first_frame(self):
+        entry = _entry(duration=30, out_point=0)
+        self.assertIsNone(cinema_gui.playback_out_point(entry))
+        self.assertEqual(cinema_gui.playback_out_point(_entry(duration=30, out_point=12)), 12)
+
+    def _armed(self, entry, *, keepalive=False):
+        class Player:
+            def is_audio_keepalive(self):
+                return keepalive
+
+            def has_file(self, path):
+                return path == entry.path
+
+        class Root:
+            def after(self, _delay, fn):
+                fn()
+
+        app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        app.program_state = "PLAYING"
+        app.playlist = [entry]
+        app.program_index = 0
+        app.main_mpv = Player()
+        app.idle_showing = False
+        app.hdmi_audio_keepalive = keepalive
+        app.beamer_test_active = False
+        app.still_waiting = False
+        app.still_started = None
+        app.lights_play_after = None
+        app.duration = entry.duration
+        app.position = 0.0
+        app._program_load_id = 1
+        app._program_loaded_id = 0
+        app._program_playhead = None
+        app.finished = 0
+        app.root = Root()
+        app.on_clip_finished = lambda: setattr(app, "finished", app.finished + 1)
+        return app
+
+    def test_eof_at_the_start_does_not_finish_the_clip(self):
+        entry = _entry(duration=600, out_point=None)
+        app = self._armed(entry)
+        app.main_mpv_event(app.main_mpv, {"event": "property-change", "name": "eof-reached", "data": True})
+        app.main_mpv_event(app.main_mpv, {"event": "end-file", "reason": "eof"})
+        app.main_mpv_event(app.main_mpv, {"event": "property-change", "name": "time-pos", "data": 0.95})
+        self.assertEqual(app.finished, 0)
+        self.assertEqual(app.position, 0.0)
+
+    def test_eof_at_the_real_end_finishes_the_clip(self):
+        entry = _entry(duration=600, out_point=None)
+        app = self._armed(entry)
+        app._program_loaded_id = 1
+        app._program_playhead = 599.5
+        app.main_mpv_event(app.main_mpv, {"event": "property-change", "name": "eof-reached", "data": True})
+        self.assertEqual(app.finished, 1)
+
+    def test_keepalive_eof_does_not_finish_even_near_its_own_end(self):
+        entry = _entry(duration=1.0, out_point=None)
+        app = self._armed(entry, keepalive=True)
+        app._program_loaded_id = 1
+        app._program_playhead = 0.99
+        app.main_mpv_event(app.main_mpv, {"event": "property-change", "name": "eof-reached", "data": True})
+        self.assertEqual(app.finished, 0)
+
+    def test_out_point_waits_until_the_new_file_is_loaded(self):
+        entry = _entry(duration=120, out_point=5)
+        app = self._armed(entry)
+        app.main_mpv_event(app.main_mpv, {"event": "property-change", "name": "time-pos", "data": 4.99})
+        self.assertEqual(app.finished, 0)
+        app._program_loaded_id = 1
+        app.main_mpv_event(app.main_mpv, {"event": "property-change", "name": "time-pos", "data": 4.99})
+        self.assertEqual(app.finished, 1)
+
+
 class ProgramClockTests(unittest.TestCase):
     def test_fade_wait_ignores_the_projector_clock(self):
         self.assertFalse(cinema_gui.program_clock_drives_playhead(True, True, False, False))
