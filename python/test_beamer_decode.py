@@ -55,5 +55,62 @@ class RefreshRateTests(unittest.TestCase):
         self.assertTrue(player.VideoOutputManager.refresh_matches(50, 25))
 
 
+import cinema_gui
+
+
+class ProgramEofTests(unittest.TestCase):
+    def test_stale_or_keepalive_eof_does_not_finish_the_clip(self):
+        self.assertFalse(
+            cinema_gui.program_eof_should_finish(
+                True, False, True, False, False, False, False, False, True,
+            )
+        )
+        self.assertFalse(
+            cinema_gui.program_eof_should_finish(
+                True, False, False, False, False, False, False, False, True,
+            )
+        )
+        self.assertFalse(
+            cinema_gui.program_eof_should_finish(
+                True, False, False, False, False, False, False, True, False,
+            )
+        )
+
+    def test_eof_finishes_only_after_the_clip_has_started(self):
+        self.assertTrue(
+            cinema_gui.program_eof_should_finish(
+                True, False, False, False, False, False, False, True, True,
+            )
+        )
+
+    def test_clip_file_loaded_starts_playback_keepalive_does_not(self):
+        self.assertTrue(
+            cinema_gui.program_file_loaded_starts_clip(True, False, True)
+        )
+        self.assertFalse(
+            cinema_gui.program_file_loaded_starts_clip(True, True, True)
+        )
+        self.assertFalse(
+            cinema_gui.program_file_loaded_starts_clip(True, False, False)
+        )
+        self.assertFalse(
+            cinema_gui.program_file_loaded_starts_clip(False, False, True)
+        )
+
+    def test_playback_restart_ignores_keepalive_and_idle(self):
+        self.assertTrue(
+            cinema_gui.program_playback_restart_starts_clip(True, False, False, True)
+        )
+        self.assertFalse(
+            cinema_gui.program_playback_restart_starts_clip(True, True, False, True)
+        )
+        self.assertFalse(
+            cinema_gui.program_playback_restart_starts_clip(True, False, True, True)
+        )
+        self.assertFalse(
+            cinema_gui.program_playback_restart_starts_clip(True, False, False, False)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

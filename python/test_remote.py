@@ -9,6 +9,7 @@ sys.modules.setdefault("tkinter", MagicMock())
 sys.modules.setdefault("font_setup", MagicMock())
 
 import qr_code
+import cinema_gui
 from remote_api import RemoteAPIHandler, clip_span, clip_times, connect_url, connect_urls
 
 
@@ -96,6 +97,11 @@ class RemotePageTests(unittest.TestCase):
             self.assertIn(b"clock primary", body)
             self.assertIn(b"/api/lights", body)
             self.assertIn(b"fading", body)
+            self.assertIn(b'id="envelope"', body)
+            self.assertIn(b"renderEnvelope", body)
+            self.assertIn(b"dragEnvelope", body)
+            self.assertNotIn(b'id="volume-setup"', body)
+            self.assertNotIn(b"/api/volume-setup", body)
             self.assertGreater(len(body), 100)
         finally:
             httpd.shutdown()
@@ -123,6 +129,33 @@ class ClipTimesTests(unittest.TestCase):
         _start, end, _total, _elapsed, remaining = clip_span(120, 80, playing=True)
         self.assertEqual(end, 120)
         self.assertEqual(remaining, 40)
+
+
+class RemoteEnvelopeTests(unittest.TestCase):
+    def test_peaks_only_in_volume_setup(self):
+        class Entry:
+            missing = False
+            is_image = False
+            audio_envelope = [0.0, 0.5, 1.2, "x"]
+
+        self.assertIsNone(cinema_gui.remote_clip_envelope(Entry(), False))
+        peaks = cinema_gui.remote_clip_envelope(Entry(), True)
+        self.assertEqual(peaks, [0.0, 0.5, 1.0])
+
+    def test_missing_or_still_has_no_envelope(self):
+        class Still:
+            missing = False
+            is_image = True
+            audio_envelope = [0.4, 0.8]
+
+        class Missing:
+            missing = True
+            is_image = False
+            audio_envelope = [0.4, 0.8]
+
+        self.assertIsNone(cinema_gui.remote_clip_envelope(Still(), True))
+        self.assertIsNone(cinema_gui.remote_clip_envelope(Missing(), True))
+        self.assertIsNone(cinema_gui.remote_clip_envelope(None, True))
 
 
 if __name__ == "__main__":

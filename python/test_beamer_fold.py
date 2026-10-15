@@ -63,6 +63,9 @@ class _Output:
     def get_output_device_name(self):
         return "Cinema Projector"
 
+    def gpu_label(self):
+        return "NVIDIA GeForce RTX 4070"
+
 
 def _arrow_points(canvas):
     item = canvas.find_all()[0]
@@ -107,10 +110,14 @@ class BeamerFoldTests(unittest.TestCase):
         self.assertEqual(t("beamer_resolution"), "Auflösung")
         self.assertEqual(t("beamer_rate"), "Bildrate")
         self.assertEqual(t("beamer_colorspace"), "Farbraum")
+        self.assertEqual(t("beamer_gpu"), "Grafik")
+        self.assertEqual(t("beamer_hwdec"), "HW-Dekodierung")
         set_language("en")
         self.assertEqual(t("beamer_resolution"), "Resolution")
         self.assertEqual(t("beamer_rate"), "Frame rate")
         self.assertEqual(t("beamer_colorspace"), "Color space")
+        self.assertEqual(t("beamer_gpu"), "Graphics")
+        self.assertEqual(t("beamer_hwdec"), "HW decode")
 
     def test_starts_collapsed_on_set_values(self):
         self.root.update_idletasks()
@@ -123,6 +130,12 @@ class BeamerFoldTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_rate.cget("text"), "24p")
         self.assertEqual(self.app.beamer_colorspace_value.cget("text"), "YCbCr444")
         self.assertEqual(self.app.beamer_ok.cget("text"), "OK")
+        self.assertEqual(self.app.beamer_gpu.cget("text"), "NVIDIA GeForce RTX 4070")
+        self.assertEqual(self.app.beamer_gpu.master.master, self.app.beamer_summary.master)
+        self.assertEqual(self.app.beamer_hwdec_summary.cget("text"), "--")
+        self.assertEqual(
+            self.app.beamer_hwdec_summary.master.master, self.app.beamer_summary.master,
+        )
 
     def test_arrow_opens_and_closes_the_full_readout(self):
         cinema_gui.VideoPlayerGUI.refresh_beamer(self.app)

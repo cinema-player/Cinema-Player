@@ -35,6 +35,39 @@ class ParseMpvVersionTests(unittest.TestCase):
         self.assertEqual(player.parse_mpv_version("FFmpeg library versions:\n"), "")
         self.assertEqual(player.parse_mpv_version("mpv Copyright © 2000-2024\n"), "")
 
+    def test_version_tuple(self):
+        self.assertEqual(player.mpv_version_tuple("0.37.0"), (0, 37, 0))
+        self.assertEqual(player.mpv_version_tuple("0.38.0-107-gabc"), (0, 38, 0))
+        self.assertEqual(player.mpv_version_tuple(""), (0, 0, 0))
+
+
+class LoadfileCommandTests(unittest.TestCase):
+    def tearDown(self):
+        player._mpv_version_cache.clear()
+
+    def test_mpv_037_uses_option_string(self):
+        player._mpv_version_cache["/mpv"] = "0.37.0"
+        command = player.mpv_loadfile_command(
+            "/clip.mp4", options={"sid": "no", "start": "1.0"}, mpv_path="/mpv",
+        )
+        self.assertEqual(command[:3], ["loadfile", "/clip.mp4", "replace"])
+        self.assertEqual(command[3], "sid=no,start=1.0")
+        self.assertEqual(len(command), 4)
+
+    def test_mpv_038_uses_index_and_map(self):
+        player._mpv_version_cache["/mpv"] = "0.38.0"
+        command = player.mpv_loadfile_command(
+            "/clip.mp4", options={"sid": "no", "start": "1.0"}, mpv_path="/mpv",
+        )
+        self.assertEqual(command[:4], ["loadfile", "/clip.mp4", "replace", 0])
+        self.assertEqual(command[4], {"sid": "no", "start": "1.0"})
+
+    def test_plain_replace_has_no_options(self):
+        self.assertEqual(
+            player.mpv_loadfile_command("/clip.mp4"),
+            ["loadfile", "/clip.mp4", "replace"],
+        )
+
 
 class ReadMpvVersionTests(unittest.TestCase):
     def tearDown(self):

@@ -121,6 +121,9 @@ class ProbeAudioTests(unittest.TestCase):
 
 
 class HdmiKeepaliveTests(unittest.TestCase):
+    def tearDown(self):
+        player._mpv_version_cache.clear()
+
     def test_writes_silent_stereo_wav(self):
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "keep.wav")
@@ -349,15 +352,66 @@ class HdmiKeepaliveTests(unittest.TestCase):
         self.assertNotIn(("set_property", "mute", False), sent)
 
     def test_load_file_passes_aid_before_playback(self):
+        player._mpv_version_cache["/usr/bin/mpv"] = "0.38.0"
         ctl = player.MPVController("t", "/usr/bin/mpv")
         ctl.socket = MagicMock()
         ctl.load_file("/tmp/clip.mp4", start=1.0, play=True, aid=2, sid="no")
-        payload = json.loads(ctl.socket.sendall.call_args[0][0].decode())
-        self.assertEqual(payload["command"][0], "loadfile")
-        options = payload["command"][4]
+        commands = [
+            json.loads(call[0][0].decode())["command"]
+            for call in ctl.socket.sendall.call_args_list
+        ]
+        loadfile = next(cmd for cmd in commands if cmd[0] == "loadfile")
+        loop_at = next(
+            index for index, cmd in enumerate(commands)
+            if cmd[:2] == ["set_property", "loop-file"]
+        )
+        load_at = next(index for index, cmd in enumerate(commands) if cmd[0] == "loadfile")
+        self.assertLess(load_at, loop_at)
+        self.assertEqual(commands[loop_at][2], "no")
+        options = loadfile[4]
         self.assertEqual(options["aid"], "2")
         self.assertEqual(options["sid"], "no")
         self.assertEqual(options["start"], "1.0")
+
+    def test_load_file_uses_option_string_on_mpv_037(self):
+        player._mpv_version_cache["/usr/bin/mpv"] = "0.37.0"
+        ctl = player.MPVController("t", "/usr/bin/mpv")
+        ctl.socket = MagicMock()
+        ctl.load_file("/tmp/clip.mp4", start=1.0, play=True, sid="no")
+        commands = [
+            json.loads(call[0][0].decode())["command"]
+            for call in ctl.socket.sendall.call_args_list
+        ]
+        loadfile = next(cmd for cmd in commands if cmd[0] == "loadfile")
+        self.assertEqual(loadfile[:3], ["loadfile", "/tmp/clip.mp4", "replace"])
+        self.assertEqual(loadfile[3], "start=1.0,sid=no")
+
+    def test_load_file_can_keep_looping(self):
+        ctl = player.MPVController("t", "/usr/bin/mpv")
+        ctl.socket = MagicMock()
+        ctl.load_file("/tmp/idle.mp4", play=True, loop=True)
+        commands = [
+            json.loads(call[0][0].decode())["command"]
+            for call in ctl.socket.sendall.call_args_list
+        ]
+        load_at = next(index for index, cmd in enumerate(commands) if cmd[0] == "loadfile")
+        loop_at = next(
+            index for index, cmd in enumerate(commands)
+            if cmd[:2] == ["set_property", "loop-file"]
+        )
+        self.assertLess(load_at, loop_at)
+        self.assertEqual(commands[loop_at][2], "inf")
+
+    def test_keepalive_follows_the_file_mpv_has_opened(self):
+        ctl = player.MPVController("t", "/usr/bin/mpv")
+        wav = player.audio_keepalive_path()
+        ctl.loaded_path = "/tmp/clip.mp4"
+        ctl.active_path = wav
+        self.assertTrue(ctl.is_audio_keepalive())
+        self.assertFalse(ctl.has_file("/tmp/clip.mp4"))
+        ctl.mark_file_loaded()
+        self.assertFalse(ctl.is_audio_keepalive())
+        self.assertTrue(ctl.has_file("/tmp/clip.mp4"))
 
 
 if __name__ == "__main__":

@@ -236,7 +236,7 @@ The preview meter shows program-independent audio levels. After **Analyze loudne
 
 The computer runs Linux, and the application is written in Python. The open-source video player mpv provides the high-quality video and audio output for the projector and the embedded preview. FFprobe is used to read metadata from the media files. ffmpeg is used only for optional loudness and envelope analysis.
 
-For good performance, the graphics card must support hardware decoding of both the H.264 and H.265 codecs.
+For good performance, the graphics card must support hardware decoding of both the H.264 and H.265 codecs. Cinema Player uses VAAPI on AMD and Intel, and NVDEC on NVIDIA. The beamer status shows the GPU that drives the projector output.
 
 mpv is started with OSD and subtitles off. The projector instance uses `--screen-name` / `--fs-screen-name` for the selected output.
 
@@ -253,7 +253,7 @@ If a listed rate can show the clip (native, 2× refresh, or the 25/30 Hz fallbac
 
 If no matching refresh rate is found, the status changes to **Mismatch** (red). The clip’s unsupported rate or resolution is then added to the list in blue (program) or yellow (preview). The video can still be displayed, but frame-dropping artifacts may occur.
 
-While a clip is on air, the beamer block also shows mpv **HW decode** (`hwdec-current`) and **Drop frames**: **mpv** is `frame-drop-count` (frames the player skipped at display) and **decoder** is `decoder-frame-drop-count` (frames the decoder skipped). If either counter rises, the green **OK** is replaced by a red **Dropped**.
+The beamer block always shows the **Graphics** card that owns the projector connector (AMD, NVIDIA, or Intel). While a clip is on air it also shows mpv **HW decode** (`hwdec-current`) and **Drop frames**: **mpv** is `frame-drop-count` (frames the player skipped at display) and **decoder** is `decoder-frame-drop-count` (frames the decoder skipped). If either counter rises, the green **OK** is replaced by a red **Dropped**.
 
 This check is performed when videos are added to the playlist and when a playlist is loaded. Each entry indicates whether the video can be played correctly. Import and probe do not create custom modes; that happens when a clip is prepared for the projector.
 

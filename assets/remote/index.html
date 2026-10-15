@@ -82,12 +82,12 @@
       background: #3a2a18;
       color: #f3e2c4;
     }
+    .timeline { margin-bottom: 16px; }
     .bar {
       height: 8px;
       background: #333;
       border-radius: 99px;
       overflow: hidden;
-      margin-bottom: 16px;
     }
     .bar i {
       display: block;
@@ -95,15 +95,18 @@
       width: 0;
       background: var(--playing);
     }
-    .bar[hidden], #seek[hidden], #save-volume[hidden], #volume-setup[hidden] { display: none; }
-    #seek { margin: 0 0 16px; accent-color: var(--cal); }
-    #volume-setup {
+    .bar[hidden], #seek[hidden], #envelope[hidden], #save-volume[hidden] { display: none; }
+    #seek { width: 100%; margin: 0; accent-color: var(--cal); }
+    #envelope {
+      display: block;
       width: 100%;
-      margin-bottom: 10px;
-      background: var(--cal);
-      color: #fff;
-      min-height: 52px;
+      height: 44px;
+      margin-top: 6px;
+      border-radius: 10px;
+      background: var(--panel);
+      touch-action: none;
     }
+    #envelope.seekable { cursor: pointer; }
     #save-volume { width: 100%; min-height: 44px; margin-top: 8px; padding: 10px 12px; }
     .actions {
       display: grid;
@@ -212,8 +215,11 @@
     <div class="name" id="state">…</div>
     <div class="meta" id="clip"></div>
   </div>
-  <div class="bar"><i id="progress"></i></div>
-  <input id="seek" type="range" min="0" max="1" step="0.1" value="0" hidden>
+  <div class="timeline">
+    <div class="bar"><i id="progress"></i></div>
+    <input id="seek" type="range" min="0" max="1" step="0.1" value="0" hidden>
+    <canvas id="envelope" hidden></canvas>
+  </div>
   <div class="clocks">
     <div class="clock primary"><span data-i="remaining">Remaining</span><b id="t-remaining">--:--</b></div>
     <div class="clock primary"><span data-i="end">End</span><b id="t-end">--:--</b></div>
@@ -226,7 +232,6 @@
     <div class="caption" id="light-caption">Lights</div>
     <div id="light-scenes" class="scenes"></div>
   </div>
-  <button id="volume-setup" type="button" hidden>Set volume</button>
   <div class="actions">
     <button id="resume" type="button">Resume</button>
     <button id="pause" type="button">Pause</button>
@@ -263,7 +268,6 @@
             stop_message: "Stop the current clip?",
             set_program: "Set program pointer",
             program_message: "Set the program pointer to {name}?",
-            volume_setup: "Set volume",
             save_volume: "Save volume" },
       de: { resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
             total: "Gesamt", elapsed: "Gelaufen", remaining: "Rest", end: "Ende",
@@ -277,7 +281,6 @@
             stop_message: "Aktuellen Clip stoppen?",
             set_program: "Programmzeiger setzen",
             program_message: "Programmzeiger auf {name} setzen?",
-            volume_setup: "Lautstärke einstellen",
             save_volume: "Lautstärke speichern" }
     };
     const tokenInput = document.getElementById("token");
@@ -285,6 +288,7 @@
     let lastVolume = 100;
     let dragging = false;
     let seeking = false;
+    let envelopeSeeking = false;
     let skipTransportConfirm = false;
     let uiLang = "en";
     const params = new URLSearchParams(location.search);
@@ -338,7 +342,6 @@
       tokenInput.placeholder = table.token;
       document.getElementById("confirm-yes").textContent = table.yes;
       document.getElementById("confirm-no").textContent = table.no;
-      document.getElementById("volume-setup").textContent = table.volume_setup;
       document.getElementById("save-volume").textContent = table.save_volume;
     }
     applyLang(uiLang);
@@ -373,16 +376,16 @@
       document.getElementById("pause").classList.toggle("active", !!data.paused);
       document.getElementById("still").classList.toggle("active", !!data.still);
       skipTransportConfirm = actions.confirm_transport === false;
-      document.getElementById("volume-setup").hidden = !actions.start_volume_setup;
       document.getElementById("save-volume").hidden = !actions.save_volume;
       const seek = document.getElementById("seek");
       const canSeek = !!actions.seek && Number(clip.duration) > 0;
       seek.hidden = !canSeek;
       document.querySelector(".bar").hidden = canSeek;
-      if (canSeek && !seeking) {
+      if (canSeek && !seeking && !envelopeSeeking) {
         seek.max = clip.duration;
         seek.value = clip.position || 0;
       }
+      if (!envelopeSeeking) renderEnvelope(clip, times, canSeek);
       const lights = data.lights || {};
       const lightsOn = lights.enabled === true;
       const preset = lights.preset || "";
@@ -459,6 +462,76 @@
       confirmBox.hidden = true;
     }
 
+    function renderEnvelope(clip, times, canSeek) {
+      const canvas = document.getElementById("envelope");
+      const peaks = clip && clip.envelope;
+      const show = Array.isArray(peaks) && peaks.length >= 2;
+      canvas.hidden = !show;
+      canvas.classList.toggle("seekable", !!(show && canSeek));
+      canvas.dataset.duration = show ? String(clip.duration || 0) : "0";
+      canvas.dataset.seek = canSeek ? "1" : "0";
+      canvas._peaks = show ? peaks : null;
+      if (!show) return;
+      const duration = Number(clip.duration) || 0;
+      const position = Number(clip.position) || 0;
+      const progress = duration > 0 ? position / duration : (times.progress || 0);
+      if (canvas.clientWidth < 2) {
+        requestAnimationFrame(() => drawEnvelope(peaks, progress));
+        return;
+      }
+      drawEnvelope(peaks, progress);
+    }
+
+    function drawEnvelope(peaks, progress) {
+      const canvas = document.getElementById("envelope");
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = Math.max(1, canvas.clientWidth || canvas.parentElement.clientWidth || 1);
+      const cssH = 44;
+      if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+        canvas.width = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+        canvas.style.width = cssW + "px";
+        canvas.style.height = cssH + "px";
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+      ctx.fillStyle = "#1c1c1c";
+      ctx.fillRect(0, 0, cssW, cssH);
+      ctx.strokeStyle = "#333";
+      ctx.strokeRect(0.5, 0.5, cssW - 1, cssH - 1);
+      const mid = cssH / 2;
+      ctx.beginPath();
+      ctx.moveTo(1, mid);
+      ctx.lineTo(cssW - 1, mid);
+      ctx.stroke();
+      const amp = Math.max(1, mid - 2);
+      ctx.beginPath();
+      peaks.forEach((peak, index) => {
+        const level = Math.max(0, Math.min(1, Number(peak) || 0));
+        const x = (index + 0.5) * cssW / peaks.length;
+        const y = mid - level * amp;
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      for (let index = peaks.length - 1; index >= 0; index -= 1) {
+        const level = Math.max(0, Math.min(1, Number(peaks[index]) || 0));
+        const x = (index + 0.5) * cssW / peaks.length;
+        ctx.lineTo(x, mid + level * amp);
+      }
+      ctx.closePath();
+      ctx.fillStyle = "#2ee8dc";
+      ctx.fill();
+      const ratio = Math.max(0, Math.min(1, Number(progress) || 0));
+      const px = ratio * cssW;
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, 1);
+      ctx.lineTo(px, cssH - 1);
+      ctx.stroke();
+    }
+
     function renderScenes(lights, lightsOn, preset) {
       const holder = document.getElementById("light-scenes");
       const scenes = lights.scenes || [];
@@ -489,7 +562,6 @@
     document.getElementById("pause").onclick = () => transport("pause", "/api/pause");
     document.getElementById("still").onclick = () => transport("still", "/api/still");
     document.getElementById("stop").onclick = () => transport("stop", "/api/stop");
-    document.getElementById("volume-setup").onclick = () => command("/api/volume-setup", "POST");
     document.getElementById("save-volume").onclick = () => command("/api/volume/save", "POST");
     document.getElementById("confirm-yes").onclick = () => {
       const action = confirmAction;
@@ -524,6 +596,49 @@
       seeking = false;
       command("/api/seek", "POST", { position: Number(seek.value) });
     });
+    const envelope = document.getElementById("envelope");
+    let envelopeSentAt = 0;
+    function envelopePosition(event) {
+      const duration = Number(envelope.dataset.duration) || 0;
+      if (duration <= 0) return null;
+      const rect = envelope.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      return { position: ratio * duration, ratio: ratio, duration: duration };
+    }
+    function dragEnvelope(event, send) {
+      const at = envelopePosition(event);
+      if (!at) return;
+      if (envelope._peaks) drawEnvelope(envelope._peaks, at.ratio);
+      const seekBar = document.getElementById("seek");
+      if (!seekBar.hidden) seekBar.value = at.position;
+      const now = Date.now();
+      if (send || now - envelopeSentAt > 120) {
+        envelopeSentAt = now;
+        command("/api/seek", "POST", { position: at.position });
+      }
+    }
+    envelope.addEventListener("pointerdown", (event) => {
+      if (envelope.hidden || envelope.dataset.seek !== "1") return;
+      envelopeSeeking = true;
+      seeking = true;
+      try { envelope.setPointerCapture(event.pointerId); } catch (exc) {}
+      dragEnvelope(event, true);
+    });
+    envelope.addEventListener("pointermove", (event) => {
+      if (!envelopeSeeking) return;
+      dragEnvelope(event, false);
+    });
+    envelope.addEventListener("pointerup", (event) => {
+      if (!envelopeSeeking) return;
+      envelopeSeeking = false;
+      seeking = false;
+      dragEnvelope(event, true);
+    });
+    envelope.addEventListener("pointercancel", () => {
+      envelopeSeeking = false;
+      seeking = false;
+    });
+    window.addEventListener("resize", () => poll());
     tokenInput.addEventListener("change", () => {
       sessionStorage.setItem("cinema-token", tokenInput.value.trim());
       poll();

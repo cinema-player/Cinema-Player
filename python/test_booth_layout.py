@@ -644,11 +644,16 @@ class BoothChromeTests(unittest.TestCase):
         ]
         self.assertEqual(
             labels,
-            ["Pausenmedium  >", "Standard-Pausenmedium verwenden", "Einstellungswarnung"],
+            [
+                "Pausenmedium  >",
+                "Standard-Pausenmedium verwenden",
+                "Einstellungswarnung",
+                "Lautstärke einstellen",
+            ],
         )
         children = program.winfo_children()
         self.assertIsInstance(children[-2], tk.Frame)
-        self.assertEqual(children[-1].cget("text"), "Einstellungswarnung")
+        self.assertEqual(children[-1].cget("text"), "Lautstärke einstellen")
         playlist = cinema_gui.DropdownMenu(self.root, self.app)
         cinema_gui.VideoPlayerGUI._fill_playlist_menu(self.app, playlist)
         playlist_text = " ".join(
@@ -658,6 +663,7 @@ class BoothChromeTests(unittest.TestCase):
         )
         self.assertNotIn("Pausenmedium", playlist_text)
         self.assertNotIn("Einstellungswarnung", playlist_text)
+        self.assertNotIn("Lautstärke einstellen", playlist_text)
 
     def test_audiosync_save_includes_beamer_hdmi_and_audio_output(self):
         class Manager:
@@ -843,6 +849,13 @@ class BeamerSummaryTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_drop_summary.cget("text"), "Drops 2 / 1")
         self.assertEqual(self.app.beamer_drop_summary.winfo_manager(), "pack")
         self.assertEqual(self.app.beamer_drop_summary.master, self.app.beamer_summary)
+        self.app.program_hwdec = "nvdec-copy"
+        cinema_gui.VideoPlayerGUI._refresh_beamer_decode(self.app)
+        self.assertEqual(self.app.beamer_hwdec.cget("text"), "nvdec-copy")
+        self.assertEqual(self.app.beamer_hwdec_summary.cget("text"), "nvdec-copy")
+        self.assertEqual(
+            self.app.beamer_hwdec_summary.master.master, self.app.beamer_summary.master,
+        )
 
     def test_program_light_block_hides_when_control_is_off(self):
         parent = tk.Frame(self.root)
@@ -1352,6 +1365,11 @@ class VolumeSetupTests(unittest.TestCase):
         self.app.lights_fading = False
         self.app.dmx_output = None
         self.app.playlist_name = tk.StringVar(master=self.root, value="abend.pls")
+        self.app.idle_media_path = ""
+        self.app.autoplay_delay = tk.StringVar(master=self.root, value="0")
+        self.app.use_default_idle_media = tk.BooleanVar(master=self.root, value=False)
+        self.app.projection_zoom = tk.BooleanVar(master=self.root, value=False)
+        self.app._close_menus = lambda: None
         self.calls = []
         self.app._skip_to_playable = lambda inclusive=True: True
         self.app.ensure_main_output = lambda *args, **kwargs: self.calls.append("output")
@@ -1371,22 +1389,27 @@ class VolumeSetupTests(unittest.TestCase):
 
     def _menu_labels(self):
         menu = cinema_gui.DropdownMenu(self.root, self.app)
-        cinema_gui.VideoPlayerGUI._fill_playlist_menu(self.app, menu)
+        cinema_gui.VideoPlayerGUI._fill_program_menu(self.app, menu)
         return [
             child.cget("text")
             for child in menu.winfo_children()
             if isinstance(child, tk.Label)
         ]
 
-    def test_menu_item_exists_only_while_stopped(self):
-        self.app.autosave_on_program_change = tk.BooleanVar(master=self.root, value=False)
-        self.app.load_last_playlist_at_start = tk.BooleanVar(master=self.root, value=False)
+    def test_menu_item_stays_visible_and_disables_while_playing(self):
         labels = self._menu_labels()
         self.assertIn("Lautstärke einstellen", labels)
         self.app.program_state = "PROGRAM"
-        self.assertNotIn("Lautstärke einstellen", self._menu_labels())
+        self.assertIn("Lautstärke einstellen", self._menu_labels())
         self.app.program_state = "PLAYING"
-        self.assertNotIn("Lautstärke einstellen", self._menu_labels())
+        self.assertIn("Lautstärke einstellen", self._menu_labels())
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        cinema_gui.VideoPlayerGUI._fill_program_menu(self.app, menu)
+        row = next(
+            child for child in menu.winfo_children()
+            if isinstance(child, tk.Label) and child.cget("text") == "Lautstärke einstellen"
+        )
+        self.assertEqual(row.cget("fg"), cinema_gui.COLOR_PLAYED)
 
     def test_start_arms_the_program_in_purple_and_keeps_the_playlist(self):
         self.assertTrue(cinema_gui.VideoPlayerGUI.start_volume_setup(self.app))
@@ -1423,6 +1446,13 @@ class VolumeSetupTests(unittest.TestCase):
         self.assertFalse(self.app.volume_setup)
         self.assertEqual(self.app.program_state, "OFF")
         self.assertIn("bright", self.calls)
+        self.app.volume_setup = True
+        self.app.program_state = "PROGRAM"
+        del self.app._apply_stop_clip
+        result = cinema_gui.VideoPlayerGUI.remote_stop(self.app)
+        self.assertFalse(result["ok"])
+        self.assertTrue(self.app.volume_setup)
+        self.assertEqual(self.app.program_state, "PROGRAM")
 
     def test_program_can_be_scrubbed_and_saving_keeps_the_fader(self):
         self.app.volume_setup = True
@@ -1449,8 +1479,16 @@ class VolumeSetupTests(unittest.TestCase):
         self.assertEqual(status["state_label"], "Lautstärke einstellen")
         self.assertTrue(status["actions"]["save_volume"])
         self.assertFalse(status["actions"]["confirm_transport"])
-        self.assertTrue(status["actions"]["stop"])
+        self.assertFalse(status["actions"]["stop"])
         self.assertFalse(status["actions"]["seek"])
+        self.assertNotIn("start_volume_setup", status["actions"])
+        self.assertNotIn("envelope", status["clip"])
+        self.app.playlist[0].audio_envelope = [0.1, 0.8, 0.3]
+        status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
+        self.assertEqual(status["clip"]["envelope"], [0.1, 0.8, 0.3])
+        self.app.volume_setup = False
+        status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
+        self.assertNotIn("envelope", status.get("clip") or {})
 
     def test_save_button_appears_only_in_the_mode(self):
         parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)

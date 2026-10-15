@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 
 """
-Linux / AMD / mpv Video Player
+Linux / AMD / NVIDIA / mpv Video Player
 Two mpv instances:
     - Main: exclusive video output on a separate HDMI output
     - Preview: separate mpv window on the control monitor
 
 Display control uses XRandR on X11, GNOME gdctl or KWin kscreen-doctor on Wayland.
+Hardware decode is VAAPI on AMD/Intel and NVDEC on NVIDIA.
 """
 
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
@@ -156,6 +157,36 @@ def parse_mpv_version(text):
             continue
         return token.lstrip("vV")
     return ""
+
+
+def mpv_version_tuple(version):
+    """(major, minor, patch) from ``0.38.0`` or ``0.38.0-107-gabc``."""
+    token = (version or "").split("-")[0].lstrip("vV")
+    parts = []
+    for piece in token.split("."):
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            break
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts[:3])
+
+
+def mpv_loadfile_command(filename, flags="replace", options=None, mpv_path=""):
+    """IPC ``loadfile`` for this binary.
+
+    mpv 0.37 takes ``url flags options-string``. 0.38 added an insert index
+    before an options map; sending that form to 0.37 returns invalid parameter
+    and the clip never opens.
+    """
+    options = {str(key): str(value) for key, value in (options or {}).items()}
+    if not options:
+        return ["loadfile", filename, flags]
+    if mpv_version_tuple(read_mpv_version(mpv_path)) >= (0, 38, 0):
+        return ["loadfile", filename, flags, 0, options]
+    packed = ",".join(f"{key}={value}" for key, value in options.items())
+    return ["loadfile", filename, flags, packed]
 
 
 _mpv_version_cache = {}
@@ -2288,14 +2319,24 @@ def _connector_family(name):
     return re.sub(r"-\d+$", "", name or "")
 
 
-def iter_drm_edid_paths():
+def iter_drm_connector_dirs(drm_dir=DRM_DIR):
+    """Yield ``(card0-HDMI-A-1, /sys/class/drm/card0-HDMI-A-1)`` directories."""
     try:
-        entries = os.listdir(DRM_DIR)
+        entries = os.listdir(drm_dir)
     except OSError:
         return
     for entry in sorted(entries):
-        path = os.path.join(DRM_DIR, entry, "edid")
-        if entry.startswith("card") and os.path.isfile(path):
+        if not re.match(r"^card\d+-.+", entry):
+            continue
+        path = os.path.join(drm_dir, entry)
+        if os.path.isdir(path):
+            yield entry, path
+
+
+def iter_drm_edid_paths(drm_dir=DRM_DIR):
+    for entry, folder in iter_drm_connector_dirs(drm_dir):
+        path = os.path.join(folder, "edid")
+        if os.path.isfile(path):
             yield entry, path
 
 
@@ -2308,38 +2349,316 @@ def read_edid_file(path):
     return data or b""
 
 
-def find_sysfs_edid(output_name):
-    """Return (edid_bytes, sysfs_path) for a connector, or (None, None)."""
+def _match_drm_connector(output_name, items):
+    """Pick ``(canon, payload…)`` whose connector name matches ``output_name``."""
     wanted = canonicalize_connector(output_name)
-    if not wanted:
-        return None, None
-    candidates = []
-    for entry, path in iter_drm_edid_paths():
-        data = read_edid_file(path)
-        if data:
-            candidates.append((canonicalize_connector(entry), path, data))
-    for canon, path, data in candidates:
-        if canon == wanted:
-            return data, path
+    if not wanted or not items:
+        return None
+    for item in items:
+        if item[0] == wanted:
+            return item
     family = _connector_family(wanted)
     same = [
-        item for item in candidates
+        item for item in items
         if item[0] == family or item[0].startswith(family + "-")
     ]
     wanted_num = _connector_index(wanted)
     if wanted_num is not None:
-        for canon, path, data in same:
-            if _connector_index(canon) == wanted_num:
-                return data, path
+        for item in same:
+            if _connector_index(item[0]) == wanted_num:
+                return item
         nums = [n for n in (_connector_index(item[0]) for item in same) if n is not None]
         if nums and wanted_num not in nums and min(nums) == 1 and wanted_num + 1 in nums:
             target = wanted_num + 1
-            for canon, path, data in same:
-                if _connector_index(canon) == target:
-                    return data, path
+            for item in same:
+                if _connector_index(item[0]) == target:
+                    return item
     if len(same) == 1:
-        return same[0][2], same[0][1]
-    return None, None
+        return same[0]
+    return None
+
+
+def find_drm_connector_entry(output_name, drm_dir=DRM_DIR):
+    """Sysfs folder name such as ``card1-HDMI-A-1`` for a display output."""
+    candidates = []
+    for entry, folder in iter_drm_connector_dirs(drm_dir):
+        candidates.append((canonicalize_connector(entry), entry, folder))
+    matched = _match_drm_connector(output_name, candidates)
+    if not matched:
+        return ""
+    return matched[1]
+
+
+def find_sysfs_edid(output_name, drm_dir=DRM_DIR):
+    """Return (edid_bytes, sysfs_path) for a connector, or (None, None)."""
+    candidates = []
+    for entry, path in iter_drm_edid_paths(drm_dir):
+        data = read_edid_file(path)
+        if data:
+            candidates.append((canonicalize_connector(entry), path, data))
+    matched = _match_drm_connector(output_name, candidates)
+    if not matched:
+        return None, None
+    return matched[2], matched[1]
+
+
+PCI_VENDOR_IDS = {
+    "0x10de": "nvidia",
+    "10de": "nvidia",
+    "0x1002": "amd",
+    "1002": "amd",
+    "0x1022": "amd",
+    "1022": "amd",
+    "0x8086": "intel",
+    "8086": "intel",
+}
+
+PCI_VENDOR_LABELS = {
+    "nvidia": "NVIDIA",
+    "amd": "AMD",
+    "intel": "Intel",
+}
+
+
+@dataclass
+class GpuInfo:
+    """The GPU that owns a DRM card / projector connector."""
+    vendor: str = ""
+    driver: str = ""
+    name: str = ""
+    card: str = ""
+    pci: str = ""
+
+
+def normalize_pci_id(value):
+    text = str(value or "").strip().lower().replace("0x", "")
+    return text
+
+
+def normalize_pci_slot(slot):
+    """``00000000:0C:00.0`` and ``0000:0c:00.0`` onto one key."""
+    text = str(slot or "").strip().lower()
+    parts = text.split(":")
+    if len(parts) != 3:
+        return text
+    return f"{parts[0][-4:].zfill(4)}:{parts[1].zfill(2)}:{parts[2]}"
+
+
+def parse_uevent(text):
+    values = {}
+    for line in (text or "").splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def vendor_from_pci(vendor_id, pci_id=""):
+    token = normalize_pci_id(vendor_id)
+    if token in PCI_VENDOR_IDS:
+        return PCI_VENDOR_IDS[token]
+    pci = str(pci_id or "").replace(":", " ").replace(".", " ")
+    first = normalize_pci_id(pci.split()[0] if pci.split() else "")
+    return PCI_VENDOR_IDS.get(first, "")
+
+
+def format_gpu_label(gpu):
+    """Operator label such as ``NVIDIA GeForce RTX 4070`` or ``AMD (amdgpu)``."""
+    if gpu is None:
+        return ""
+    vendor = PCI_VENDOR_LABELS.get(gpu.vendor, "")
+    name = " ".join(str(gpu.name or "").split())
+    if name:
+        if vendor and vendor.lower() not in name.lower():
+            return f"{vendor} {name}"
+        return name
+    if vendor and gpu.driver:
+        return f"{vendor} ({gpu.driver})"
+    return vendor or gpu.driver or gpu.card or ""
+
+
+def hwdec_for_gpu(gpu, embed=False):
+    """mpv ``--hwdec`` for the card that drives the window.
+
+    Pinning ``nvdec`` or ``vaapi`` aborts the file when that API cannot
+    interoperate with the VO. ``auto-safe`` still prefers NVDEC on NVIDIA
+    and VAAPI on AMD, then falls back to software.
+    """
+    del gpu, embed
+    return "auto-safe"
+
+
+def drm_card_name(entry):
+    match = re.match(r"^(card\d+)", entry or "")
+    return match.group(1) if match else ""
+
+
+def read_sysfs_text(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def parse_nvidia_smi_gpus(text):
+    """``pci.bus_id, name`` rows from ``nvidia-smi --query-gpu=pci.bus_id,name``."""
+    rows = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith("pci.bus_id"):
+            continue
+        if "," not in line:
+            continue
+        slot, name = line.split(",", 1)
+        rows.append((normalize_pci_slot(slot), name.strip()))
+    return rows
+
+
+def nvidia_smi_names(run=subprocess.run):
+    if not shutil.which("nvidia-smi"):
+        return []
+    try:
+        result = run(
+            ["nvidia-smi", "--query-gpu=pci.bus_id,name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return parse_nvidia_smi_gpus(result.stdout)
+
+
+def parse_lspci_mm_name(text):
+    """Quoted vendor / device from ``lspci -mm -s SLOT``."""
+    for line in (text or "").splitlines():
+        fields = re.findall(r'"([^"]*)"', line)
+        if len(fields) >= 3:
+            vendor = fields[1].replace(" Corporation", "").replace(" Inc.", "").strip()
+            device = re.sub(r"^[^[]*\[", "", fields[2]).rstrip("]").strip() or fields[2]
+            if vendor and device:
+                if vendor.lower() in device.lower():
+                    return device
+                return f"{vendor} {device}".strip()
+            return (device or vendor).strip()
+    return ""
+
+
+def lspci_device_name(slot, run=subprocess.run):
+    if not slot or not shutil.which("lspci"):
+        return ""
+    short = slot
+    parts = normalize_pci_slot(slot).split(":")
+    if len(parts) == 3:
+        short = f"{parts[1]}:{parts[2]}"
+    try:
+        result = run(
+            ["lspci", "-mm", "-s", short],
+            capture_output=True, text=True, timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return parse_lspci_mm_name(result.stdout)
+
+
+def gpu_from_sysfs(card, drm_dir=DRM_DIR, nvidia_names=None, pci_name=""):
+    """Read vendor / driver / product for ``card0`` under sysfs."""
+    if not card:
+        return GpuInfo()
+    device_dir = os.path.join(drm_dir, card, "device")
+    uevent = parse_uevent(read_sysfs_text(os.path.join(device_dir, "uevent")))
+    vendor_id = read_sysfs_text(os.path.join(device_dir, "vendor")) or uevent.get("PCI_ID", "")
+    vendor = vendor_from_pci(vendor_id, uevent.get("PCI_ID", ""))
+    driver = (uevent.get("DRIVER") or "").split()[0]
+    if driver in {"nvidia_drm", "nvidia-drm"}:
+        driver = "nvidia"
+        vendor = vendor or "nvidia"
+    elif driver == "amdgpu":
+        vendor = vendor or "amd"
+    pci = normalize_pci_slot(uevent.get("PCI_SLOT_NAME", ""))
+    name = " ".join(str(pci_name or "").split())
+    if not name:
+        name = read_sysfs_text(os.path.join(device_dir, "product_name"))
+    if not name and vendor == "nvidia":
+        names = nvidia_names if nvidia_names is not None else nvidia_smi_names()
+        for slot, label in names:
+            if pci and slot == pci:
+                name = label
+                break
+        if not name and len(names) == 1:
+            name = names[0][1]
+    if not name:
+        name = lspci_device_name(pci) if pci else ""
+    if vendor == "nvidia" and name.lower().startswith("nvidia "):
+        name = name[7:].strip()
+    return GpuInfo(vendor=vendor, driver=driver, name=name, card=card, pci=pci)
+
+
+def gpu_for_output(output_name, drm_dir=DRM_DIR, nvidia_names=None):
+    """GPU that owns the DRM connector used as the projector output."""
+    entry = find_drm_connector_entry(output_name, drm_dir)
+    card = drm_card_name(entry)
+    if not card:
+        return GpuInfo()
+    return gpu_from_sysfs(card, drm_dir=drm_dir, nvidia_names=nvidia_names)
+
+
+def nvidia_dpy_candidates(output_name):
+    """Names nvidia-settings may use for a connector (HDMI-0 vs HDMI-A-1)."""
+    raw = (output_name or "").strip()
+    canon = canonicalize_connector(raw)
+    names = []
+    for item in (raw, canon):
+        if item and item not in names:
+            names.append(item)
+
+    def add_index_aliases(prefix, index):
+        for value in (index, index - 1):
+            if value < 0:
+                continue
+            alt = f"{prefix}-{value}"
+            if alt not in names:
+                names.append(alt)
+
+    match = re.match(r"^HDMI-A-(\d+)$", canon or "", re.I)
+    if match:
+        add_index_aliases("HDMI", int(match.group(1)))
+    match = re.match(r"^DP-(\d+)$", canon or "", re.I)
+    if match:
+        add_index_aliases("DP", int(match.group(1)))
+        add_index_aliases("DisplayPort", int(match.group(1)))
+    return names
+
+
+def nvidia_output_color(fmt):
+    """nvidia-settings ColorSpace / ColorRange for a player color format."""
+    space = {
+        COLOR_FMT_RGB: "RGB",
+        COLOR_FMT_444: "YCbCr444",
+        COLOR_FMT_422: "YCbCr422",
+        COLOR_FMT_420: "YCbCr422",
+    }.get(fmt, "RGB")
+    return {
+        "ColorSpace": space,
+        "ColorRange": "Limited" if fmt in {COLOR_FMT_444, COLOR_FMT_422, COLOR_FMT_420} else "Full",
+    }
+
+
+def parse_nvidia_color_format(space, rng=""):
+    token = (space or "").lower().replace(" ", "").replace(":", "")
+    if "422" in token:
+        return COLOR_FMT_422
+    if "420" in token:
+        return COLOR_FMT_420
+    if "444" in token or "ycbcr" in token or "yuv" in token:
+        return COLOR_FMT_444
+    if token in {"rgb", "rgb888"}:
+        return COLOR_FMT_RGB
+    return ""
 
 
 def parse_xrandr_edid(text, output_name):
@@ -2854,6 +3173,7 @@ class VideoOutputManager:
         self._device_name_cache = None
         self._wayland_backend = None
         self._color_info_cache = None
+        self._gpu_cache = None
         self.color_format = COLOR_FMT_RGB
         self._original_color_format = None
         self._audio_clock_scale = None
@@ -2965,6 +3285,7 @@ class VideoOutputManager:
         self._display_cache_at = 0.0
         self._device_name_cache = None
         self._color_info_cache = None
+        self._gpu_cache = None
 
     def _clear_audio_cache(self):
         self._program_audio_device = None
@@ -3548,14 +3869,27 @@ class VideoOutputManager:
     def get_color_formats(self, output_name=None):
         return list(self.get_color_info(output_name).formats)
 
+    def gpu_for_output(self, output_name=None):
+        """GPU that drives the projector connector."""
+        name = output_name or self.video_output or ""
+        now = time.monotonic()
+        cache = self._gpu_cache
+        if cache and cache[0] == name and now - cache[1] < 5.0:
+            return cache[2]
+        info = gpu_for_output(name) if name else GpuInfo()
+        self._gpu_cache = (name, now, info)
+        return info
+
+    def gpu_label(self, output_name=None):
+        return format_gpu_label(self.gpu_for_output(output_name))
+
     def preferred_color_format(self, width, height, refresh, output_name=None):
-        """YCbCr 4:4:4 when amdgpu will send it; otherwise the link fallback."""
-        return choose_amd_color_format(
-            width,
-            height,
-            refresh,
-            self.get_color_info(output_name),
-        )
+        """YCbCr 4:4:4 when the driver will send it; otherwise the link fallback."""
+        info = self.get_color_info(output_name)
+        gpu = self.gpu_for_output(output_name)
+        if gpu.vendor in {"amd", "nvidia"}:
+            return choose_amd_color_format(width, height, refresh, info)
+        return choose_color_format(width, height, refresh, info, prefer_rate=True)
 
     def _read_drm_info(self):
         if not shutil.which("drm_info"):
@@ -3577,17 +3911,65 @@ class VideoOutputManager:
             return None
 
     def query_color_format(self, output_name=None):
-        """Current AMD connector encoding, from Colorspace / pixel_encoding."""
+        """Current connector encoding from drm_info or nvidia-settings."""
         name = output_name or self.video_output or ""
         payload = self._read_drm_info()
         if payload is not None and name:
             parsed = amd_color_format_from_drm_info(payload, name)
             if parsed:
                 return parsed
+        if name and self.gpu_for_output(name).vendor == "nvidia":
+            parsed = self._nvidia_query_color(name)
+            if parsed:
+                return parsed
         return self.color_format or COLOR_FMT_RGB
 
+    def _nvidia_query_color(self, output_name):
+        if not shutil.which("nvidia-settings"):
+            return ""
+        env = self.desktop_env()
+        for dpy in nvidia_dpy_candidates(output_name):
+            try:
+                result = subprocess.run(
+                    ["nvidia-settings", "-t", "-q", f"[{dpy}]/ColorSpace"],
+                    capture_output=True, text=True, timeout=4, env=env,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if result.returncode != 0:
+                continue
+            parsed = parse_nvidia_color_format(result.stdout.strip())
+            if parsed:
+                return parsed
+        return ""
+
+    def _nvidia_apply_color(self, output_name, spec):
+        """Set NVIDIA ColorSpace / ColorRange. No-op without nvidia-settings."""
+        if not output_name or not spec or not shutil.which("nvidia-settings"):
+            return False
+        env = self.desktop_env()
+        assignments = []
+        for key in ("ColorSpace", "ColorRange"):
+            if spec.get(key):
+                assignments.append((key, spec[key]))
+        if not assignments:
+            return False
+        for dpy in nvidia_dpy_candidates(output_name):
+            command = ["nvidia-settings"]
+            for key, value in assignments:
+                command.extend(["-a", f"[{dpy}]/{key}={value}"])
+            try:
+                result = subprocess.run(
+                    command, capture_output=True, text=True, timeout=5, env=env,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if result.returncode == 0:
+                return True
+        return False
+
     def _xrandr_apply_color(self, output_name, spec):
-        """Set amdgpu connector properties. No-op when xrandr cannot see the output."""
+        """Set DRM connector color properties. No-op when xrandr cannot see the output."""
         if not output_name or not shutil.which("xrandr"):
             return False
         env = self.desktop_env()
@@ -3638,8 +4020,12 @@ class VideoOutputManager:
                 fmt = COLOR_FMT_444
         if self._original_color_format is None:
             self._original_color_format = self.query_color_format()
-        spec = amd_output_color(fmt)
-        applied = self._xrandr_apply_color(self.video_output, spec)
+        gpu = self.gpu_for_output()
+        if gpu.vendor == "nvidia":
+            applied = self._nvidia_apply_color(self.video_output, nvidia_output_color(fmt))
+            applied = self._xrandr_apply_color(self.video_output, amd_output_color(fmt)) or applied
+        else:
+            applied = self._xrandr_apply_color(self.video_output, amd_output_color(fmt))
         self.color_format = fmt
         return applied or fmt != COLOR_FMT_RGB
 
@@ -4193,7 +4579,7 @@ class VideoOutputManager:
             "--fullscreen=yes" if wayland else "--fullscreen=no",
             "--keepaspect=yes",
             *self._clock_sync_arguments(mpv_path, mode),
-            "--hwdec=auto-safe",
+            f"--hwdec={hwdec_for_gpu(self.gpu_for_output())}",
             "--vo=gpu-next",
             f"--gpu-context={gpu_context_for_mpv(mpv_path)}",
             "--force-window=yes",
@@ -4255,6 +4641,7 @@ class MPVController:
         self.reader_thread = None
         self._send_lock = threading.Lock()
         self.loaded_path = None
+        self.active_path = None
         self.pending_start = None
         self.pending_end = None
         self.play_on_load = False
@@ -4324,6 +4711,7 @@ class MPVController:
         self.observe("hwdec-current", 8)
         self.observe("frame-drop-count", 9)
         self.observe("decoder-frame-drop-count", 10)
+        self.observe("path", 11)
 
     def set_vid(self, enabled):
         self.command("set_property", "vid", "auto" if enabled else "no")
@@ -4378,7 +4766,7 @@ class MPVController:
     def observe(self, property_name, observer_id):
         self.command("observe_property", observer_id, property_name)
 
-    def load_file(self, filename, start=None, end=None, play=True, aid=None, sid=None):
+    def load_file(self, filename, start=None, end=None, play=True, aid=None, sid=None, loop=False):
         self.loaded_path = os.path.abspath(filename)
         self.pending_start = None if start is None else float(start)
         self.pending_end = None if end is None else float(end)
@@ -4392,16 +4780,21 @@ class MPVController:
             options["aid"] = str(aid)
         if sid is not None:
             options["sid"] = str(sid)
-        if options:
-            # mpv 0.38+: loadfile <url> <flags> <index> <options-map>
-            self.command("loadfile", filename, "replace", 0, options)
-        else:
-            self.command("loadfile", filename, "replace")
+        self.command(*mpv_loadfile_command(
+            filename, "replace", options, self.mpv_path,
+        ))
+        # After replace, not before: disabling loop first EOFs the HDMI keepalive WAV.
+        self.set_loop_file(bool(loop))
+
+    def mark_file_loaded(self):
+        """Record the path mpv actually opened. ``loaded_path`` is set earlier."""
+        self.active_path = self.loaded_path
 
     def is_audio_keepalive(self):
-        if not self.loaded_path:
+        path = self.active_path
+        if not path:
             return False
-        return os.path.abspath(self.loaded_path) == os.path.abspath(audio_keepalive_path())
+        return os.path.abspath(path) == os.path.abspath(audio_keepalive_path())
 
     def load_audio_keepalive(self):
         """Play silence so the HDMI audio device stays open during black/idle."""
@@ -4433,9 +4826,10 @@ class MPVController:
             self.set_pause(True)
 
     def has_file(self, path):
-        if not self.loaded_path or not path:
+        current = self.active_path or self.loaded_path
+        if not current or not path:
             return False
-        return os.path.abspath(self.loaded_path) == os.path.abspath(path)
+        return os.path.abspath(current) == os.path.abspath(path)
 
     def play_pause(self):
         self.command("cycle", "pause")
@@ -4445,6 +4839,7 @@ class MPVController:
 
     def stop(self):
         self.loaded_path = None
+        self.active_path = None
         self.pending_start = None
         self.pending_end = None
         self.command("stop")

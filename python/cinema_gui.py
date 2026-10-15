@@ -60,6 +60,7 @@ from cinema_player import (
     format_colorspace_label,
     format_loudness,
     gpu_context_for_mpv,
+    hwdec_for_gpu,
     media_file_available,
     reload_entry_metadata,
     parse_bitrate_bps,
@@ -470,18 +471,30 @@ class VolumeBar(tk.Canvas):
 
 
 class EnvelopeCanvas(tk.Canvas):
-    """Stored peak envelope under the preview progress bar, with a playhead."""
+    """Stored peak envelope under a progress bar, with a playhead.
 
-    def __init__(self, master, **kwargs):
+    When ``on_seek`` is set, dragging the envelope moves the same playhead as
+    the bar above it, gated by ``can_seek``.
+    """
+
+    def __init__(self, master, on_seek=None, can_seek=None, **kwargs):
         kwargs.setdefault("height", 36)
         kwargs.setdefault("highlightthickness", 0)
         kwargs.setdefault("bd", 0)
         kwargs.setdefault("bg", COLOR_PANEL)
         super().__init__(master, **kwargs)
+        self.on_seek = on_seek
+        self.can_seek = can_seek
         self.peaks = []
         self.duration = 0.0
         self.position = 0.0
+        self.dragging = False
         self.bind("<Configure>", lambda e: self.redraw())
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<ButtonRelease-1>", self._release)
+        if on_seek is not None:
+            self.config(cursor="hand2")
 
     def set_envelope(self, peaks):
         self.peaks = list(peaks or [])
@@ -493,13 +506,15 @@ class EnvelopeCanvas(tk.Canvas):
         except (TypeError, ValueError):
             self.duration = 0.0
         try:
-            self.position = max(0.0, float(position or 0.0))
+            position = max(0.0, float(position or 0.0))
         except (TypeError, ValueError):
-            self.position = 0.0
+            position = 0.0
         if not math.isfinite(self.duration):
             self.duration = 0.0
-        if not math.isfinite(self.position):
-            self.position = 0.0
+        if not math.isfinite(position):
+            position = 0.0
+        if not self.dragging:
+            self.position = position
         self.redraw()
 
     def _track_box(self):
@@ -540,6 +555,70 @@ class EnvelopeCanvas(tk.Canvas):
             px = x0 + ratio * (x1 - x0)
             self.create_line(px, y0, px, y1, fill=COLOR_WHITE, width=2)
 
+    def _time_for_x(self, x):
+        x0, _, x1, _ = self._track_box()
+        if x1 <= x0 or self.duration <= 0:
+            return 0.0
+        ratio = max(0.0, min(1.0, (x - x0) / (x1 - x0)))
+        return ratio * self.duration
+
+    def _seek_at(self, event, dragging):
+        if self.on_seek is None or self.duration <= 0:
+            return
+        self.position = self._time_for_x(event.x)
+        self.redraw()
+        self.on_seek(self.position, dragging=dragging)
+
+    def _press(self, event):
+        if self.on_seek is None:
+            return
+        if self.can_seek is not None and not self.can_seek():
+            return
+        self.dragging = True
+        self._seek_at(event, dragging=True)
+
+    def _drag(self, event):
+        if self.dragging:
+            self._seek_at(event, dragging=True)
+
+    def _release(self, event):
+        if not self.dragging:
+            return
+        self.dragging = False
+        self._seek_at(event, dragging=False)
+
+
+def program_eof_should_finish(
+    playing,
+    idle,
+    keepalive,
+    waiting_to_roll,
+    test_image,
+    loop_active,
+    still,
+    playback_started,
+    file_matches,
+):
+    """True when mpv EOF belongs to the clip that is actually rolling."""
+    if not playing or idle or keepalive or waiting_to_roll or test_image:
+        return False
+    if loop_active or still:
+        return False
+    return bool(playback_started and file_matches)
+
+
+def program_file_loaded_starts_clip(playing, keepalive, file_matches):
+    """file-loaded of the rolling clip may set volume; it must not arm EOF.
+
+    The keepalive WAV can still report eof-reached after this event.
+    """
+    return bool(playing and file_matches and not keepalive)
+
+
+def program_playback_restart_starts_clip(playing, keepalive, idle, file_matches):
+    """playback-restart arms EOF only for the clip that is actually on screen."""
+    return bool(playing and file_matches and not keepalive and not idle)
+
 
 def program_clock_drives_playhead(waiting_to_roll, playing, idle, file_matches):
     """The playhead follows mpv only for the clip that is actually on the projector.
@@ -554,6 +633,26 @@ def program_clock_drives_playhead(waiting_to_roll, playing, idle, file_matches):
     if playing and not file_matches:
         return False
     return True
+
+
+def remote_clip_envelope(entry, volume_setup):
+    """Peak envelope for the phone remote, only while setting house volume."""
+    if not volume_setup or entry is None:
+        return None
+    if getattr(entry, "missing", False) or getattr(entry, "is_image", False):
+        return None
+    peaks = getattr(entry, "audio_envelope", None)
+    if not peaks:
+        return None
+    out = []
+    for item in peaks:
+        try:
+            value = float(item)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value):
+            out.append(round(max(0.0, min(1.0, value)), 4))
+    return out or None
 
 
 def format_delay_ms(ms):
@@ -1940,6 +2039,7 @@ class VideoPlayerGUI:
         self.idle_media_path = ""
         self.idle_showing = False
         self.hdmi_audio_keepalive = False
+        self._program_playback_started = False
         self.beamer_test_active = False
         self.edid_window = None
         self.media_dirs_window = None
@@ -2646,12 +2746,18 @@ class VideoPlayerGUI:
         self.program_video_bitrate = self._bitrate_readout(progress, "video_bitrate")
         self.program_video_bitrate.grid(row=0, column=1, sticky="e", padx=(8, 8))
 
+        self.program_envelope = EnvelopeCanvas(
+            progress, on_seek=self._on_main_seek, can_seek=self.program_seek_allowed,
+            bg=COLOR_PANEL,
+        )
+        self.program_envelope.grid(row=1, column=0, sticky="ew")
+
         volume = self._build_volume_row(
             progress, self.program_volume, self._on_program_volume, COLOR_PANEL,
         )
-        volume.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 0))
+        volume.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.program_audio_bitrate = self._bitrate_readout(progress, "audio_bitrate")
-        self.program_audio_bitrate.grid(row=1, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
+        self.program_audio_bitrate.grid(row=2, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
         self._pin_bitrate_column(progress, self.program_video_bitrate)
 
         self.audiosync_frame = tk.Frame(progress, bg=COLOR_PANEL)
@@ -2688,7 +2794,7 @@ class VideoPlayerGUI:
         ).pack(side="left", padx=(8, 0))
 
         marks = tk.Frame(progress, bg=COLOR_PANEL)
-        marks.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8)
+        marks.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8)
         for col in range(3):
             marks.columnconfigure(col, weight=1)
         self.main_in = tk.Label(marks, text=t("in_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL)
@@ -3977,7 +4083,7 @@ class VideoPlayerGUI:
         ]
 
     def _fill_program_menu(self, menu):
-        """Idle media sits above the default, and the settings warning is last."""
+        """Idle media sits above the default; volume setup is last."""
         pause = self._menu(menu)
         if self.idle_media_path:
             pause.add_command(
@@ -4005,6 +4111,12 @@ class VideoPlayerGUI:
             variable=self.projection_zoom,
             command=self.refresh_playlist,
         )
+        menu.add_separator()
+        menu.add_command(
+            label=t("volume_setup"),
+            command=self.start_volume_setup,
+            state="disabled" if self.program_state == "PLAYING" else "normal",
+        )
 
     def _fill_playlist_menu(self, menu):
         menu.add_command(label=t("refresh_playlist"), command=self.check_playlist_files)
@@ -4026,9 +4138,6 @@ class VideoPlayerGUI:
             command=self.analyze_playlist_loudness,
             state="normal" if self.program_state == "OFF" else "disabled",
         )
-        if self.program_state == "OFF" and not getattr(self, "calibration_mode", None):
-            menu.add_separator()
-            menu.add_command(label=t("volume_setup"), command=self.start_volume_setup)
 
     def _fill_playlist_column_header(self, parent):
         """Column titles sit in the same column as the list, above the scrollbar."""
@@ -4138,6 +4247,9 @@ class VideoPlayerGUI:
             header, text="--", font=FONT_STATUS, bg=COLOR_BADGE_IDLE, fg=COLOR_WHITE, width=10, pady=3,
         )
         self.beamer_ok.pack(side="right")
+
+        self.beamer_gpu = self._beamer_value_row(panel, "beamer_gpu")
+        self.beamer_hwdec_summary = self._beamer_value_row(panel, "beamer_hwdec")
 
         self.beamer_summary = tk.Frame(panel, bg=COLOR_PANEL)
         self.beamer_resolution = self._beamer_value_row(self.beamer_summary, "beamer_resolution")
@@ -4455,7 +4567,9 @@ class VideoPlayerGUI:
         self.preview_video_bitrate = self._bitrate_readout(controls, "video_bitrate")
         self.preview_video_bitrate.grid(row=0, column=1, sticky="e", padx=(8, 8), pady=(6, 0))
 
-        self.preview_envelope = EnvelopeCanvas(controls, bg=COLOR_PANEL)
+        self.preview_envelope = EnvelopeCanvas(
+            controls, on_seek=self._on_preview_seek, bg=COLOR_PANEL,
+        )
         self.preview_envelope.grid(row=1, column=0, sticky="ew", padx=(8, 0), pady=(0, 0))
 
         self.preview_volume_row = self._build_volume_row(
@@ -5121,6 +5235,7 @@ class VideoPlayerGUI:
             self._set_beamer_summary("--", "--", "--")
             self._refresh_beamer_decode()
             self._refresh_beamer_device_name()
+            self._refresh_beamer_gpu()
             self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
             self.beamer_resolutions.set_choices(
                 t("beamer_resolutions", resolutions=""), [],
@@ -5257,16 +5372,24 @@ class VideoPlayerGUI:
             self._marked_value_fg(rate_text, program_rates, preview_rates),
         )
         self._refresh_beamer_device_name()
+        self._refresh_beamer_gpu()
         self.refresh_beamer_outputs()
 
     def _program_decode_active(self):
+        mpv = getattr(self, "main_mpv", None)
+        if mpv is None:
+            return False
+        keepalive = bool(getattr(self, "hdmi_audio_keepalive", False))
+        is_keepalive = getattr(mpv, "is_audio_keepalive", None)
+        if callable(is_keepalive):
+            keepalive = bool(is_keepalive())
         return (
             self.program_state == "PLAYING"
-            and bool(self.main_mpv.process)
-            and bool(self.main_mpv.loaded_path)
+            and bool(mpv.process)
+            and bool(mpv.loaded_path)
             and not self.idle_showing
             and not self.blackout
-            and not self.hdmi_audio_keepalive
+            and not keepalive
             and not self.beamer_test_active
         )
 
@@ -5283,6 +5406,7 @@ class VideoPlayerGUI:
 
     def _refresh_beamer_decode(self):
         hwdec = getattr(self, "beamer_hwdec", None)
+        hwdec_summary = getattr(self, "beamer_hwdec_summary", None)
         mpv_drops = getattr(self, "beamer_drops_mpv", None)
         decoder_drops = getattr(self, "beamer_drops_decoder", None)
         if hwdec is None or mpv_drops is None or decoder_drops is None:
@@ -5290,12 +5414,16 @@ class VideoPlayerGUI:
         summary = getattr(self, "beamer_drop_summary", None)
         if not self._program_decode_active():
             hwdec.config(text="--", fg=COLOR_TEXT)
+            if hwdec_summary is not None:
+                hwdec_summary.config(text="--", fg=COLOR_TEXT)
             mpv_drops.config(text="--", fg=COLOR_TEXT)
             decoder_drops.config(text="--", fg=COLOR_TEXT)
             self._set_drop_summary(summary, "")
             return
         name = format_hwdec_current(self.program_hwdec) or "--"
         hwdec.config(text=name, fg=COLOR_TEXT)
+        if hwdec_summary is not None:
+            hwdec_summary.config(text=name, fg=COLOR_TEXT)
         vo = parse_mpv_count(self.program_frame_drops)
         decoder = parse_mpv_count(self.program_decoder_drops)
         mpv_drops.config(text=str(vo), fg=COLOR_OFF if vo else COLOR_TEXT)
@@ -5330,7 +5458,19 @@ class VideoPlayerGUI:
             name = self.output_manager.get_output_device_name()
         except Exception:
             name = ""
-        self.beamer_device.config(text=name or "--")
+        widget = getattr(self, "beamer_device", None)
+        if widget is not None:
+            widget.config(text=name or "--")
+
+    def _refresh_beamer_gpu(self):
+        label = ""
+        try:
+            label = self.output_manager.gpu_label()
+        except Exception:
+            label = ""
+        widget = getattr(self, "beamer_gpu", None)
+        if widget is not None:
+            widget.config(text=label or "--")
 
     def _beamer_capability_lists(self):
         output = self.output_manager.video_output or ""
@@ -8117,6 +8257,11 @@ class VideoPlayerGUI:
                 "in_point": entry.in_point,
                 "out_point": entry.out_point,
             }
+            envelope = remote_clip_envelope(
+                entry, volume_setup or self.program_seek_allowed(),
+            )
+            if envelope:
+                clip["envelope"] = envelope
         return {
             "ok": True,
             "version": APP_VERSION,
@@ -8152,18 +8297,11 @@ class VideoPlayerGUI:
                 "resume": bool(self.playlist) and not clip_rolling,
                 "pause": self.program_state == "PLAYING",
                 "still": self.program_state == "PLAYING",
-                "stop": self.program_state == "PLAYING" or (
-                    volume_setup and self.program_state == "PROGRAM"
-                ),
+                "stop": self.program_state == "PLAYING",
                 "confirm_transport": not volume_setup,
                 "volume": True,
                 "save_volume": volume_setup,
-                "seek": volume_setup and self.program_seek_allowed(),
-                "start_volume_setup": (
-                    self.program_state == "OFF"
-                    and bool(self.playlist)
-                    and not self.calibration_mode
-                ),
+                "seek": self.program_seek_allowed(),
                 "set_program": bool(self.playlist) and self.program_state != "PLAYING",
                 "lights": bool(self.lights_control.get()),
             },
@@ -8194,24 +8332,8 @@ class VideoPlayerGUI:
     def remote_stop(self):
         self._remote_action = True
         try:
-            if getattr(self, "volume_setup", False) and self.program_state != "PLAYING":
-                if self.program_state == "OFF":
-                    return self._remote_result(False, "not_playing")
-                self._exit_volume_setup()
-                return self._remote_result(True)
             if not self._apply_stop_clip():
                 return self._remote_result(False, "not_playing")
-            return self._remote_result(True)
-        finally:
-            self._remote_action = False
-
-    def remote_start_volume_setup(self):
-        self._remote_action = True
-        try:
-            if self.program_state != "OFF" or self.calibration_mode:
-                return self._remote_result(False, "not_stopped")
-            if not self.start_volume_setup():
-                return self._remote_result(False, "no_playlist")
             return self._remote_result(True)
         finally:
             self._remote_action = False
@@ -9049,18 +9171,21 @@ class VideoPlayerGUI:
         self.refresh_all()
 
     def start_volume_setup(self):
-        """Arm the current playlist so house volume can be set. Stop only."""
-        if self.program_state != "OFF" or self.calibration_mode or self.volume_setup:
+        """Arm the current playlist so house volume can be set."""
+        if self.program_state == "PLAYING":
             return False
         if not self.playlist:
             if not getattr(self, "_remote_action", False):
                 messagebox.showinfo(t("volume_setup"), t("volume_setup_empty"))
             return False
+        if self.volume_setup:
+            return True
         self.volume_setup = True
-        self.program_state = "PROGRAM"
-        self._skip_to_playable(inclusive=True)
-        self.ensure_main_output()
-        self.blank_output()
+        if self.program_state == "OFF":
+            self.program_state = "PROGRAM"
+            self._skip_to_playable(inclusive=True)
+            self.ensure_main_output()
+            self.blank_output()
         self.refresh_all()
         return True
 
@@ -9241,7 +9366,7 @@ class VideoPlayerGUI:
         if frame is None:
             return
         if visible:
-            frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
+            frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 0))
         else:
             frame.grid_forget()
         readout = getattr(self, "program_delay_readout", None)
@@ -9912,6 +10037,7 @@ class VideoPlayerGUI:
         else:
             self.hdmi_audio_keepalive = True
         self.current_file = None
+        self._program_playback_started = False
         self.main_pause = False
         self.blackout = True
         self.idle_showing = False
@@ -9935,9 +10061,8 @@ class VideoPlayerGUI:
         if self.beamer_test_active:
             return
         self.main_mpv.set_ab_loop(None, None)
-        self.main_mpv.set_loop_file(True)
         self.main_mpv.set_volume(100)
-        self.main_mpv.load_file(path, play=True)
+        self.main_mpv.load_file(path, play=True, loop=True)
         self.blackout = False
         self.idle_showing = True
         self.duration = 0.0
@@ -9959,10 +10084,9 @@ class VideoPlayerGUI:
         self.beamer_test_active = True
         self.idle_showing = False
         try:
-            self.main_mpv.set_loop_file(True)
             self.main_mpv.set_vid(True)
             self.main_mpv.command("set_property", "video-zoom", BEAMER_TEST_ZOOM)
-            self.main_mpv.load_file(BEAMER_TEST_FILE, play=True)
+            self.main_mpv.load_file(BEAMER_TEST_FILE, play=True, loop=True)
             self.blackout = False
             self.root.update_idletasks()
             messagebox.showinfo(t("beamer_test"), t("beamer_test_active"))
@@ -9979,7 +10103,7 @@ class VideoPlayerGUI:
         arguments = [
             f"--wid={wid}",
             "--keepaspect=yes",
-            "--hwdec=auto-safe",
+            f"--hwdec={hwdec_for_gpu(self.output_manager.gpu_for_output(), embed=True)}",
             "--vo=gpu-next",
             f"--gpu-context={gpu_context_for_mpv(self.mpv_path, embed=True)}",
             "--force-window=yes",
@@ -10148,6 +10272,7 @@ class VideoPlayerGUI:
         self.duration = entry.duration
         self.position = entry.in_point if entry.in_point is not None else 0
         self.program_state = "PLAYING"
+        self._program_playback_started = False
         preset = dmx.resolve_start_preset(
             entry.light_start, self.lights_scenes, getattr(self, "lights_sequences", None),
         )
@@ -10179,6 +10304,7 @@ class VideoPlayerGUI:
         self.lights_play_after = None
         if self.program_state != "PLAYING" or entry is not self.current_entry():
             return
+        self._program_playback_started = False
         looping = bool(entry.loop and not entry.is_image)
         volume = clamp_volume(entry.volume)
         aid, sid = self._entry_track_ids(entry)
@@ -10192,6 +10318,7 @@ class VideoPlayerGUI:
             play=True,
             aid=aid,
             sid=sid,
+            loop=looping,
         )
         self._apply_program_loop(entry)
         if session_is_wayland():
@@ -10391,6 +10518,7 @@ class VideoPlayerGUI:
     def on_clip_finished(self):
         if self.program_state != "PLAYING":
             return
+        self._program_playback_started = False
         entry = self.current_entry()
         if entry:
             entry.played = True
@@ -10532,6 +10660,7 @@ class VideoPlayerGUI:
     def _update_main_bar(self):
         if self.program_state == "OFF":
             self.main_progress.set_state(duration=0, position=0, in_point=None, out_point=None)
+            self._set_program_envelope(None, 0, 0)
             blank = format_clock(None)
             self.main_in.config(text=t("in_value", value=blank))
             self.main_out.config(text=t("out_value", value=blank))
@@ -10554,9 +10683,20 @@ class VideoPlayerGUI:
             in_point=in_point,
             out_point=out_point,
         )
+        self._set_program_envelope(None if self.idle_showing else entry, duration, self.position)
         self.main_in.config(text=t("in_value", value=format_clock(in_point)))
         self.main_out.config(text=t("out_value", value=format_clock(out_point)))
         self.main_time.config(text=t("time_value", value=format_clock(self.position)))
+
+    def _set_program_envelope(self, entry, duration, position):
+        canvas = getattr(self, "program_envelope", None)
+        if canvas is None:
+            return
+        peaks = None
+        if entry and not entry.missing and not entry.is_image:
+            peaks = entry.audio_envelope
+        canvas.set_envelope(peaks)
+        canvas.set_playhead(duration, position)
 
     def sync_live_preview(self):
         """Live mode mirrors the program, also before it rolls and while frozen."""
@@ -10639,50 +10779,65 @@ class VideoPlayerGUI:
         for prop, value in self.output_manager.program_clock_properties(has_audio):
             mpv.command("set_property", prop, value)
 
+    def _program_eof_applies(self, mpv):
+        """Ignore keepalive / stale EOF until the current clip has actually started."""
+        entry = self.current_entry()
+        return program_eof_should_finish(
+            self.program_state == "PLAYING",
+            bool(self.idle_showing),
+            bool(self.hdmi_audio_keepalive or mpv.is_audio_keepalive()),
+            bool(getattr(self, "lights_play_after", None)),
+            bool(self.beamer_test_active),
+            bool(self._program_loop_active()),
+            bool(self.still_active()),
+            bool(getattr(self, "_program_playback_started", False)),
+            bool(entry and mpv.has_file(entry.path)),
+        )
+
     def main_mpv_event(self, mpv, message):
         event = message.get("event")
         if event == "file-loaded":
-            if not mpv.is_audio_keepalive():
+            mpv.mark_file_loaded()
+            keepalive = mpv.is_audio_keepalive()
+            if not keepalive:
                 self._apply_program_clock(mpv)
             mpv.apply_pending_range()
             self.program_video_bps = 0
             self.program_audio_bps = 0
-            self._reset_program_decode()
-            if mpv.is_audio_keepalive():
+            if keepalive:
+                self._reset_program_decode()
                 self.hdmi_audio_keepalive = True
                 self.main_pause = False
                 return
             self.hdmi_audio_keepalive = False
+            self.program_frame_drops = 0
+            self.program_decoder_drops = 0
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
                 self.apply_tracks(entry, mpv)
                 self._apply_program_loop(entry, mpv)
-                if self.program_state == "PLAYING":
+                if program_file_loaded_starts_clip(
+                    self.program_state == "PLAYING", keepalive, True,
+                ):
                     mpv.set_volume(clamp_volume(self.program_volume.get()))
             self.main_pause = False
             return
         if event == "playback-restart":
-            if (
-                self.program_state == "PLAYING"
-                and not self.hdmi_audio_keepalive
-                and not self.idle_showing
+            keepalive = bool(self.hdmi_audio_keepalive or mpv.is_audio_keepalive())
+            if keepalive or self.idle_showing:
+                return
+            entry = self.current_entry()
+            if program_playback_restart_starts_clip(
+                self.program_state == "PLAYING",
+                keepalive,
+                bool(self.idle_showing),
+                bool(entry and mpv.has_file(entry.path)),
             ):
+                self._program_playback_started = True
                 mpv.set_volume(clamp_volume(self.program_volume.get()))
             return
         if event == "end-file" and message.get("reason") in (None, "eof", "stop"):
-            if self.beamer_test_active:
-                return
-            if self.hdmi_audio_keepalive or mpv.is_audio_keepalive():
-                return
-            if getattr(self, "lights_play_after", None):
-                return
-            if (
-                message.get("reason") == "eof"
-                and not self.still_active()
-                and not self._program_loop_active()
-                and self.program_state == "PLAYING"
-                and not self.idle_showing
-            ):
+            if message.get("reason") == "eof" and self._program_eof_applies(mpv):
                 self.root.after(0, self.on_clip_finished)
             return
         if event != "property-change":
@@ -10712,6 +10867,7 @@ class VideoPlayerGUI:
             self.position = position
             if (
                 self.program_state == "PLAYING"
+                and getattr(self, "_program_playback_started", False)
                 and entry
                 and entry.out_point is not None
                 and self.position >= entry.out_point - 0.04
@@ -10733,14 +10889,7 @@ class VideoPlayerGUI:
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)
         elif name == "eof-reached" and value:
-            if getattr(self, "lights_play_after", None):
-                return
-            if (
-                not self.beamer_test_active
-                and not self._program_loop_active()
-                and self.program_state == "PLAYING"
-                and not self.idle_showing
-            ):
+            if self._program_eof_applies(mpv):
                 self.root.after(0, self.on_clip_finished)
         elif name == "af-metadata/meter":
             self.program_levels = parse_preview_levels(value)[:2]
@@ -10755,6 +10904,9 @@ class VideoPlayerGUI:
             self.program_frame_drops = parse_mpv_count(value)
         elif name == "decoder-frame-drop-count":
             self.program_decoder_drops = parse_mpv_count(value)
+        elif name == "path":
+            text = str(value).strip() if value else ""
+            mpv.active_path = os.path.abspath(text) if text else None
 
     def preview_mpv_event(self, mpv, message):
         event = message.get("event")

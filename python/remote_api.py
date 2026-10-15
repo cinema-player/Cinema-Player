@@ -234,9 +234,6 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
         if path == "/api/stop":
             self._send_json(self.server.api.invoke("remote_stop"))
             return
-        if path == "/api/volume-setup":
-            self._send_json(self.server.api.invoke("remote_start_volume_setup"))
-            return
         if path == "/api/volume/save":
             self._send_json(self.server.api.invoke("remote_save_volume"))
             return
@@ -299,7 +296,6 @@ class RemoteAPIHandler(BaseHTTPRequestHandler):
                 "pause": "POST /api/pause",
                 "still": "POST /api/still",
                 "stop": "POST /api/stop",
-                "volume_setup": "POST /api/volume-setup",
                 "save_volume": "POST /api/volume/save",
                 "seek": "POST /api/seek",
                 "volume": "PUT /api/volume",
