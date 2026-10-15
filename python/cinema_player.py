@@ -4378,7 +4378,10 @@ class MPVController:
     def observe(self, property_name, observer_id):
         self.command("observe_property", observer_id, property_name)
 
-    def load_file(self, filename, start=None, end=None, play=True, aid=None, sid=None):
+    def load_file(
+        self, filename, start=None, end=None, play=True, aid=None, sid=None,
+        loop=None, clear_end=False,
+    ):
         self.loaded_path = os.path.abspath(filename)
         self.pending_start = None if start is None else float(start)
         self.pending_end = None if end is None else float(end)
@@ -4386,15 +4389,22 @@ class MPVController:
         options = {}
         if self.pending_start is not None:
             options["start"] = str(self.pending_start)
+        # Per-file options apply when this file starts, not to whatever is
+        # still on screen (the HDMI keepalive). "none" clears a previous Out.
         if self.pending_end is not None:
             options["end"] = str(self.pending_end)
+        elif clear_end:
+            options["end"] = "none"
+        if loop is not None:
+            options["loop-file"] = "inf" if loop else "no"
         if aid is not None:
             options["aid"] = str(aid)
         if sid is not None:
             options["sid"] = str(sid)
         if options:
             # mpv 0.38+: loadfile <url> <flags> <index> <options-map>
-            self.command("loadfile", filename, "replace", 0, options)
+            # Index is ignored for replace; -1 is the documented placeholder.
+            self.command("loadfile", filename, "replace", -1, options)
         else:
             self.command("loadfile", filename, "replace")
 
@@ -4420,13 +4430,22 @@ class MPVController:
         self.set_pause(False)
         return True
 
+    def set_end(self, end):
+        """Stop playback at `end` seconds, or clear that stop when end is None.
+
+        The property is a relative time: "none" clears it. "no" is rejected,
+        and a JSON number is rejected by some mpv versions, so this always
+        sends a string.
+        """
+        if end is None:
+            self.command("set_property", "end", "none")
+            return
+        self.command("set_property", "end", f"{float(end):.3f}")
+
     def apply_pending_range(self):
         if self.pending_start is not None:
             self.set_position(self.pending_start)
-        if self.pending_end is not None:
-            self.command("set_property", "end", self.pending_end)
-        else:
-            self.command("set_property", "end", "no")
+        self.set_end(self.pending_end)
         if self.play_on_load:
             self.set_pause(False)
         else:
