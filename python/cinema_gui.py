@@ -4548,6 +4548,7 @@ class VideoPlayerGUI:
         return COLOR_TEXT
 
     def _build_preview(self, parent):
+        self.preview_column = parent
         header = self._group_frame(parent)
         header.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(0, weight=1)
@@ -5191,7 +5192,7 @@ class VideoPlayerGUI:
             pass
 
     def apply_preview_layout(self, entry):
-        """Stills only need Autoplay and display time; Loop and played stay hidden."""
+        """Stills keep Autoplay, display time, and the dimmer. Loop stays hidden."""
         image = bool(entry and entry.is_image)
         if image:
             self.preview_controls.grid_remove()
@@ -5206,6 +5207,7 @@ class VideoPlayerGUI:
                 self.preview_clip_settings.pack(side="left")
             if not self.preview_played_box.winfo_manager():
                 self.preview_played_box.pack(side="left")
+        self._place_light_dimmer(image)
         self._refresh_safety_group()
 
     def repaint_playlist(self):
@@ -6950,12 +6952,40 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
+    def _place_light_dimmer(self, image=None):
+        """Keep the clip dimmer on screen for a video and for a still."""
+        dimmer = getattr(self, "program_light_dimmer", None)
+        if dimmer is None:
+            return
+        if image is None:
+            entry = None
+            if getattr(self, "playlist", None):
+                entry = self.selected_entry()
+            image = bool(entry and getattr(entry, "is_image", False))
+        visible = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
+        target = None
+        if image and getattr(self, "preview_image_settings", None) is not None:
+            target = self.preview_image_settings
+        elif getattr(self, "preview_track_settings", None) is not None:
+            target = self.preview_track_settings
+        try:
+            dimmer.pack_forget()
+            if not visible:
+                return
+            options = {"side": "left", "padx": (12, 0)}
+            if target is not None:
+                options["in_"] = target
+            dimmer.pack(**options)
+        except tk.TclError:
+            pass
+
     def _build_light_dimmer(self, parent):
-        """Clip dimmer beside the subtitle track, in the light-control colours."""
-        dimmer = tk.Frame(parent, bg=parent.cget("bg"))
+        """Clip dimmer, shown with the subtitle track and again for a still."""
+        host = getattr(self, "preview_column", None) or parent
+        dimmer = tk.Frame(host, bg=COLOR_PANEL)
         self.program_light_dimmer = dimmer
         tk.Label(
-            dimmer, text=t("light_play"), bg=parent.cget("bg"), fg=LIGHT_CAPTION, font=FONT_SMALL,
+            dimmer, text=t("light_play"), bg=COLOR_PANEL, fg=LIGHT_CAPTION, font=FONT_SMALL,
         ).pack(side="left", padx=(0, 4))
         self._configure_light_combo_style(parent)
         self.light_start_combo = ttk.Combobox(
@@ -6967,9 +6997,7 @@ class VideoPlayerGUI:
         self._paint_light_combo_popup(self.light_start_combo)
         self._fill_light_combos()
         self._set_play_light_combo("")
-        visible = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
-        if visible:
-            dimmer.pack(side="left", padx=(12, 0))
+        self._place_light_dimmer(False)
 
     def _fill_light_combos(self):
         start = getattr(self, "light_start_combo", None)
@@ -7123,7 +7151,6 @@ class VideoPlayerGUI:
         visible = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
         status = getattr(self, "show_status", None)
         bar = getattr(self, "program_light_bar", None)
-        dimmer = getattr(self, "program_light_dimmer", None)
         try:
             if bar is not None:
                 if visible and not bar.winfo_manager():
@@ -7133,13 +7160,9 @@ class VideoPlayerGUI:
                     bar.pack(**options)
                 elif not visible:
                     bar.pack_forget()
-            if dimmer is not None:
-                if visible and not dimmer.winfo_manager():
-                    dimmer.pack(side="left", padx=(12, 0))
-                elif not visible:
-                    dimmer.pack_forget()
         except tk.TclError:
             pass
+        self._place_light_dimmer()
         self._sync_show_strip()
 
     def _sync_show_strip(self):

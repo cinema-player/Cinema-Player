@@ -913,6 +913,50 @@ class BeamerSummaryTests(unittest.TestCase):
         self.assertEqual(self.app.program_light_bar.winfo_manager(), "pack")
         self.assertEqual(self.app.program_light_dimmer.winfo_manager(), "pack")
 
+    def test_still_keeps_the_light_dimmer(self):
+        column = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
+        column.pack(fill="x")
+        self.app.preview_column = column
+        controls = tk.Frame(column, bg=cinema_gui.COLOR_PANEL)
+        controls.grid(row=0, column=0, sticky="ew")
+        self.app.preview_controls = controls
+        footer = tk.Frame(column, bg=cinema_gui.COLOR_PANEL)
+        footer.grid(row=1, column=0, sticky="ew")
+        clip = tk.Frame(footer, bg=cinema_gui.COLOR_PANEL)
+        clip.pack(side="left")
+        self.app.preview_clip_settings = clip
+        safety = tk.Frame(footer, bg=cinema_gui.COLOR_PANEL)
+        safety.pack(side="left")
+        self.app.preview_safety = safety
+        played = tk.Frame(safety, bg=cinema_gui.COLOR_PANEL)
+        played.pack(side="left")
+        self.app.preview_played_box = played
+        image_settings = tk.Frame(footer, bg=cinema_gui.COLOR_PANEL)
+        self.app.preview_image_settings = image_settings
+        tracks = tk.Frame(controls, bg=cinema_gui.COLOR_PANEL)
+        tracks.pack(side="left")
+        self.app.preview_track_settings = tracks
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=True)
+        self.app.lights_scenes = [cinema_gui.dmx.Scene("dark", "Dunkel", {})]
+        self.app.light_start_var = tk.StringVar(master=self.root, value="")
+        cinema_gui.VideoPlayerGUI._build_light_dimmer(self.app, tracks)
+        still = _entry(path="/media/films/still.png", is_image=True, display_time=10)
+        film = _entry(is_image=False)
+
+        cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, still)
+        self.root.update()
+        self.assertIs(self.app.program_light_dimmer.pack_info()["in"], image_settings)
+        self.assertTrue(self.app.program_light_dimmer.winfo_ismapped())
+        self.assertTrue(image_settings.winfo_ismapped())
+        self.assertFalse(controls.winfo_ismapped())
+
+        cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, film)
+        self.root.update()
+        self.assertIs(self.app.program_light_dimmer.pack_info()["in"], tracks)
+        self.assertTrue(self.app.program_light_dimmer.winfo_ismapped())
+        self.assertTrue(controls.winfo_ismapped())
+        self.assertFalse(image_settings.winfo_ismapped())
+
     def test_program_meters_show_channel_numbers_and_follow_the_fade(self):
         parent = tk.Frame(self.root)
         parent.pack(fill="x")
