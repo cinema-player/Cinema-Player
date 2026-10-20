@@ -130,8 +130,8 @@ class BeamerFoldTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_rate.cget("text"), "24p")
         self.assertEqual(self.app.beamer_colorspace_value.cget("text"), "YCbCr444")
         self.assertEqual(self.app.beamer_ok.cget("text"), "OK")
-        self.assertEqual(self.app.beamer_gpu.cget("text"), "NVIDIA GeForce RTX 4070")
-        self.assertEqual(self.app.beamer_gpu.master.master, self.app.beamer_summary.master)
+        self.assertEqual(self.app.beamer_gpu.master.master, self.app.beamer_details)
+        self.assertFalse(self.app.beamer_gpu.winfo_ismapped())
         self.assertEqual(self.app.beamer_hwdec_summary.cget("text"), "--")
         self.assertEqual(
             self.app.beamer_hwdec_summary.master.master, self.app.beamer_summary.master,
@@ -147,6 +147,12 @@ class BeamerFoldTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_details.winfo_manager(), "pack")
         self.assertTrue(_tip_is_up(_arrow_points(self.app.beamer_fold_arrow)))
         self.assertEqual(self.app.beamer_fold_tip.text, "Nur eingestellte Werte anzeigen")
+        self.assertEqual(self.app.beamer_gpu.cget("text"), "NVIDIA GeForce RTX 4070")
+        self.assertTrue(self.app.beamer_gpu.winfo_ismapped())
+        children = self.app.beamer_details.pack_slaves()
+        gpu_row = self.app.beamer_gpu.master
+        device_row = self.app.beamer_device.master
+        self.assertEqual(children.index(device_row) - children.index(gpu_row), 1)
         self.assertEqual(self.app.beamer_device.cget("text"), "Cinema Projector")
         self.assertEqual(self.app.beamer_aspect.cget("text"), "16:9")
         self.assertIn("24p", self.app.beamer_rates._signature[1])

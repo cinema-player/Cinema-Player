@@ -25,6 +25,7 @@ def _ensure_real_tkinter():
 _ensure_real_tkinter()
 
 import tkinter as tk
+import tkinter.font as tkfont
 
 import cinema_gui
 from cinema_player import PlaylistEntry, reload_entry_metadata
@@ -1381,6 +1382,17 @@ class HeaderClockTests(unittest.TestCase):
         cinema_gui.VideoPlayerGUI._cancel_header_clock(self.app)
         self.root.destroy()
         set_language("en")
+
+    def test_clock_is_not_a_scaled_bitmap(self):
+        cinema_gui.sync_fonts()
+        with patch.object(cinema_gui.VideoPlayerGUI, "_fill_app_menu", lambda self, menu: None):
+            cinema_gui.VideoPlayerGUI._build_logo(self.app)
+        self.root.update()
+        actual = tkfont.Font(font=self.app.header_clock.cget("font")).actual()
+        self.assertNotEqual(actual["family"].casefold(), "fixed")
+        families = {name.casefold() for name in tkfont.families()}
+        if "dejavu sans mono" in families:
+            self.assertEqual(actual["family"].casefold(), "dejavu sans mono")
 
     def test_clock_text_is_24_hour_with_seconds(self):
         self.assertEqual(

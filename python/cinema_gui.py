@@ -97,6 +97,27 @@ FONT_EDID = ("DejaVu Sans Mono", 10)
 FONT_PLACEHOLDER = (FONT_FAMILY, 16)
 FONT_CLOCK = (FONT_FAMILY, 18, "bold")
 FONT_HEADER_CLOCK = ("DejaVu Sans Mono", 20, "bold")
+MONO_FAMILIES = ("DejaVu Sans Mono", "Liberation Mono", "Ubuntu Mono")
+
+
+def installed_font_family(candidates, fallback):
+    """First candidate Tk can actually load, otherwise the bundled face.
+
+    A missing family becomes the bitmap ``fixed`` and is scaled up. At the
+    clock size that looks like large pixels.
+    """
+    root = getattr(tk, "_default_root", None)
+    if root is None:
+        return candidates[0] if candidates else fallback
+    try:
+        import tkinter.font as tkfont
+        installed = {name.casefold() for name in tkfont.families(root)}
+    except (tk.TclError, ImportError):
+        return candidates[0] if candidates else fallback
+    for name in candidates:
+        if name.casefold() in installed:
+            return name
+    return fallback
 
 
 def sync_fonts():
@@ -115,14 +136,15 @@ def sync_fonts():
     FONT_UI = player.FONT_UI
     FONT_UI_BOLD = player.FONT_UI_BOLD
     delta = player.current_text_size()
+    mono = installed_font_family(MONO_FAMILIES, FONT_FAMILY)
     FONT_LOGO = (FONT_FAMILY, max(6, 17 + delta), "bold")
     FONT_LOGO_LIGHT = (FONT_FAMILY, max(6, 17 + delta))
     FONT_BEAMER_PICK = (FONT_FAMILY, max(6, 13 + delta), "bold")
     FONT_TOOLTIP = (FONT_FAMILY, max(6, 11 + delta))
-    FONT_EDID = ("DejaVu Sans Mono", max(6, 10 + delta))
+    FONT_EDID = (mono, max(6, 10 + delta))
     FONT_PLACEHOLDER = (FONT_FAMILY, max(6, 16 + delta))
     FONT_CLOCK = (FONT_FAMILY, max(6, 18 + delta), "bold")
-    FONT_HEADER_CLOCK = ("DejaVu Sans Mono", max(6, 20 + delta), "bold")
+    FONT_HEADER_CLOCK = (mono, max(6, 20 + delta), "bold")
 
 
 LOGO_HEADER_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo-header.png")
@@ -2387,8 +2409,33 @@ class VideoPlayerGUI:
             self.transport_icons[name] = self._load_icon(name)
         return self.transport_icons[name]
 
+    def _use_outline_named_fonts(self):
+        """Point Tk's built-in fonts at faces FreeType can draw smoothly."""
+        mono = FONT_EDID[0]
+        for name in (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+            "TkTooltipFont",
+        ):
+            self._configure_named_font(name, FONT_FAMILY)
+        self._configure_named_font("TkFixedFont", mono)
+
+    @staticmethod
+    def _configure_named_font(name, family):
+        try:
+            import tkinter.font as tkfont
+            tkfont.nametofont(name).configure(family=family)
+        except (tk.TclError, ImportError):
+            pass
+
     def apply_widget_defaults(self):
         """Colour the widget classes that are built without explicit colours."""
+        self._use_outline_named_fonts()
         for pattern, value in (
             ("*Font", f"{FONT_FAMILY} {FONT_UI[1]}"),
             ("*Label.foreground", COLOR_TEXT),
@@ -4304,7 +4351,6 @@ class VideoPlayerGUI:
         )
         self.beamer_ok.pack(side="right")
 
-        self.beamer_gpu = self._beamer_value_row(panel, "beamer_gpu")
         self.beamer_hwdec_summary = self._beamer_value_row(panel, "beamer_hwdec")
 
         self.beamer_summary = tk.Frame(panel, bg=COLOR_PANEL)
@@ -4336,6 +4382,7 @@ class VideoPlayerGUI:
             legend, text=t("beamer_legend_set"), fg=COLOR_MUTED, bg=COLOR_PANEL, font=FONT_SMALL,
         ).pack(side="left")
         self.beamer_legend = legend
+        self.beamer_gpu = self._beamer_value_row(details, "beamer_gpu")
         device = tk.Frame(details, bg=COLOR_PANEL)
         device.pack(fill="x", padx=8, pady=(0, 4))
         tk.Label(

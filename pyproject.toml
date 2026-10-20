@@ -11,7 +11,9 @@ platforms = ["linux-64"]
 
 [tool.pixi.dependencies]
 python = "3.12.*"
-tk = "*"
+# xft rasterises with FreeType. The noxft build draws the clock as a scaled bitmap.
+tk = { version = "8.6.*", build = "xft_*" }
+xorg-libxft = ">=2.3.9"
 ffmpeg = "*"
 
 [tool.pixi.tasks]
