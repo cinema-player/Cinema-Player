@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from unittest.mock import patch
@@ -1259,6 +1260,10 @@ class BeamerSummaryTests(unittest.TestCase):
         self.app.lights_control = tk.BooleanVar(master=self.root, value=True)
         self.app.lights_scenes = [cinema_gui.dmx.Scene("dark", "Dunkel", {})]
         self.app.light_start_var = tk.StringVar(master=self.root, value="")
+        self.app.still_dim = tk.BooleanVar(master=self.root, value=True)
+        self.app.still_dim_seconds = tk.StringVar(master=self.root, value="1")
+        self.app.settings = {}
+        cinema_gui.VideoPlayerGUI._build_still_dim(self.app, image_settings)
         cinema_gui.VideoPlayerGUI._build_light_dimmer(self.app, tracks)
         still = _entry(path="/media/films/still.png", is_image=True, display_time=10)
         film = _entry(is_image=False)
@@ -1266,6 +1271,9 @@ class BeamerSummaryTests(unittest.TestCase):
         cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, still)
         self.root.update()
         self.assertIs(self.app.program_light_dimmer.pack_info()["in"], image_settings)
+        self.assertIn("Dimmen", self.app.still_dim_check.cget("text"))
+        self.assertEqual(self.app.still_dim_label.cget("text"), "Dimmzeit:")
+        self.assertIs(self.app.still_dim_seconds_entry.master, image_settings)
         self.assertTrue(self.app.program_light_dimmer.winfo_ismapped())
         self.assertTrue(image_settings.winfo_ismapped())
         self.assertFalse(controls.winfo_ismapped())
@@ -2101,6 +2109,129 @@ class UnsavedPlaylistQuitTests(unittest.TestCase):
             if walk(widget):
                 return
         self.fail(f"button {text!r} was not shown")
+
+
+class StillFadeTests(unittest.TestCase):
+    def test_full_level_clears_the_still_filter(self):
+        self.assertEqual(cinema_gui.still_level_filter(1), "")
+        self.assertIn("brightness=-1.000", cinema_gui.still_level_filter(0))
+
+    def test_fade_fits_inside_the_display_time(self):
+        self.assertIsNone(cinema_gui.still_fade_plan(0, 2, True))
+        self.assertEqual(cinema_gui.still_fade_plan(10, 2, False), (10000, 0.0))
+        self.assertEqual(cinema_gui.still_fade_plan(10, 2, True), (8000, 2.0))
+        self.assertEqual(cinema_gui.still_fade_plan(1, 2, True), (500, 0.5))
+
+    def test_dim_time_is_one_global_setting(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.still_dim = tk.BooleanVar(master=root, value=True)
+            app.still_dim_seconds = tk.StringVar(master=root, value="2,5")
+            app.settings = {}
+            with patch("cinema_gui.save_settings") as save:
+                cinema_gui.VideoPlayerGUI.apply_still_dim_settings(app)
+            self.assertTrue(app.settings["still_dim"])
+            self.assertEqual(app.settings["still_dim_seconds"], 2.5)
+            self.assertEqual(app.still_dim_seconds.get(), "2.5")
+            save.assert_called_once_with(app.settings)
+        finally:
+            root.destroy()
+
+
+class StillFadePlaybackTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.still_after_id = None
+        self.app.still_started = None
+        self.app.still_waiting = False
+        self.app.still_fade_after = None
+        self.app._still_fade_done = None
+        self.app._still_fade_span = None
+        self.app._still_fading_out = False
+        self.app._still_fade_out_done = False
+        self.app._still_level = 1.0
+        self.app._picture_brightness = 0
+        self.app.still_dim = tk.BooleanVar(master=self.root, value=True)
+        self.app.still_dim_seconds = tk.StringVar(master=self.root, value="2")
+        self.app.preview_live = False
+        self.app.preview_mpv = None
+        self.app.idle_showing = False
+        self.app.program_state = "PLAYING"
+        self.player = _BrightnessPlayer()
+        self.app.main_mpv = self.player
+
+    def tearDown(self):
+        self.root.destroy()
+        set_language("en")
+
+    def test_timer_starts_the_fade_before_the_still_ends(self):
+        scheduled = []
+        self.app.root.after = lambda ms, fn, *args: scheduled.append(ms) or "timer"
+        self.app.root.after_cancel = lambda *args: None
+        entry = _entry(path="/media/films/still.png", is_image=True, display_time=10)
+        cinema_gui.VideoPlayerGUI.start_still_timer(self.app, entry)
+        self.assertEqual(scheduled, [8000])
+        self.assertEqual(self.app._still_fade_span, 2)
+        self.app.still_dim.set(False)
+        scheduled.clear()
+        cinema_gui.VideoPlayerGUI.start_still_timer(self.app, entry)
+        self.assertEqual(scheduled, [10000])
+        self.assertEqual(self.app._still_fade_span, 0)
+
+    def test_stop_fades_the_still_out_before_the_clip_ends(self):
+        entry = _entry(path="/media/films/still.png", is_image=True, display_time=0)
+        self.app.current_entry = lambda: entry
+        self.app.still_dim_seconds.set("0.12")
+        stopped = []
+        self.app._finish_stop_clip = lambda: stopped.append(True) or True
+        self.assertTrue(cinema_gui.VideoPlayerGUI._apply_stop_clip(self.app))
+        self.assertEqual(stopped, [])
+        deadline = time.monotonic() + 1
+        while not stopped and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.02)
+        self.assertEqual(stopped, [True])
+        self.assertEqual(self.player.commands[-1], ("set_property", "vf", cinema_gui.still_level_filter(0)))
+
+    def test_resume_on_a_waiting_still_fades_out_first(self):
+        entry = _entry(path="/media/films/still.png", is_image=True, display_time=0)
+        self.app.current_entry = lambda: entry
+        self.app.still_waiting = True
+        self.app.still_dim_seconds.set("0.12")
+        finished = []
+
+        def finish():
+            if finished:
+                return
+            finished.append(self.app._still_level)
+            self.app.program_state = "PROGRAM"
+
+        self.app.on_clip_finished = finish
+        cinema_gui.VideoPlayerGUI.on_clip_finished(self.app)
+        self.assertEqual(finished, [])
+        deadline = time.monotonic() + 1
+        while not finished and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.02)
+        self.assertEqual(finished, [0.0])
+        self.assertEqual(
+            self.player.commands[-1],
+            ("set_property", "vf", cinema_gui.still_level_filter(0)),
+        )
+
+
+class _BrightnessPlayer:
+    process = object()
+
+    def __init__(self):
+        self.commands = []
+
+    def command(self, *args):
+        self.commands.append(args)
 
 
 if __name__ == "__main__":

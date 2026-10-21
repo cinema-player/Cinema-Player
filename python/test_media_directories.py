@@ -222,6 +222,10 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertEqual(language.STRINGS["en"]["edit_imports_delete_media"], "Delete media files")
         self.assertEqual(language.STRINGS["de"]["playlist_library"], "Playlist wählen")
         self.assertEqual(language.STRINGS["de"]["playlist_with_media"], "Mit Mediendateien")
+        self.assertEqual(language.STRINGS["de"]["still_dim"], "Dimmen")
+        self.assertEqual(language.STRINGS["en"]["still_dim"], "Dim")
+        self.assertEqual(language.STRINGS["de"]["still_dim_time"], "Dimmzeit:")
+        self.assertEqual(language.STRINGS["en"]["still_dim_time"], "Dim time:")
 
 
 class ImportFolderEditTests(unittest.TestCase):

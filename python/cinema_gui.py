@@ -1320,6 +1320,38 @@ def format_seconds(value):
     return str(int(seconds)) if seconds == int(seconds) else f"{seconds:g}"
 
 
+def still_level_filter(level):
+    """mpv video filter for one step of a still fade.
+
+    An empty string is the untouched picture. ffmpeg's eq brightness runs from
+    -1 (black) to 0 (unchanged). The mpv brightness property is not used: on a
+    still it can freeze the first black frame.
+    """
+    level = max(0.0, min(1.0, float(level)))
+    if level >= 0.999:
+        return ""
+    return f"lavfi=[eq=brightness={-1.0 + level:.3f}]"
+
+
+def still_fade_plan(display_seconds, dim_seconds, enabled):
+    """When a timed still should start fading out, and how long that fade lasts.
+
+    ``None`` means the still stays until the operator continues. A fade of 0
+    means the picture ends at full level. The fade fits inside the display time,
+    and a short display keeps half of that time for the fade-in.
+    """
+    display = max(0.0, float(display_seconds or 0))
+    dim = max(0.0, float(dim_seconds or 0))
+    if display <= 0:
+        return None
+    if not enabled or dim <= 0:
+        return (int(round(display * 1000)), 0.0)
+    # Leave as much time for the fade-in, so a short display still reaches the picture.
+    fade = min(dim, display / 2.0)
+    delay = int(round(max(0.0, display - fade) * 1000))
+    return (delay, fade)
+
+
 def settings_path():
     return os.path.join(os.path.expanduser("~"), ".config", "cinema-player", "settings.json")
 
@@ -2147,6 +2179,13 @@ class VideoPlayerGUI:
         self.still_after_id = None
         self.still_started = None
         self.still_waiting = False
+        self.still_fade_after = None
+        self._still_fade_done = None
+        self._still_fade_span = None
+        self._still_fading_out = False
+        self._still_fade_out_done = False
+        self._still_level = 1.0
+        self._picture_brightness = 0
         self.drag_index = None
         self.drag_y = 0
         self.drag_moved = False
@@ -2182,6 +2221,10 @@ class VideoPlayerGUI:
         self.projection_zoom = tk.BooleanVar(value=False)
         self.autosave_on_program_change = tk.BooleanVar(
             value=bool(self.settings.get("autosave_on_program_change", False))
+        )
+        self.still_dim = tk.BooleanVar(value=bool(self.settings.get("still_dim", False)))
+        self.still_dim_seconds = tk.StringVar(
+            value=format_seconds(self.settings.get("still_dim_seconds", 1))
         )
         self.load_last_playlist_at_start = tk.BooleanVar(
             value=bool(self.settings.get("load_last_playlist_at_start", False))
@@ -4651,6 +4694,7 @@ class VideoPlayerGUI:
             image_settings, text=t("display_time_hint"), bg=COLOR_PANEL, font=FONT_UI,
             fg=COLOR_MUTED,
         ).pack(side="left", padx=(4, 0))
+        self._build_still_dim(image_settings)
 
         video_group = self._group_frame(parent)
         video_group.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
@@ -5216,8 +5260,47 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
+    def _build_still_dim(self, parent):
+        """Global fade switch and duration for every still."""
+        self.still_dim_check = CheckLabel(
+            parent, t("still_dim"), self.still_dim, self.apply_still_dim_settings, COLOR_PANEL,
+        )
+        self.still_dim_check.pack(side="left", padx=(16, 0))
+        self.still_dim_label = tk.Label(
+            parent, text=t("still_dim_time"), bg=COLOR_PANEL, font=FONT_UI,
+        )
+        self.still_dim_label.pack(side="left", padx=(8, 4))
+        self.still_dim_seconds_entry = tk.Entry(
+            parent, textvariable=self.still_dim_seconds, width=5, font=FONT_UI,
+        )
+        self.still_dim_seconds_entry.pack(side="left")
+        self.still_dim_seconds_entry.bind("<Return>", lambda _event: self.apply_still_dim_settings())
+        self.still_dim_seconds_entry.bind("<FocusOut>", lambda _event: self.apply_still_dim_settings())
+        tk.Label(parent, text="s", bg=COLOR_PANEL, font=FONT_UI, fg=COLOR_MUTED).pack(
+            side="left", padx=(4, 0)
+        )
+
+    def apply_still_dim_settings(self):
+        seconds = self._still_dim_seconds()
+        self.still_dim_seconds.set(format_seconds(seconds))
+        self.settings["still_dim"] = bool(self.still_dim.get())
+        self.settings["still_dim_seconds"] = seconds
+        save_settings(self.settings)
+
+    def _still_dim_seconds(self):
+        raw = self.still_dim_seconds.get() if getattr(self, "still_dim_seconds", None) else 1
+        try:
+            value = float(str(raw).replace(",", "."))
+        except (TypeError, ValueError):
+            value = 1.0
+        return max(0.0, value)
+
+    def _still_dim_active(self):
+        enabled = bool(self.still_dim.get()) if getattr(self, "still_dim", None) else False
+        return enabled and self._still_dim_seconds() > 0
+
     def apply_preview_layout(self, entry):
-        """Stills keep Autoplay, display time, and the dimmer. Loop stays hidden."""
+        """Stills keep Autoplay, display time, fade, and the dimmer. Loop stays hidden."""
         image = bool(entry and entry.is_image)
         if image:
             self.preview_controls.grid_remove()
@@ -10797,6 +10880,8 @@ class VideoPlayerGUI:
 
     def blank_output(self, show_idle=True):
         """Black out the output; a non-black idle background follows after the delay."""
+        self._cancel_picture_fade()
+        self._still_fading_out = False
         self.cancel_still_timer()
         if self.idle_after_id:
             self.root.after_cancel(self.idle_after_id)
@@ -10814,6 +10899,7 @@ class VideoPlayerGUI:
             self.main_mpv.set_vid(True)
         else:
             self.hdmi_audio_keepalive = True
+        self._release_still_picture()
         self.current_file = None
         self._program_playback_started = False
         self.main_pause = False
@@ -11095,6 +11181,14 @@ class VideoPlayerGUI:
         self._program_load_id += 1
         self._program_loaded_id = 0
         self._program_playhead = None
+        self._cancel_picture_fade()
+        self._still_fading_out = False
+        self._still_fade_out_done = False
+        # Drop a brightness value left behind by an older fade, then darken
+        # only through the video filter so the still is rebuilt each step.
+        self._release_still_picture()
+        if entry.is_image and self._still_dim_active():
+            self._apply_still_level(0.0)
         self.main_mpv.load_file(
             entry.path,
             start=entry.in_point,
@@ -11113,6 +11207,8 @@ class VideoPlayerGUI:
         self.start_still_timer(entry)
         if self.preview_live:
             self.show_preview_clip(entry, follow_live=True)
+        if entry.is_image and self._still_dim_active():
+            self._restart_still_fade_in()
         self.refresh_all()
         self._refresh_light_buttons()
 
@@ -11162,6 +11258,7 @@ class VideoPlayerGUI:
     def start_still_timer(self, entry):
         """A still runs on a timer; without a display time it waits for Resume."""
         self.cancel_still_timer()
+        self._still_fade_span = None
         if not entry.is_image:
             return
         seconds = max(0.0, float(entry.display_time or 0))
@@ -11171,7 +11268,122 @@ class VideoPlayerGUI:
             self.still_waiting = True
             return
         self.still_started = time.monotonic()
-        self.still_after_id = self.root.after(int(seconds * 1000), self.on_clip_finished)
+        delay, fade = still_fade_plan(seconds, self._still_dim_seconds(), self._still_dim_active())
+        self._still_fade_span = fade
+        self.still_after_id = self.root.after(delay, self.on_clip_finished)
+
+    def _still_dim_players(self):
+        players = []
+        main = getattr(self, "main_mpv", None)
+        if main is not None:
+            players.append(main)
+        if getattr(self, "preview_live", False):
+            preview = getattr(self, "preview_mpv", None)
+            if preview is not None:
+                players.append(preview)
+        return players
+
+    def _still_picture_players(self, live_only=False):
+        if live_only:
+            return self._still_dim_players()
+        return [getattr(self, "main_mpv", None), getattr(self, "preview_mpv", None)]
+
+    def _apply_still_level(self, level, players=None):
+        level = max(0.0, min(1.0, float(level)))
+        self._still_level = level
+        graph = still_level_filter(level)
+        if players is None:
+            players = self._still_dim_players()
+        for player in players:
+            if player is None or not getattr(player, "process", None):
+                continue
+            # Keep the equalizer property neutral. A stuck -100 hides the still.
+            player.command("set_property", "brightness", 0)
+            player.command("set_property", "vf", graph)
+
+    def _release_still_picture(self):
+        self._still_level = 1.0
+        for player in self._still_picture_players():
+            if player is None or not getattr(player, "process", None):
+                continue
+            player.command("set_property", "brightness", 0)
+            player.command("set_property", "vf", "")
+
+    def _restart_still_fade_in(self):
+        if self._still_fading_out or not self._still_dim_active():
+            return
+        entry = self.current_entry()
+        if self.program_state != "PLAYING" or not entry or not entry.is_image:
+            return
+        seconds = self._still_fade_span or self._still_dim_seconds()
+        self._animate_still_level(0.0, 1.0, seconds)
+
+    def _cancel_picture_fade(self):
+        self._still_fade_done = None
+        after_id = getattr(self, "still_fade_after", None)
+        self.still_fade_after = None
+        root = getattr(self, "root", None)
+        if after_id and root is not None:
+            try:
+                root.after_cancel(after_id)
+            except Exception:
+                pass
+
+    def _animate_still_level(self, start, end, duration, done=None):
+        """Fade the still between black (0) and the full picture (1)."""
+        self._cancel_picture_fade()
+        self._still_fade_done = done
+        duration = max(0.0, float(duration or 0))
+        if duration <= 0:
+            self._apply_still_level(end)
+            callback = self._still_fade_done
+            self._still_fade_done = None
+            if callback:
+                callback()
+            return
+        begun = time.monotonic()
+
+        def tick():
+            self.still_fade_after = None
+            elapsed = time.monotonic() - begun
+            fraction = min(1.0, elapsed / duration)
+            self._apply_still_level(start + (end - start) * fraction)
+            if fraction >= 1.0:
+                self._still_fading_out = False
+                callback = self._still_fade_done
+                self._still_fade_done = None
+                if callback:
+                    self._still_fade_out_done = True
+                    callback()
+                return
+            self.still_fade_after = self.root.after(50, tick)
+
+        tick()
+
+    def _current_still_on_air(self):
+        entry = self.current_entry()
+        return bool(
+            self.program_state == "PLAYING"
+            and not getattr(self, "idle_showing", False)
+            and entry
+            and entry.is_image
+        )
+
+    def _fade_still_out(self, then, duration=None):
+        """Fade the still to black, then run ``then``. A second call replaces ``then``."""
+        if self._still_fading_out:
+            self._still_fade_done = then
+            return
+        if not self._current_still_on_air() or not self._still_dim_active():
+            then()
+            return
+        self._still_fading_out = True
+        self._still_fade_span = None
+        if self.still_after_id:
+            self.root.after_cancel(self.still_after_id)
+            self.still_after_id = None
+        seconds = self._still_dim_seconds() if duration is None else max(0.0, float(duration))
+        self._animate_still_level(getattr(self, "_still_level", 1.0), 0.0, seconds, then)
 
     def still_active(self):
         return self.still_waiting or self.still_started is not None
@@ -11248,6 +11460,18 @@ class VideoPlayerGUI:
         """End the clip on air and return to PROGRAM. Does not stop the program."""
         if self.program_state != "PLAYING":
             return False
+        if self._still_fading_out:
+            self._still_fade_done = self._finish_stop_clip
+            return True
+        if self._current_still_on_air() and self._still_dim_active():
+            self._fade_still_out(self._finish_stop_clip)
+            return True
+        return self._finish_stop_clip()
+
+    def _finish_stop_clip(self):
+        if self.program_state != "PLAYING":
+            return False
+        self._still_fade_out_done = False
         if self.autoplay_after_id:
             self.root.after_cancel(self.autoplay_after_id)
             self.autoplay_after_id = None
@@ -11301,6 +11525,18 @@ class VideoPlayerGUI:
     def on_clip_finished(self):
         if self.program_state != "PLAYING":
             return
+        if self._still_fading_out:
+            return
+        if not self._still_fade_out_done:
+            span = getattr(self, "_still_fade_span", None) or 0
+            self._still_fade_span = None
+            if span > 0:
+                self._fade_still_out(self.on_clip_finished, duration=span)
+                return
+            if self._current_still_on_air() and self._still_dim_active():
+                self._fade_still_out(self.on_clip_finished)
+                return
+        self._still_fade_out_done = False
         self._program_playback_started = False
         entry = self.current_entry()
         if entry:
@@ -11605,6 +11841,10 @@ class VideoPlayerGUI:
                 self._program_loaded_id = self._program_load_id
                 self._program_playhead = None
                 self.apply_tracks(entry, mpv)
+                if entry.is_image and self._still_dim_active() and not self._still_fading_out:
+                    # The still exists now. Restart the fade so it is not baked
+                    # into a single black frame from before the file opened.
+                    self.root.after(0, self._restart_still_fade_in)
                 self._apply_program_loop(entry, mpv)
                 if program_file_loaded_starts_clip(
                     self.program_state == "PLAYING", keepalive, True,
