@@ -65,9 +65,14 @@ from cinema_player import (
     reload_entry_metadata,
     parse_bitrate_bps,
     parse_mpv_count,
+    delete_import_directory,
+    delete_import_media,
+    library_playlists,
     list_removable_volumes,
     merge_import_directories,
     normalize_media_directories,
+    path_is_inside,
+    place_playlist,
     path_is_on_removable_volume,
     playlist_folder_name,
     playlist_location_label,
@@ -1828,6 +1833,7 @@ class ImportFolderList(tk.Frame):
             self._rows.append({
                 "path": item.get("path") or "",
                 "removable": bool(item.get("removable")),
+                "pinned": bool(item.get("pinned")),
                 "frame": row,
                 "slot": slot,
                 "label": label,
@@ -1886,8 +1892,19 @@ class ImportFolderList(tk.Frame):
     def _paint(self):
         for index, row in enumerate(self._rows):
             selected = index == self._selected
-            background = COLOR_PROGRAM if selected else COLOR_FIELD
-            foreground = COLOR_WHITE if selected else COLOR_TEXT
+            pinned = bool(row.get("pinned"))
+            if selected and pinned:
+                background = ACCENT
+                foreground = COLOR_WHITE
+            elif selected:
+                background = COLOR_PROGRAM
+                foreground = COLOR_WHITE
+            elif pinned:
+                background = COLOR_FIELD
+                foreground = ACCENT
+            else:
+                background = COLOR_FIELD
+                foreground = COLOR_TEXT
             row["frame"].configure(bg=background)
             row["slot"].configure(bg=background)
             row["label"].configure(bg=background, fg=foreground)
@@ -2036,6 +2053,10 @@ def _create_folder_in_file_dialog(root, window_path):
 def header_clock_text(moment):
     """Local wall time for the header. Always 24-hour, with seconds."""
     return moment.strftime("%H:%M:%S")
+
+
+class _CopyCancelled(Exception):
+    """The operator stopped a file copy from the progress dialog."""
 
 
 class VideoPlayerGUI:
@@ -2282,9 +2303,9 @@ class VideoPlayerGUI:
         self._remember_saved_playlist()
 
     def _warn_if_no_beamer_output(self):
-        if self.output_manager.has_dedicated_beamer():
-            return
-        messagebox.showwarning(t("beamer_no_output_title"), t("beamer_no_output"))
+        if not self.output_manager.has_dedicated_beamer():
+            messagebox.showwarning(t("beamer_no_output_title"), t("beamer_no_output"))
+        self._offer_playlist_library()
 
     def create_gui(self):
         self.root.columnconfigure(0, weight=3)
@@ -3287,9 +3308,14 @@ class VideoPlayerGUI:
         header.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
         header.columnconfigure(1, weight=1)
 
+        title = tk.Frame(header, bg=COLOR_PANEL)
+        title.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.playlist_refresh = self._icon_button(
+            title, "playlist_refresh", self.check_playlist_files, t("refresh_playlist"),
+        )
         tk.Label(
-            header, text=t("playlist"), font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+            title, text=t("playlist"), font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT,
+        ).pack(side="left")
 
         self.playlist_name = tk.Entry(header, font=FONT_UI)
         self.playlist_name.insert(0, t("playlist_untitled"))
@@ -3299,7 +3325,6 @@ class VideoPlayerGUI:
         buttons.grid(row=0, column=2, sticky="e", padx=(8, 0))
         self.playlist_tool_buttons = buttons
         self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
-        self._icon_button(buttons, "playlist_new", self.new_playlist, t("new"), t("new_playlist"))
         self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
         self._icon_button(buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"))
 
@@ -5909,6 +5934,12 @@ class VideoPlayerGUI:
             label=t("relink_entry"), command=lambda: self.relink_entry(index),
             state="disabled" if busy else "normal",
         )
+        in_folder = self._entry_is_in_playlist_folder(self.playlist[index])
+        menu.add_command(
+            label=t("copy_entry_to_import"),
+            command=lambda: self.copy_entry_to_playlist_folder(index),
+            state="disabled" if busy or missing or in_folder else "normal",
+        )
         menu.add_separator()
         menu.add_command(
             label=t("delete_entry"), command=lambda: self.delete_entry(index),
@@ -6146,6 +6177,95 @@ class VideoPlayerGUI:
             self.show_preview_clip(probed)
         self.refresh_all()
 
+    def _playlist_import_folder(self):
+        """Same-named folder of the current playlist under the import path."""
+        if not self._ensure_import_path():
+            return ""
+        stem = playlist_folder_name(self._current_playlist_name())
+        if not stem and getattr(self, "playlist_path", ""):
+            stem = playlist_folder_name(os.path.basename(self.playlist_path))
+        if not stem:
+            stem = self._ask_playlist_name()
+            if not stem:
+                return ""
+            self._set_playlist_name(f"{stem}.pls")
+        folder = os.path.join(self.import_path, stem)
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror(
+                t("copy_entry_to_import"),
+                t("copy_files_failed", path=folder, error=exc),
+            )
+            return ""
+        return folder
+
+    def _entry_is_in_playlist_folder(self, entry):
+        if not self._import_path_ready() or entry is None:
+            return False
+        stem = playlist_folder_name(self._current_playlist_name())
+        if not stem and getattr(self, "playlist_path", ""):
+            stem = playlist_folder_name(os.path.basename(self.playlist_path))
+        if not stem:
+            return False
+        try:
+            folder = os.path.abspath(os.path.join(self.import_path, stem))
+            return os.path.dirname(os.path.abspath(entry.path)) == folder
+        except (OSError, ValueError):
+            return False
+
+    def copy_entry_to_playlist_folder(self, index):
+        """Copy this clip into the playlist's folder in the import path."""
+        if not 0 <= index < len(self.playlist):
+            return
+        if self.program_state == "PLAYING" and index == self.program_index:
+            return
+        entry = self.playlist[index]
+        source = entry.path
+        if not source or not os.path.isfile(source):
+            messagebox.showerror(
+                t("copy_entry_to_import"),
+                t("copy_files_failed", path=source or "", error=t("media_directories_missing")),
+            )
+            return
+        folder = self._playlist_import_folder()
+        if not folder:
+            return
+        try:
+            if os.path.dirname(os.path.abspath(source)) == os.path.abspath(folder):
+                return
+        except (OSError, ValueError):
+            return
+        dest, origin = self._prepare_imported_copy(source, folder)
+        if origin:
+            try:
+                size = os.path.getsize(origin)
+            except OSError:
+                size = 0
+            window, widgets = self._open_copy_progress(1)
+            name = os.path.basename(origin)
+
+            def cancelled():
+                return bool(widgets["cancel"].get("cancel"))
+
+            def on_progress(copied):
+                self._update_copy_progress(window, widgets, 1, name, copied, size)
+
+            try:
+                outcome = self._copy_file_with_progress(
+                    origin, dest, on_progress, parent=window, should_stop=cancelled,
+                )
+            finally:
+                self._close_copy_progress(window)
+            if not outcome:
+                return
+        entry.path = dest
+        entry.filename = os.path.basename(dest)
+        entry.missing = False
+        if self.preview_index == index and not self.preview_live:
+            self.show_preview_clip(entry)
+        self.refresh_all()
+
     def delete_entry(self, index):
         if not 0 <= index < len(self.playlist):
             return
@@ -6355,6 +6475,12 @@ class VideoPlayerGUI:
         path = getattr(self, "import_path", "") or ""
         return bool(path) and os.path.isdir(path)
 
+    def _ensure_import_path(self):
+        """Ask for the import path when none is stored yet."""
+        if self._import_path_ready():
+            return True
+        return bool(self._choose_import_path(self.root))
+
     def _save_import_path(self):
         self.settings["import_path"] = self.import_path
         self.settings["copy_imported_media_dir"] = self.import_path
@@ -6380,7 +6506,68 @@ class VideoPlayerGUI:
             if listbox is not None:
                 self._refresh_media_directory_list(listbox, select_import=True)
                 self._load_media_directory_name_field(listbox)
+        if self._playlist_library_alive():
+            self._refresh_playlist_library(self.playlist_library_window)
         return True
+
+    def _delete_import_media(self, window):
+        row = self._selected_library_playlist(window)
+        folder = (row or {}).get("folder") or ""
+        if row is None or not folder or row.get("media", 0) <= 0:
+            return
+        if not messagebox.askyesno(
+            t("edit_imports_delete_media_title"),
+            t("edit_imports_delete_media_message", name=row["name"]),
+            parent=window,
+        ):
+            return
+        delete_import_media(folder)
+        self._note_import_folder_changed(folder)
+        self._refresh_playlist_library(window, select_path=row["path"])
+
+    def _delete_import_folder(self, window):
+        row = self._selected_library_playlist(window)
+        folder = (row or {}).get("folder") or ""
+        if row is None or not folder:
+            return
+        if not messagebox.askyesno(
+            t("edit_imports_delete_folder_title"),
+            t("edit_imports_delete_folder_message", name=row["name"]),
+            parent=window,
+        ):
+            return
+        if not delete_import_directory(folder, getattr(self, "import_path", "")):
+            messagebox.showerror(
+                t("playlist_library"),
+                t("edit_imports_delete_failed", error=folder),
+                parent=window,
+            )
+            return
+        self._forget_playlist_inside(folder)
+        self._note_import_folder_changed(folder)
+        self._refresh_playlist_library(window)
+
+    def _forget_playlist_inside(self, directory):
+        path = getattr(self, "playlist_path", "") or ""
+        if path and path_is_inside(path, directory):
+            self.playlist_path = ""
+        settings = getattr(self, "settings", None)
+        if not isinstance(settings, dict):
+            return
+        last = settings.get("last_playlist_path") or ""
+        if last and path_is_inside(last, directory):
+            settings["last_playlist_path"] = ""
+            try:
+                save_settings(settings)
+            except OSError:
+                pass
+
+    def _note_import_folder_changed(self, directory):
+        playlist = getattr(self, "playlist", None) or []
+        if not any(path_is_inside(getattr(entry, "path", ""), directory) for entry in playlist):
+            return
+        self._scan_playlist_media()
+        self.refresh_all()
 
     def _current_playlist_name(self):
         entry = getattr(self, "playlist_name", None)
@@ -6438,11 +6625,14 @@ class VideoPlayerGUI:
             dest = self._unique_copy_path(dest_dir, os.path.basename(source))
         return dest, source
 
-    def _copy_file_with_progress(self, source, dest, on_progress, parent=None):
+    def _copy_file_with_progress(self, source, dest, on_progress, parent=None, should_stop=None):
+        """Copy one file. ``None`` means the operator cancelled; ``False`` is an error."""
         copied = 0
         try:
             with open(source, "rb") as src, open(dest, "wb") as dst:
                 while True:
+                    if should_stop and should_stop():
+                        raise _CopyCancelled
                     chunk = src.read(8 * 1024 * 1024)
                     if not chunk:
                         break
@@ -6450,7 +6640,15 @@ class VideoPlayerGUI:
                     copied += len(chunk)
                     if on_progress:
                         on_progress(copied)
+                    if should_stop and should_stop():
+                        raise _CopyCancelled
             shutil.copystat(source, dest)
+        except _CopyCancelled:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            return None
         except OSError as exc:
             try:
                 os.remove(dest)
@@ -6475,8 +6673,18 @@ class VideoPlayerGUI:
             except tk.TclError:
                 pass
         window.transient(self.root)
-        window.protocol("WM_DELETE_WINDOW", lambda: None)
-        pane = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=10)
+        state = {"cancel": False}
+
+        def request_cancel():
+            state["cancel"] = True
+
+        window.protocol("WM_DELETE_WINDOW", request_cancel)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("copy_files_cancel"), command=request_cancel, font=FONT_UI,
+        ).pack(side="right")
+        pane = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
         body = tk.Frame(pane, bg=COLOR_PANEL)
         body.pack(fill="both", expand=True)
         status = tk.Label(
@@ -6500,7 +6708,10 @@ class VideoPlayerGUI:
         )
         size.pack(fill="x", pady=(6, 0))
 
-        widgets = {"status": status, "name": name, "bar": bar, "size": size, "total": total}
+        widgets = {
+            "status": status, "name": name, "bar": bar, "size": size,
+            "total": total, "cancel": state,
+        }
         self._bind_popup_wheel(window, pane)
         self._open_popup(window, 480, 200)
         window.grab_set()
@@ -6567,8 +6778,16 @@ class VideoPlayerGUI:
             window, widgets = self._open_copy_progress(len(jobs))
         results = []
         done_bytes = 0
+
+        def cancelled():
+            state = widgets.get("cancel") if widgets else None
+            return bool(state and state.get("cancel"))
+
         try:
             for index, (dest, source, size) in enumerate(jobs, 1):
+                if cancelled():
+                    results.extend([None] * (len(jobs) - index + 1))
+                    break
                 name = os.path.basename(source or dest)
                 if widgets is not None:
                     self._update_copy_progress(window, widgets, index, name, done_bytes, total_bytes)
@@ -6579,7 +6798,14 @@ class VideoPlayerGUI:
                                 window, widgets, index, name, base + copied, total_bytes,
                             )
 
-                    if not self._copy_file_with_progress(source, dest, on_progress, parent=window):
+                    outcome = self._copy_file_with_progress(
+                        source, dest, on_progress, parent=window, should_stop=cancelled,
+                    )
+                    if outcome is None:
+                        results.append(None)
+                        results.extend([None] * (len(jobs) - index))
+                        break
+                    if not outcome:
                         results.append(None)
                         continue
                     done_bytes += size
@@ -8913,9 +9139,38 @@ class VideoPlayerGUI:
             return f"{name}  —  {row['path']}"
         return row["path"]
 
-    def _import_choice_index(self, choices):
-        """Row whose folder contains the last import, or the first row."""
-        last = self.last_import_dir
+    def _import_window_items(self, choices):
+        """Import path first, then saved folders and drives without that duplicate."""
+        pinned = ""
+        if self._import_path_ready():
+            try:
+                pinned = os.path.abspath(self.import_path)
+            except (OSError, ValueError):
+                pinned = self.import_path or ""
+        items = [{
+            "path": pinned,
+            "text": self._import_path_label(),
+            "removable": False,
+            "pinned": True,
+        }]
+        for row in choices:
+            folder = row["path"]
+            try:
+                key = os.path.abspath(folder)
+            except (OSError, ValueError):
+                key = folder
+            if pinned and key == pinned:
+                continue
+            items.append({
+                "path": folder,
+                "text": self._import_choice_text(row),
+                "removable": row["removable"],
+            })
+        return items
+
+    def _import_choice_index(self, items):
+        """Row whose folder contains the last import, or the import path."""
+        last = getattr(self, "last_import_dir", "") or ""
         if last and os.path.isdir(last):
             try:
                 abs_last = os.path.abspath(last)
@@ -8923,8 +9178,10 @@ class VideoPlayerGUI:
                 abs_last = last
             best = -1
             best_len = -1
-            for index, row in enumerate(choices):
-                folder = row["path"]
+            for index, item in enumerate(items):
+                folder = item.get("path") or ""
+                if not folder:
+                    continue
                 try:
                     if os.path.commonpath([abs_last, folder]) == folder and len(folder) > best_len:
                         best = index
@@ -8996,11 +9253,10 @@ class VideoPlayerGUI:
 
         folder_list = ImportFolderList(holder)
         folder_list.grid(row=0, column=0, sticky="nsew")
-        folder_list.set_items([
-            {"path": row["path"], "text": self._import_choice_text(row), "removable": row["removable"]}
-            for row in choices
-        ])
-        folder_list.select(self._import_choice_index(choices))
+        items = self._import_window_items(choices)
+        folder_list.set_items(items)
+        folder_list.select(self._import_choice_index(items))
+        window._import_list = folder_list
 
         def finish(mode, directory="", removable=False):
             result["choice"] = (mode, directory, bool(removable))
@@ -9130,23 +9386,82 @@ class VideoPlayerGUI:
         stem = playlist_folder_name(self._current_playlist_name())
         if stem:
             return stem
-        while True:
-            name = simpledialog.askstring(
-                t("import_playlist_name_title"),
-                t("import_playlist_name_prompt"),
-                parent=self.root,
+        stem = self._ask_playlist_name()
+        if not stem:
+            return ""
+        self._set_playlist_name(f"{stem}.pls")
+        return stem
+
+    def _ask_playlist_name(self):
+        """Dark prompt for a playlist folder name. None means the operator cancelled."""
+        result = {"name": None}
+        window = tk.Toplevel(self.root)
+        window.title(t("import_playlist_name_title"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(460, 160)
+        if getattr(self, "icon_image", None) is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        body = tk.Frame(window, bg=COLOR_BG)
+        body.pack(fill="both", expand=True, padx=16, pady=(16, 8))
+        tk.Label(
+            body, text=t("import_playlist_name_prompt"),
+            bg=COLOR_BG, fg=COLOR_TEXT, font=FONT_UI,
+            wraplength=460, justify="left",
+        ).pack(fill="x")
+        entry = tk.Entry(
+            body, font=FONT_UI, bg=COLOR_FIELD, fg=COLOR_TEXT,
+            insertbackground=COLOR_TEXT, relief="flat",
+            highlightthickness=1, highlightbackground=COLOR_BORDER, highlightcolor=ACCENT,
+        )
+        entry.pack(fill="x", pady=(10, 0))
+        warning = tk.Label(
+            body, text=t("import_playlist_name_invalid"),
+            bg=COLOR_BG, fg=COLOR_WARNING, font=FONT_SMALL,
+            wraplength=460, justify="left",
+        )
+
+        def show_invalid():
+            if not warning.winfo_manager():
+                warning.pack(fill="x", pady=(8, 0))
+
+        def accept(_event=None):
+            stem = playlist_folder_name(entry.get())
+            if not stem:
+                show_invalid()
+                return "break"
+            result["name"] = stem
+            window.destroy()
+            return "break"
+
+        def cancel(_event=None):
+            window.destroy()
+            return "break"
+
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+
+        def styled(text, command):
+            return tk.Button(
+                buttons, text=text, command=command, font=FONT_UI,
+                bg=COLOR_BUTTON, fg=COLOR_TEXT,
+                activebackground=COLOR_BUTTON_ACTIVE, activeforeground=COLOR_TEXT,
+                highlightthickness=0, bd=0, padx=12, pady=4, cursor="hand2",
             )
-            if name is None:
-                return ""
-            stem = playlist_folder_name(name)
-            if stem:
-                self._set_playlist_name(f"{stem}.pls")
-                return stem
-            messagebox.showerror(
-                t("import_playlist_name_title"),
-                t("import_playlist_name_invalid"),
-                parent=self.root,
-            )
+
+        styled(t("ok"), accept).pack(side="left")
+        styled(t("quit_cancel"), cancel).pack(side="left", padx=(8, 0))
+        entry.bind("<Return>", accept)
+        window.bind("<Escape>", cancel)
+        window.protocol("WM_DELETE_WINDOW", cancel)
+        self._open_popup(window, 520, 200)
+        window.grab_set()
+        entry.focus_set()
+        self.root.wait_window(window)
+        return result["name"]
 
     def _import_dialog_options(self, directory):
         options = {"parent": self.root}
@@ -9271,9 +9586,23 @@ class VideoPlayerGUI:
         self.playlist.append(entry)
 
     def new_playlist(self):
+        """Create an empty playlist in a new folder under the import path."""
         if self.playlist or self.playlist_path:
             if not messagebox.askyesno(t("new_playlist_title"), t("new_playlist_message")):
-                return
+                return False
+        if not self._ensure_import_path():
+            return False
+        stem = self._ask_playlist_name()
+        if not stem:
+            return False
+        return self._install_new_playlist(stem)
+
+    def _install_new_playlist(self, stem):
+        folder = os.path.join(self.import_path, stem)
+        path = os.path.join(folder, f"{stem}.pls")
+        if os.path.exists(path):
+            messagebox.showerror(t("new_playlist"), t("playlist_exists", name=stem))
+            return False
         if self.autoplay_after_id:
             self.root.after_cancel(self.autoplay_after_id)
             self.autoplay_after_id = None
@@ -9292,10 +9621,18 @@ class VideoPlayerGUI:
         self._show_audiosync_controls(False)
         self._close_audiosync_list_window()
         self.blank_output()
-        self.playlist_name.delete(0, "end")
-        self.playlist_name.insert(0, t("playlist_untitled"))
+        try:
+            os.makedirs(folder, exist_ok=True)
+            self._write_playlist(path)
+        except OSError as exc:
+            messagebox.showerror(t("save_playlist"), t("import_playlist_save_failed", error=exc))
+            return False
+        self.playlist_path = path
+        self._set_playlist_name(os.path.basename(path))
+        self.remember_playlist_dir(path)
         self.refresh_all()
         self._remember_saved_playlist()
+        return True
 
     def start_volume_setup(self):
         """Arm the current playlist so house volume can be set."""
@@ -9753,14 +10090,304 @@ class VideoPlayerGUI:
             messagebox.showerror(t("audiosync"), t("audiosync_save_error", error=exc))
 
     def load_playlist(self):
+        self.show_playlist_library()
+
+    def _offer_playlist_library(self):
+        """After start, offer the playlists stored in the import path."""
+        if getattr(self, "playlist_path", ""):
+            return
+        self.show_playlist_library()
+
+    def show_playlist_library(self):
+        """List playlists in the import path so one can be opened or created."""
+        if self._playlist_library_alive():
+            self.playlist_library_window.deiconify()
+            self.playlist_library_window.lift()
+            self.playlist_library_window.focus_force()
+            return
+        if not self._ensure_import_path():
+            return
+        window = tk.Toplevel(self.root)
+        window.title(t("playlist_library"))
+        window.configure(bg=COLOR_BG)
+        window.minsize(560, 340)
+        if self.icon_image is not None:
+            try:
+                window.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        body = self._install_popup_scroll(window, COLOR_BG, padx=10, pady=(10, 0))
+        path_label = tk.Label(
+            body, text=self._import_path_label(), bg=COLOR_BG, fg=ACCENT,
+            font=FONT_UI, wraplength=760, justify="left", anchor="w",
+        )
+        path_label.pack(fill="x", pady=(0, 4))
+        tk.Label(
+            body, text=t("playlist_library_hint"), bg=COLOR_BG, fg=COLOR_MUTED,
+            font=FONT_SMALL, wraplength=640, justify="left",
+        ).pack(fill="x", pady=(0, 6))
+        status = tk.Label(
+            body, text="", bg=COLOR_BG, fg=COLOR_WARNING,
+            font=FONT_SMALL, wraplength=640, justify="left", anchor="w",
+        )
+        status.pack(fill="x", pady=(0, 6))
+        holder = tk.Frame(body, bg=COLOR_PANEL)
+        holder.pack(fill="both", expand=True, pady=(0, 8))
+        holder.rowconfigure(0, weight=1)
+        holder.columnconfigure(0, weight=1)
+        listbox = self._styled_listbox(holder)
+        scroll = ttk.Scrollbar(holder, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+
+        def open_selected(_event=None):
+            self._open_library_playlist(window)
+            return "break"
+
+        open_button = tk.Button(
+            buttons, text=t("playlist_library_open"), command=open_selected, font=FONT_UI,
+        )
+        open_button.pack(side="left")
+        tk.Button(
+            buttons, text=t("playlist_library_new"),
+            command=lambda: self._new_library_playlist(window), font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("playlist_library_import"),
+            command=lambda: self._import_library_playlist(window), font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        export_button = tk.Button(
+            buttons, text=t("playlist_library_export"),
+            command=lambda: self._export_library_playlist(window), font=FONT_UI,
+        )
+        export_button.pack(side="left", padx=(8, 0))
+        delete_media = tk.Button(
+            buttons, text=t("edit_imports_delete_media"),
+            command=lambda: self._delete_import_media(window), font=FONT_UI,
+        )
+        delete_media.pack(side="left", padx=(8, 0))
+        delete_folder = tk.Button(
+            buttons, text=t("edit_imports_delete_folder"),
+            command=lambda: self._delete_import_folder(window), font=FONT_UI,
+        )
+        delete_folder.pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("media_directories_close"),
+            command=self._close_playlist_library, font=FONT_UI,
+        ).pack(side="right")
+
+        window._path_label = path_label
+        window._status = status
+        window._listbox = listbox
+        window._rows = []
+        window._open_button = open_button
+        window._export_button = export_button
+        window._delete_media = delete_media
+        window._delete_folder = delete_folder
+        self.playlist_library_window = window
+        listbox.bind("<Double-Button-1>", open_selected)
+        listbox.bind("<Return>", open_selected)
+        listbox.bind("<<ListboxSelect>>", lambda _event: self._sync_library_media_button(window))
+        window.bind("<Escape>", lambda _event: self._close_playlist_library())
+        window.protocol("WM_DELETE_WINDOW", self._close_playlist_library)
+        self._refresh_playlist_library(window)
+        self._bind_popup_wheel(window, body)
+        self._open_popup(window, 860, 480)
+        listbox.focus_set()
+        window.grab_set()
+        self.root.wait_window(window)
+
+    def _playlist_library_alive(self):
+        window = getattr(self, "playlist_library_window", None)
+        if window is None:
+            return False
+        try:
+            return bool(window.winfo_exists())
+        except tk.TclError:
+            self.playlist_library_window = None
+            return False
+
+    def _close_playlist_library(self):
+        window = getattr(self, "playlist_library_window", None)
+        self.playlist_library_window = None
+        if window is not None:
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+    def _refresh_playlist_library(self, window, select_path=None):
+        rows = library_playlists(self.import_path)
+        window._rows = rows
+        status = window._status
+        status.configure(text="" if rows else t("playlist_library_empty"))
+        listbox = window._listbox
+        listbox.delete(0, "end")
+        for row in rows:
+            listbox.insert("end", self._playlist_library_line(row))
+        state = "normal" if rows else "disabled"
+        window._open_button.configure(state=state)
+        window._export_button.configure(state=state)
+        window._delete_folder.configure(state=state)
+        if not rows:
+            window._delete_media.configure(state="disabled")
+            return
+        index = 0
+        if select_path:
+            for position, row in enumerate(rows):
+                if row["path"] == select_path:
+                    index = position
+                    break
+        listbox.selection_set(index)
+        listbox.activate(index)
+        listbox.see(index)
+        self._sync_library_media_button(window)
+
+    def _sync_library_media_button(self, window):
+        row = self._selected_library_playlist(window)
+        state = "normal" if row and row.get("media", 0) > 0 else "disabled"
+        window._delete_media.configure(state=state)
+
+    def _playlist_library_line(self, row):
+        parts = [row["name"]]
+        created = row.get("created")
+        if created:
+            moment = datetime.fromtimestamp(created)
+            pattern = "%d.%m.%Y" if current_language() == "de" else "%Y-%m-%d"
+            parts.append(moment.strftime(pattern))
+        count = row.get("media", 0)
+        parts.append(t("edit_imports_medium" if count == 1 else "edit_imports_media", count=count))
+        parts.append(self._format_copy_size(row.get("bytes", 0)))
+        return "   —   ".join(parts)
+
+    def _selected_library_playlist(self, window):
+        selection = window._listbox.curselection()
+        if not selection:
+            return None
+        index = selection[0]
+        rows = window._rows
+        if 0 <= index < len(rows):
+            return rows[index]
+        return None
+
+    def _open_library_playlist(self, window):
+        row = self._selected_library_playlist(window)
+        if row is None:
+            return
+        if row["path"] != getattr(self, "playlist_path", "") and self._playlist_has_unsaved_changes():
+            if not self._confirm_close_playlist():
+                return
+        self._load_playlist_from_path(row["path"])
+        self._close_playlist_library()
+
+    def _new_library_playlist(self, window):
+        if self.new_playlist():
+            self._close_playlist_library()
+
+    def _ask_playlist_media_copy(self, parent):
+        """True copies media files, False keeps the original paths, None cancels."""
+        result = {"choice": None}
+        dialog = tk.Toplevel(parent)
+        dialog.title(t("playlist_media_prompt"))
+        dialog.configure(bg=COLOR_BG)
+        dialog.minsize(420, 150)
+        if self.icon_image is not None:
+            try:
+                dialog.iconphoto(True, self.icon_image)
+            except tk.TclError:
+                pass
+        dialog.transient(parent)
+        body = tk.Frame(dialog, bg=COLOR_BG)
+        body.pack(fill="both", expand=True, padx=16, pady=(16, 8))
+        tk.Label(
+            body, text=t("playlist_media_prompt"), bg=COLOR_BG, fg=COLOR_TEXT,
+            font=FONT_UI, wraplength=440, justify="left",
+        ).pack(fill="x")
+        buttons = tk.Frame(dialog, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+
+        def choose(value):
+            result["choice"] = value
+            dialog.destroy()
+
+        tk.Button(
+            buttons, text=t("playlist_with_media"), command=lambda: choose(True), font=FONT_UI,
+        ).pack(side="left")
+        tk.Button(
+            buttons, text=t("playlist_without_media"), command=lambda: choose(False), font=FONT_UI,
+        ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            buttons, text=t("quit_cancel"), command=lambda: choose(None), font=FONT_UI,
+        ).pack(side="right")
+        dialog.bind("<Escape>", lambda _event: choose(None))
+        dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
+        self._open_popup(dialog, 520, 180)
+        dialog.grab_set()
+        self.root.wait_window(dialog)
+        return result["choice"]
+
+    def _import_library_playlist(self, window):
         path = filedialog.askopenfilename(
-            title=t("load_playlist"),
+            title=t("playlist_import_title"),
             filetypes=[(t("playlist_files"), "*.pls *.json"), (t("all_files"), "*.*")],
-            **self.playlist_dialog_options(),
+            parent=window,
         )
         if not path:
             return
-        self._load_playlist_from_path(path)
+        stem = playlist_folder_name(os.path.basename(path))
+        if not stem:
+            stem = self._ask_playlist_name()
+            if not stem:
+                return
+        folder = os.path.join(self.import_path, stem)
+        dest = os.path.join(folder, f"{stem}.pls")
+        if os.path.exists(dest):
+            messagebox.showerror(t("playlist_import_title"), t("playlist_exists", name=stem), parent=window)
+            return
+        with_media = self._ask_playlist_media_copy(window)
+        if with_media is None:
+            return
+        try:
+            written = place_playlist(path, folder, stem, with_media)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror(
+                t("playlist_import_title"),
+                t("playlist_transfer_failed", error=exc),
+                parent=window,
+            )
+            return
+        self._refresh_playlist_library(window, select_path=written)
+        if not getattr(self, "playlist_path", ""):
+            self._load_playlist_from_path(written)
+            self._close_playlist_library()
+
+    def _export_library_playlist(self, window):
+        row = self._selected_library_playlist(window)
+        if row is None:
+            return
+        dest = filedialog.askdirectory(title=t("playlist_export_choose"), parent=window)
+        if not dest:
+            return
+        with_media = self._ask_playlist_media_copy(window)
+        if with_media is None:
+            return
+        stem = playlist_folder_name(row["name"]) or playlist_folder_name(os.path.basename(row["path"]))
+        if not stem:
+            stem = self._ask_playlist_name()
+            if not stem:
+                return
+        try:
+            place_playlist(row["path"], dest, stem, with_media)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            messagebox.showerror(
+                t("playlist_export_title"),
+                t("playlist_transfer_failed", error=exc),
+                parent=window,
+            )
 
     def _restore_last_playlist(self):
         if not self.load_last_playlist_at_start.get():
@@ -9838,25 +10465,25 @@ class VideoPlayerGUI:
             messagebox.showwarning(t("refresh_playlist"), t("missing_playlist", count=missing))
 
     def save_playlist(self):
-        suggested = self.playlist_name.get().strip() or "playlist.pls"
-        options = self.playlist_dialog_options()
-        path = filedialog.asksaveasfilename(
-            title=t("save_playlist"),
-            defaultextension=".pls",
-            initialfile=suggested,
-            filetypes=[(t("playlist_files"), "*.pls"), ("JSON", "*.json")],
-            **options,
-        )
-        if not path:
+        """Save into a same-named folder under the import path."""
+        if not self._ensure_import_path():
             return False
+        stem = playlist_folder_name(self._current_playlist_name())
+        if not stem:
+            stem = self._ask_playlist_name()
+            if not stem:
+                return False
+            self._set_playlist_name(f"{stem}.pls")
+        folder = os.path.join(self.import_path, stem)
+        path = os.path.join(folder, f"{stem}.pls")
         try:
+            os.makedirs(folder, exist_ok=True)
             self._write_playlist(path)
         except OSError as exc:
             messagebox.showerror(t("save_playlist"), t("import_playlist_save_failed", error=exc))
             return False
         self.playlist_path = path
-        self.playlist_name.delete(0, "end")
-        self.playlist_name.insert(0, os.path.basename(path))
+        self._set_playlist_name(os.path.basename(path))
         self.remember_playlist_dir(path)
         return True
 

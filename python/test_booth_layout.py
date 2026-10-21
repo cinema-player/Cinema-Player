@@ -28,7 +28,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 import cinema_gui
-from cinema_player import PlaylistEntry, reload_entry_metadata
+from cinema_player import PlaylistEntry, folder_created, reload_entry_metadata
 from language import set_language, t
 
 
@@ -128,6 +128,7 @@ class PlaylistMarkTests(unittest.TestCase):
                     "---",
                     "Aktualisieren",
                     "Neu verknüpfen",
+                    "In den Playlistordner kopieren",
                     "---",
                     "Eintrag löschen",
                 ],
@@ -415,6 +416,24 @@ class BoothChromeTests(unittest.TestCase):
         )
         window = held["window"]
         window.update()
+        rows = window._import_list._rows
+        self.assertTrue(rows[0]["pinned"])
+        self.assertIn("Importpfad", rows[0]["label"].cget("text"))
+        self.assertIn("nicht gesetzt", rows[0]["label"].cget("text"))
+        self.assertEqual(window._import_list.selected_path(), "")
+        self.assertIn("Filme", rows[1]["label"].cget("text"))
+        window._import_list.select(1)
+        self.assertEqual(window._import_list.selected_path(), "/tmp")
+        window._import_list.select(0)
+        self.assertEqual(window._import_list.selected_removable(), False)
+        self.app.import_path = "/tmp"
+        listed = self.app._import_window_items([
+            {"path": "/tmp", "name": "Filme", "removable": False},
+            {"path": "/data/stills", "name": "Stills", "removable": False},
+        ])
+        self.assertEqual(listed[0]["path"], "/tmp")
+        self.assertTrue(listed[0]["pinned"])
+        self.assertEqual([item["path"] for item in listed], ["/tmp", "/data/stills"])
         self.assertGreaterEqual(window.winfo_height(), 560)
         bottom = window.winfo_rooty() + window.winfo_height()
         labels = {
@@ -437,6 +456,196 @@ class BoothChromeTests(unittest.TestCase):
         self.assertTrue(close.winfo_viewable())
         self.assertLessEqual(close.winfo_rooty() + close.winfo_height(), window.winfo_rooty() + window.winfo_height())
         window.destroy()
+
+    def test_edit_imports_lists_folders_and_deletes_videos_or_the_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            evening = os.path.join(root, "Abend")
+            os.makedirs(evening)
+            for name, data in (
+                ("one.mp4", b"1234"),
+                ("two.mkv", b"12345678"),
+                ("still.jpg", b"ab"),
+                ("Abend.pls", b"[]"),
+            ):
+                with open(os.path.join(evening, name), "wb") as handle:
+                    handle.write(data)
+            other = os.path.join(root, "Matinee")
+            os.makedirs(other)
+            with open(os.path.join(other, "clip.mov"), "wb") as handle:
+                handle.write(b"xyz")
+            playlist = os.path.join(other, "Matinee.pls")
+            with open(playlist, "wb") as handle:
+                handle.write(b"{}")
+            self.app.root = self.root
+            self.app.icon_image = None
+            self.app.import_path = root
+            self.app.playlist_library_window = None
+            self.app.settings = {"last_playlist_path": playlist}
+            self.app.playlist_path = playlist
+            self.app.playlist = []
+            self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+                f"{width}x{height}+20+20"
+            )
+            self.root.wait_window = lambda window: None
+            self.app.show_playlist_library()
+            window = self.app.playlist_library_window
+            window.update()
+            lines = list(window._listbox.get(0, "end"))
+            self.assertEqual(len(lines), 2)
+            self.assertIn("Abend", lines[0])
+            self.assertIn("3 Medien", lines[0])
+            self.assertIn("16 B", lines[0])
+            self.assertIn("Matinee", lines[1])
+            self.assertIn("1 Medium", lines[1])
+            self.assertIn("Importpfad", window._path_label.cget("text"))
+            self.assertIn(root, window._path_label.cget("text"))
+            window._listbox.selection_clear(0, "end")
+            window._listbox.selection_set(0)
+            self.assertEqual(window._delete_media.cget("text"), "Mediendateien löschen")
+            with patch("cinema_gui.messagebox.askyesno", return_value=True):
+                self.app._delete_import_media(window)
+            self.assertFalse(os.path.exists(os.path.join(evening, "one.mp4")))
+            self.assertFalse(os.path.exists(os.path.join(evening, "two.mkv")))
+            self.assertFalse(os.path.exists(os.path.join(evening, "still.jpg")))
+            self.assertTrue(os.path.isfile(os.path.join(evening, "Abend.pls")))
+            self.assertIn("0 Medien", window._listbox.get(0))
+            window._listbox.selection_clear(0, "end")
+            window._listbox.selection_set(1)
+            with (
+                patch("cinema_gui.messagebox.askyesno", return_value=True),
+                patch("cinema_gui.save_settings") as saved,
+            ):
+                self.app._delete_import_folder(window)
+            self.assertFalse(os.path.exists(other))
+            self.assertTrue(os.path.isdir(evening))
+            self.assertEqual(self.app.playlist_path, "")
+            self.assertEqual(self.app.settings["last_playlist_path"], "")
+            saved.assert_called_once()
+            self.assertEqual(window._listbox.size(), 1)
+            window.destroy()
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_context_copy_puts_the_file_in_the_playlist_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            source = os.path.join(root, "clip.mp4")
+            with open(source, "wb") as handle:
+                handle.write(b"film-data")
+            imports = os.path.join(root, "imports")
+            os.makedirs(imports)
+            self.app.root = self.root
+            self.app.icon_image = None
+            self.app.import_path = imports
+            self.app.playlist_path = ""
+            self.app.program_state = "OFF"
+            self.app.program_index = 0
+            self.app.preview_index = None
+            self.app.preview_live = True
+            self.app.playlist = [_entry(path=source)]
+            self.app._current_playlist_name = lambda: "Abend.pls"
+            self.app.refresh_all = lambda: None
+            self.app.show_preview_clip = lambda _entry: None
+            cinema_gui.VideoPlayerGUI.copy_entry_to_playlist_folder(self.app, 0)
+            dest = os.path.join(imports, "Abend", "clip.mp4")
+            self.assertTrue(os.path.isfile(dest))
+            self.assertEqual(self.app.playlist[0].path, dest)
+            self.assertEqual(self.app.playlist[0].filename, "clip.mp4")
+            with open(dest, "rb") as handle:
+                self.assertEqual(handle.read(), b"film-data")
+            self.assertTrue(os.path.isfile(source))
+            cinema_gui.VideoPlayerGUI.copy_entry_to_playlist_folder(self.app, 0)
+            self.assertFalse(os.path.exists(os.path.join(imports, "Abend", "clip (2).mp4")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_cancel_stops_the_playlist_folder_copy(self):
+        root = tempfile.mkdtemp()
+        try:
+            source = os.path.join(root, "clip.mp4")
+            with open(source, "wb") as handle:
+                handle.write(b"film-data")
+            imports = os.path.join(root, "imports")
+            os.makedirs(imports)
+            self.app.root = self.root
+            self.app.icon_image = None
+            self.app.import_path = imports
+            self.app.playlist_path = ""
+            self.app.program_state = "OFF"
+            self.app.program_index = 0
+            self.app.preview_index = None
+            self.app.preview_live = True
+            self.app.playlist = [_entry(path=source)]
+            self.app._current_playlist_name = lambda: "Abend.pls"
+            self.app.refresh_all = lambda: None
+            self.app.show_preview_clip = lambda _entry: None
+            real_update = cinema_gui.VideoPlayerGUI._update_copy_progress
+
+            def update(progress, widgets, current, name, done, total):
+                real_update(self.app, progress, widgets, current, name, done, total)
+                widgets["cancel"]["cancel"] = True
+
+            self.app._update_copy_progress = update
+            cinema_gui.VideoPlayerGUI.copy_entry_to_playlist_folder(self.app, 0)
+            self.assertEqual(self.app.playlist[0].path, source)
+            self.assertFalse(os.path.exists(os.path.join(imports, "Abend", "clip.mp4")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_playlist_library_lists_saved_playlists_and_save_creates_the_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            evening = os.path.join(root, "Abend")
+            os.makedirs(evening)
+            with open(os.path.join(evening, "Abend.pls"), "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            self.app.root = self.root
+            self.app.icon_image = None
+            self.app.import_path = root
+            self.app.playlist_path = ""
+            self.app.playlist_library_window = None
+            self.app.settings = {}
+            self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+                f"{width}x{height}+20+20"
+            )
+            held = {}
+            self.root.wait_window = lambda window: held.setdefault("window", window)
+            self.app.show_playlist_library()
+            window = held["window"]
+            window.update()
+            created = datetime.fromtimestamp(folder_created(evening))
+            line = window._listbox.get(0)
+            self.assertTrue(line.startswith("Abend"))
+            self.assertIn(created.strftime("%d.%m.%Y"), line)
+            labels = {
+                child.cget("text")
+                for child in window.winfo_children()
+                if isinstance(child, tk.Frame)
+                for child in child.winfo_children()
+                if isinstance(child, tk.Button)
+            }
+            for text in (
+                "Öffnen", "Neue Playlist", "Importieren", "Exportieren",
+                "Mediendateien löschen", "Verzeichnis löschen", "Schließen",
+            ):
+                self.assertIn(text, labels)
+            window.destroy()
+            def write_playlist(path):
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("saved")
+
+            self.app._current_playlist_name = lambda: "Matinee.pls"
+            self.app._write_playlist = write_playlist
+            self.app._set_playlist_name = lambda _name: None
+            self.app.remember_playlist_dir = lambda _path: None
+            self.assertTrue(self.app.save_playlist())
+            saved = os.path.join(root, "Matinee", "Matinee.pls")
+            self.assertEqual(self.app.playlist_path, saved)
+            with open(saved, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "saved")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_media_directories_pin_the_import_path(self):
         self.app.root = self.root
@@ -518,19 +727,50 @@ class BoothChromeTests(unittest.TestCase):
         window.update()
         self.assertFalse(window.winfo_exists())
 
+        del self.root.wait_window
         self.app.playlist_name = tk.Entry(self.root)
         self.app.playlist_name.insert(0, "unbekannt.pls")
-        with patch.object(cinema_gui.simpledialog, "askstring", return_value="Abend") as ask:
-            stem = cinema_gui.VideoPlayerGUI._prompt_playlist_folder_name(self.app)
+
+        def answer_playlist_name():
+            windows = [child for child in self.root.winfo_children() if isinstance(child, tk.Toplevel)]
+            window = windows[-1]
+            window.update()
+            self.assertEqual(str(window.cget("bg")).lower(), cinema_gui.COLOR_BG.lower())
+            entries = [
+                child for frame in window.winfo_children() if isinstance(frame, tk.Frame)
+                for child in frame.winfo_children() if isinstance(child, tk.Entry)
+            ]
+            entry = entries[0]
+            self.assertEqual(str(entry.cget("bg")).lower(), cinema_gui.COLOR_FIELD.lower())
+            self.assertEqual(str(entry.cget("fg")).lower(), cinema_gui.COLOR_TEXT.lower())
+            buttons = {
+                child.cget("text"): child
+                for frame in window.winfo_children() if isinstance(frame, tk.Frame)
+                for child in frame.winfo_children() if isinstance(child, tk.Button)
+            }
+            self.assertEqual(str(buttons["OK"].cget("bg")).lower(), cinema_gui.COLOR_BUTTON.lower())
+            entry.insert(0, "unbekannt")
+            buttons["OK"].invoke()
+            window.update()
+            self.assertTrue(window.winfo_exists())
+            warning = [
+                child for frame in window.winfo_children() if isinstance(frame, tk.Frame)
+                for child in frame.winfo_children() if isinstance(child, tk.Label)
+                and str(child.cget("fg")).lower() == cinema_gui.COLOR_WARNING.lower()
+            ]
+            self.assertTrue(warning[0].winfo_viewable())
+            entry.delete(0, "end")
+            entry.insert(0, "Abend")
+            buttons["OK"].invoke()
+
+        self.root.after(30, answer_playlist_name)
+        stem = cinema_gui.VideoPlayerGUI._prompt_playlist_folder_name(self.app)
         self.assertEqual(stem, "Abend")
         self.assertEqual(self.app.playlist_name.get(), "Abend.pls")
-        ask.assert_called_once()
-        with patch.object(cinema_gui.simpledialog, "askstring") as ask:
-            self.assertEqual(
-                cinema_gui.VideoPlayerGUI._prompt_playlist_folder_name(self.app),
-                "Abend",
-            )
-        ask.assert_not_called()
+        self.assertEqual(
+            cinema_gui.VideoPlayerGUI._prompt_playlist_folder_name(self.app),
+            "Abend",
+        )
 
     def test_copied_drive_files_share_the_playlist_folder(self):
         root = tempfile.mkdtemp()
@@ -595,6 +835,86 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(added, [internal_file])
         self.assertEqual(written, before)
         self.assertFalse(os.path.exists(os.path.join(dest, "Abend", "still.jpg")))
+
+    def test_cancel_stops_the_copy_and_keeps_finished_files(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        source = os.path.join(root, "source")
+        dest = os.path.join(root, "dest")
+        os.makedirs(source)
+        os.makedirs(dest)
+        names = ("one.mp4", "two.mp4", "three.mp4")
+        paths = []
+        for name in names:
+            path = os.path.join(source, name)
+            with open(path, "wb") as handle:
+                handle.write(b"x" * (64 * 1024))
+            paths.append(path)
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        window, widgets = cinema_gui.VideoPlayerGUI._open_copy_progress(self.app, 3)
+        window.update()
+        buttons = {
+            child.cget("text"): child
+            for child in window.winfo_children()
+            if isinstance(child, tk.Frame)
+            for child in child.winfo_children()
+            if isinstance(child, tk.Button)
+        }
+        cancel = buttons["Abbrechen"]
+        self.assertTrue(cancel.winfo_viewable())
+        self.assertFalse(widgets["cancel"]["cancel"])
+        cancel.invoke()
+        self.assertTrue(widgets["cancel"]["cancel"])
+        self.assertTrue(window.winfo_exists())
+        cinema_gui.VideoPlayerGUI._close_copy_progress(self.app, window)
+
+        real_update = cinema_gui.VideoPlayerGUI._update_copy_progress
+
+        def update(progress, widgets, current, name, done, total):
+            real_update(self.app, progress, widgets, current, name, done, total)
+            if name == "two.mp4" and done:
+                widgets["cancel"]["cancel"] = True
+
+        self.app._update_copy_progress = update
+        results = cinema_gui.VideoPlayerGUI._copy_imported_paths(self.app, paths, dest)
+        self.assertEqual(
+            results,
+            [os.path.join(dest, "one.mp4"), None, None],
+        )
+        with open(results[0], "rb") as handle:
+            self.assertEqual(handle.read(), b"x" * (64 * 1024))
+        self.assertFalse(os.path.exists(os.path.join(dest, "two.mp4")))
+        self.assertFalse(os.path.exists(os.path.join(dest, "three.mp4")))
+
+    def test_refresh_icon_sits_before_the_playlist_name(self):
+        parent = tk.Frame(self.root)
+        parent.pack(fill="x")
+        parent.columnconfigure(0, weight=1)
+        called = []
+        self.app.root = self.root
+        self.app.check_playlist_files = lambda: called.append("refresh")
+        cinema_gui.VideoPlayerGUI._build_playlist_header(self.app, parent)
+        self.root.update()
+        icon = self.app.playlist_refresh
+        name = self.app.playlist_name
+        label = next(
+            child for child in icon.master.winfo_children() if isinstance(child, tk.Label)
+        )
+        self.assertEqual(label.cget("text"), "Playlist")
+        self.assertLess(icon.winfo_rootx() + icon.winfo_width(), label.winfo_rootx() + 2)
+        self.assertLess(label.winfo_rootx(), name.winfo_rootx())
+        self.assertLess(
+            abs((icon.winfo_rooty() + icon.winfo_height() / 2) - (label.winfo_rooty() + label.winfo_height() / 2)),
+            max(icon.winfo_height(), label.winfo_height()),
+        )
+        self.assertEqual(icon.tooltip.text, "Aktualisieren")
+        self.assertNotEqual(icon.master, self.app.playlist_tool_buttons)
+        icon.invoke()
+        self.assertEqual(called, ["refresh"])
 
     def test_file_dialog_creates_a_folder_in_the_open_directory(self):
         cinema_gui.install_file_dialog_new_folder(self.root)

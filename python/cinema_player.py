@@ -1108,6 +1108,122 @@ def merge_import_directories(saved, volumes):
     return rows + extras
 
 
+def import_folder_rows(import_path):
+    """Direct subfolders of the import path, with video counts and byte sizes."""
+    if not import_path or not os.path.isdir(import_path):
+        return []
+    try:
+        names = os.listdir(import_path)
+    except OSError:
+        return []
+    rows = []
+    for name in names:
+        if not name or name.startswith("."):
+            continue
+        path = os.path.join(import_path, name)
+        if not os.path.isdir(path):
+            continue
+        videos, total, media = _import_folder_usage(path)
+        rows.append({
+            "name": name,
+            "path": path,
+            "videos": videos,
+            "bytes": total,
+            "media": media,
+        })
+    rows.sort(key=lambda row: row["name"].casefold())
+    return rows
+
+
+def _is_playlist_file(name):
+    return os.path.splitext(name)[1].lower() in {".pls", ".json"}
+
+
+def _import_folder_usage(directory):
+    """Video count, total size, and how many files are not a playlist.
+
+    A symlinked folder is listed but not walked, so the count stays inside
+    the import path.
+    """
+    if os.path.islink(directory):
+        return 0, 0, 0
+    videos = 0
+    total = 0
+    media = 0
+    for _root, _dirs, files in os.walk(directory):
+        for name in files:
+            path = os.path.join(_root, name)
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+            if not _is_playlist_file(name):
+                media += 1
+            if os.path.splitext(name)[1].lower() in VIDEO_EXTS:
+                videos += 1
+    return videos, total, media
+
+
+def delete_import_media(directory):
+    """Delete every file in a folder except playlists, then drop empty subfolders."""
+    if not directory or not os.path.isdir(directory) or os.path.islink(directory):
+        return 0
+    root_dir = os.path.abspath(directory)
+    removed = 0
+    for current, _dirs, files in os.walk(root_dir, topdown=False):
+        for name in files:
+            if _is_playlist_file(name):
+                continue
+            path = os.path.join(current, name)
+            try:
+                os.remove(path)
+            except OSError:
+                continue
+            removed += 1
+        if os.path.abspath(current) == root_dir:
+            continue
+        try:
+            if not os.listdir(current):
+                os.rmdir(current)
+        except OSError:
+            pass
+    return removed
+
+
+def delete_import_directory(directory, import_path):
+    """Delete one direct subfolder of the import path, including its playlist."""
+    if not directory or not import_path:
+        return False
+    try:
+        root = os.path.abspath(import_path)
+        target = os.path.abspath(directory)
+    except (OSError, ValueError):
+        return False
+    if os.path.dirname(target) != root:
+        return False
+    try:
+        if os.path.islink(target):
+            os.unlink(target)
+            return True
+        if not os.path.isdir(target):
+            return False
+        shutil.rmtree(target)
+    except OSError:
+        return False
+    return True
+
+
+def path_is_inside(path, directory):
+    if not path or not directory:
+        return False
+    try:
+        folder = os.path.abspath(directory)
+        target = os.path.abspath(path)
+        return os.path.commonpath([target, folder]) == folder
+    except (OSError, ValueError):
+        return False
+
+
 _PLAYLIST_PLACEHOLDER_STEMS = frozenset({"untitled", "unbekannt"})
 
 
@@ -1139,6 +1255,153 @@ def playlist_folder_name(name):
     if stem in (".", "..") or any(char in stem for char in "/\\\0"):
         return ""
     return stem
+
+
+def folder_created(path):
+    """Creation time of a directory, in seconds since the epoch."""
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    stamp = getattr(info, "st_birthtime", None)
+    if stamp:
+        return stamp
+    return info.st_ctime
+
+
+def playlist_file_in(folder):
+    """Playlist file in a folder, preferring one named like the folder."""
+    if not folder or not os.path.isdir(folder):
+        return ""
+    folder_name = os.path.basename(os.path.abspath(folder))
+    for ext in (".pls", ".json"):
+        preferred = os.path.join(folder, folder_name + ext)
+        if os.path.isfile(preferred):
+            return preferred
+    try:
+        names = sorted(os.listdir(folder), key=str.casefold)
+    except OSError:
+        return ""
+    for name in names:
+        if not _is_playlist_file(name):
+            continue
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def library_playlists(import_path):
+    """Playlists stored in same-named subfolders of the import path."""
+    if not import_path or not os.path.isdir(import_path):
+        return []
+    try:
+        names = os.listdir(import_path)
+    except OSError:
+        return []
+    rows = []
+    for name in names:
+        if not name or name.startswith("."):
+            continue
+        folder = os.path.join(import_path, name)
+        if os.path.islink(folder) or not os.path.isdir(folder):
+            continue
+        playlist = playlist_file_in(folder)
+        if not playlist:
+            continue
+        _videos, total, media = _import_folder_usage(folder)
+        rows.append({
+            "name": playlist_stem(os.path.basename(playlist)) or name,
+            "path": playlist,
+            "folder": folder,
+            "created": folder_created(folder),
+            "media": media,
+            "bytes": total,
+        })
+    rows.sort(key=lambda row: row["name"].casefold())
+    return rows
+
+
+def _playlist_media_paths(document):
+    paths = []
+    for entry in document.get("entries") or []:
+        if isinstance(entry, dict):
+            path = entry.get("path") or ""
+            if isinstance(path, str) and path.strip():
+                paths.append(path)
+    idle = document.get("idle_media_path") or ""
+    if isinstance(idle, str) and idle.strip():
+        paths.append(idle)
+    return paths
+
+
+def _rewrite_playlist_paths(document, mapping):
+    def rewritten(path):
+        if not isinstance(path, str) or not path.strip():
+            return path
+        try:
+            return mapping.get(os.path.abspath(path), path)
+        except (OSError, ValueError):
+            return path
+
+    for entry in document.get("entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        new_path = rewritten(entry.get("path") or "")
+        if new_path and new_path != entry.get("path"):
+            entry["path"] = new_path
+            entry["filename"] = os.path.basename(new_path)
+    if document.get("idle_media_path"):
+        document["idle_media_path"] = rewritten(document.get("idle_media_path"))
+
+
+def _unique_copy_name(directory, filename, reserved):
+    base, ext = os.path.splitext(filename)
+    candidate = filename
+    index = 2
+    while candidate.casefold() in reserved or os.path.exists(os.path.join(directory, candidate)):
+        candidate = f"{base} ({index}){ext}"
+        index += 1
+    reserved.add(candidate.casefold())
+    return candidate
+
+
+def place_playlist(source_path, dest_folder, stem, with_media):
+    """Write ``stem.pls`` into ``dest_folder``.
+
+    With media, referenced files are copied beside the playlist and the
+    stored paths point at those copies. Without media, the paths stay as they
+    are. Returns the written playlist path.
+    """
+    with open(source_path, encoding="utf-8") as handle:
+        document = json.load(handle)
+    if not isinstance(document, dict):
+        raise ValueError(source_path)
+    os.makedirs(dest_folder, exist_ok=True)
+    if with_media:
+        mapping = {}
+        reserved = {f"{stem}.pls".casefold(), f"{stem}.json".casefold()}
+        for old in _playlist_media_paths(document):
+            try:
+                old_abs = os.path.abspath(old)
+            except (OSError, ValueError):
+                continue
+            if old_abs in mapping or not os.path.isfile(old_abs):
+                continue
+            if os.path.dirname(old_abs) == os.path.abspath(dest_folder):
+                mapping[old_abs] = old_abs
+                reserved.add(os.path.basename(old_abs).casefold())
+                continue
+            name = _unique_copy_name(dest_folder, os.path.basename(old_abs), reserved)
+            dest = os.path.join(dest_folder, name)
+            if os.path.abspath(dest) != old_abs:
+                shutil.copy2(old_abs, dest)
+            mapping[old_abs] = dest
+        _rewrite_playlist_paths(document, mapping)
+    dest_playlist = os.path.join(dest_folder, f"{stem}.pls")
+    with open(dest_playlist, "w", encoding="utf-8") as handle:
+        json.dump(document, handle, indent=2)
+    return dest_playlist
 
 
 def path_is_on_removable_volume(path, volumes):

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Media-directory names and the playlist folder line."""
 
+import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
@@ -211,6 +214,91 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertEqual(language.STRINGS["de"]["import_path_mark"], "Importpfad")
         self.assertEqual(language.STRINGS["de"]["playlist_untitled"], "unbekannt.pls")
         self.assertEqual(language.STRINGS["en"]["playlist_untitled"], "untitled.pls")
+        self.assertEqual(language.STRINGS["de"]["copy_files_cancel"], "Abbrechen")
+        self.assertEqual(language.STRINGS["en"]["copy_files_cancel"], "Cancel")
+        self.assertEqual(language.STRINGS["de"]["edit_imports"], "Importe bearbeiten")
+        self.assertEqual(language.STRINGS["en"]["edit_imports"], "Edit imports")
+        self.assertEqual(language.STRINGS["de"]["edit_imports_delete_media"], "Mediendateien löschen")
+        self.assertEqual(language.STRINGS["en"]["edit_imports_delete_media"], "Delete media files")
+        self.assertEqual(language.STRINGS["de"]["playlist_library"], "Playlist wählen")
+        self.assertEqual(language.STRINGS["de"]["playlist_with_media"], "Mit Mediendateien")
+
+
+class ImportFolderEditTests(unittest.TestCase):
+    def test_counts_videos_and_keeps_the_playlist_when_videos_go(self):
+        root = tempfile.mkdtemp()
+        try:
+            evening = os.path.join(root, "Abend")
+            os.makedirs(os.path.join(evening, "nested"))
+            payloads = {
+                os.path.join(evening, "one.mp4"): b"1234",
+                os.path.join(evening, "nested", "two.mkv"): b"12345678",
+                os.path.join(evening, "still.jpg"): b"ab",
+                os.path.join(evening, "Abend.pls"): b"[]",
+                os.path.join(root, "loose.mp4"): b"nope",
+            }
+            for path, data in payloads.items():
+                with open(path, "wb") as handle:
+                    handle.write(data)
+            os.makedirs(os.path.join(root, ".hidden"))
+            rows = player.import_folder_rows(root)
+            self.assertEqual([row["name"] for row in rows], ["Abend"])
+            self.assertEqual(rows[0]["videos"], 2)
+            self.assertEqual(rows[0]["bytes"], 16)
+            self.assertEqual(rows[0]["media"], 3)
+            self.assertEqual(player.delete_import_media(evening), 3)
+            self.assertFalse(os.path.exists(os.path.join(evening, "one.mp4")))
+            self.assertFalse(os.path.exists(os.path.join(evening, "nested")))
+            self.assertTrue(os.path.isfile(os.path.join(evening, "Abend.pls")))
+            self.assertFalse(os.path.exists(os.path.join(evening, "still.jpg")))
+            self.assertTrue(os.path.isfile(os.path.join(root, "loose.mp4")))
+            self.assertFalse(player.delete_import_directory(root, root))
+            self.assertFalse(player.delete_import_directory(os.path.join(evening, "nested"), root))
+            self.assertTrue(os.path.isdir(evening))
+            self.assertTrue(player.delete_import_directory(evening, root))
+            self.assertFalse(os.path.exists(evening))
+            self.assertTrue(os.path.isfile(os.path.join(root, "loose.mp4")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+class PlaylistLibraryTests(unittest.TestCase):
+    def test_only_playlist_folders_are_listed_and_media_is_optional(self):
+        root = tempfile.mkdtemp()
+        try:
+            evening = os.path.join(root, "Abend")
+            os.makedirs(evening)
+            clip = os.path.join(evening, "clip.mp4")
+            with open(clip, "wb") as handle:
+                handle.write(b"film")
+            source = os.path.join(evening, "Abend.pls")
+            with open(source, "w", encoding="utf-8") as handle:
+                json.dump({"entries": [{"path": clip, "filename": "clip.mp4"}]}, handle)
+            os.makedirs(os.path.join(root, "loose"))
+            with open(os.path.join(root, "loose", "note.txt"), "w", encoding="utf-8") as handle:
+                handle.write("x")
+            rows = player.library_playlists(root)
+            self.assertEqual([row["name"] for row in rows], ["Abend"])
+            self.assertEqual(rows[0]["path"], source)
+
+            plain = os.path.join(root, "plain-out")
+            written = player.place_playlist(source, plain, "Abend", False)
+            with open(written, encoding="utf-8") as handle:
+                copied = json.load(handle)
+            self.assertEqual(copied["entries"][0]["path"], clip)
+            self.assertFalse(os.path.exists(os.path.join(plain, "clip.mp4")))
+
+            bundled = os.path.join(root, "with-media")
+            written = player.place_playlist(source, bundled, "Abend", True)
+            with open(written, encoding="utf-8") as handle:
+                copied = json.load(handle)
+            dest_clip = os.path.join(bundled, "clip.mp4")
+            self.assertEqual(copied["entries"][0]["path"], dest_clip)
+            self.assertEqual(copied["entries"][0]["filename"], "clip.mp4")
+            self.assertTrue(os.path.isfile(dest_clip))
+            self.assertTrue(os.path.isfile(clip))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 class PlaylistFolderNameTests(unittest.TestCase):
