@@ -282,4 +282,12 @@ sudo apt install ./dist/cinema-player_0.3.5~beta-1_all.deb
 
 That pulls in Python 3.12, Tk, mpv, and ffmpeg. The menu entry is **Cinema Player**. DMX over USB needs membership in the `dialout` group.
 
+An RPM installs the same program on Fedora, RHEL, and openSUSE. Build it with `packaging/build-rpm.sh` (needs `rpmbuild`). The package is `dist/cinema-player-0.3.5-beta1.noarch.rpm`.
+
+```bash
+sudo dnf install ./dist/cinema-player-0.3.5-beta1.noarch.rpm
+```
+
+On openSUSE use `sudo zypper install ./dist/cinema-player-0.3.5-beta1.noarch.rpm`.
+
 mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`; on KWin/Plasma Wayland it uses `kscreen-doctor`.
