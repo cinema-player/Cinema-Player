@@ -1,0 +1,4 @@
+#!/bin/sh
+# System launcher. The program finds its data from this script's install root.
+export PYTHONDONTWRITEBYTECODE=1
+exec python3 /usr/share/cinema-player/python/cinema_player.py "$@"

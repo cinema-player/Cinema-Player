@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Cinema Player
+Upstream-Contact: Thomas Winkler <thomas.winkler@iggmp.net>
+Source: http://cinema-player.github.io
+
+Files: *
+Copyright: 2026 Thomas Winkler <thomas.winkler@iggmp.net>
+License: LicenseRef-cinema-player
+ Copyright (C) 2026 Thomas Winkler <thomas.winkler@iggmp.net>
+ http://cinema-player.github.io
+ .
+ The upstream project ships its own copyright notice in COPYRIGHT.

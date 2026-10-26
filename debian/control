@@ -1,0 +1,19 @@
+Source: cinema-player
+Section: video
+Priority: optional
+Maintainer: Thomas Winkler <thomas.winkler@iggmp.net>
+Rules-Requires-Root: no
+Standards-Version: 4.7.0
+
+Package: cinema-player
+Architecture: all
+Depends: python3 (>= 3.12), python3-tk, mpv, ffmpeg, x11-xserver-utils, xfonts-utils, edid-decode
+Recommends: mutter-common-bin, kscreen
+Description: cinema video player for a projector booth
+ Cinema Player runs two mpv instances: one on the projector and one in the
+ booth window. The playlist holds films and stills. The projector picture
+ stays free of menus and on-screen text.
+ .
+ On X11 the projector mode is set with xrandr. GNOME on Wayland uses gdctl
+ (mutter-common-bin). KDE on Wayland uses kscreen-doctor (kscreen).
+ DMX over a USB interface needs the user in the dialout group.

@@ -274,4 +274,12 @@ From the repository root:
 
 `./install.sh` installs system packages (mpv, ffmpeg, xrandr, gdctl, kscreen-doctor), Pixi and the Python environment, registers the application icon, and adds a menu / Desktop launcher. `./start` uses Pixi when it is available, otherwise the local Pixi environment or `.venv`.
 
+A Debian package installs the same program for every user, without Pixi. Build it from the repository root with `debian/rules binary`. The package is `dist/cinema-player_0.3.5~beta-1_all.deb`.
+
+```bash
+sudo apt install ./dist/cinema-player_0.3.5~beta-1_all.deb
+```
+
+That pulls in Python 3.12, Tk, mpv, and ffmpeg. The menu entry is **Cinema Player**. DMX over USB needs membership in the `dialout` group.
+
 mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`; on KWin/Plasma Wayland it uses `kscreen-doctor`.

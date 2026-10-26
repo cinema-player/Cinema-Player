@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cinema Player
+Comment=Video player for a cinematic experience
+Exec=cinema-player
+Icon=cinema-player
+Terminal=false
+StartupNotify=true
+StartupWMClass=Cinema-player
+Categories=AudioVideo;Player;Video;

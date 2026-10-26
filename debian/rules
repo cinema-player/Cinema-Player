@@ -1,0 +1,45 @@
+#!/usr/bin/make -f
+
+pkg := cinema-player
+version := 0.3.5~beta-1
+root := debian/$(pkg)
+share := $(root)/usr/share/$(pkg)
+deb := dist/$(pkg)_$(version)_all.deb
+
+.PHONY: clean build build-indep build-arch binary binary-indep binary-arch
+
+clean:
+	rm -rf $(root) debian/files debian/*.substvars
+
+build: build-indep build-arch
+build-indep:
+build-arch:
+
+binary: binary-indep binary-arch
+binary-arch:
+
+binary-indep: build-indep
+	rm -rf $(root)
+	install -d $(root)/DEBIAN
+	install -d $(root)/usr/bin
+	install -d $(root)/usr/share/applications
+	install -d $(root)/usr/share/icons/hicolor/64x64/apps
+	install -d $(share)/python
+	install -d dist
+	install -m 0755 debian/cinema-player.wrapper $(root)/usr/bin/cinema-player
+	install -m 0644 debian/cinema-player.desktop $(root)/usr/share/applications/cinema-player.desktop
+	install -m 0644 assets/logo/cinema-player-icon.png $(root)/usr/share/icons/hicolor/64x64/apps/cinema-player.png
+	for src in python/*.py; do \
+		case $$(basename $$src) in test_*) continue ;; esac; \
+		install -m 0644 $$src $(share)/python/; \
+	done
+	cp -a assets idle testdata $(share)/
+	mkdir -p $(share)/manual
+	cp -a manual/index.html manual/style.css manual/images $(share)/manual/
+	install -m 0644 pyproject.toml COPYRIGHT $(share)/
+	find $(share) -type d -name __pycache__ -exec rm -rf {} +
+	find $(share) -name '*.pyc' -delete
+	install -m 0755 debian/postinst debian/postrm $(root)/DEBIAN/
+	dpkg-gencontrol -p$(pkg) -P$(root)
+	dpkg-deb --root-owner-group --build $(root) $(deb)
+	rm -rf $(root)
