@@ -3298,11 +3298,13 @@ class VideoPlayerGUI:
         self._set_transport_active(self.btn_pause, paused, "preview", enabled=playing)
         self._set_transport_active(self.btn_still, frozen, "program", enabled=playing)
         if self._resume_reaction_held():
+            self._paint_resume_plate(self._resume_reaction)
             self._set_transport_active(
                 self.btn_play, True, self._resume_reaction, enabled=True,
             )
         else:
             self._resume_reaction = None
+            self._paint_resume_plate(None)
             self._set_transport_active(
                 self.btn_play,
                 (rolling or armed) and not clip_rolling,
@@ -11066,6 +11068,7 @@ class VideoPlayerGUI:
         button.icon_name = "start_program" if self.program_state == "OFF" else "play"
         self._resume_reaction = name
         self._resume_reaction_until = time.monotonic() + RESUME_REACTION_SECONDS
+        self._paint_resume_plate(name)
         self._set_transport_active(button, True, name, enabled=True)
         self._paint_resume_caption()
         root = getattr(self, "root", None)
@@ -11073,6 +11076,18 @@ class VideoPlayerGUI:
             return
         try:
             root.update_idletasks()
+        except tk.TclError:
+            pass
+
+    def _paint_resume_plate(self, name):
+        """Fill the Weiter key while the press is showing. ``None`` puts the panel back."""
+        button = getattr(self, "btn_play", None)
+        host = getattr(button, "master", None) if button is not None else None
+        if host is None:
+            return
+        color = resume_reaction_color(name) if name else COLOR_PANEL
+        try:
+            host.configure(bg=color)
         except tk.TclError:
             pass
 
@@ -11086,21 +11101,23 @@ class VideoPlayerGUI:
         enabled = bool(getattr(button, "_transport_enabled", True))
         if held:
             name = self._resume_reaction
+            fg = COLOR_WHITE
+            bg = resume_reaction_color(name)
+            font = (FONT_SMALL[0], FONT_SMALL[1], "bold")
         elif enabled and self.program_state == "PROGRAM":
-            name = "program"
+            fg = COLOR_PROGRAM
+            bg = COLOR_PANEL
+            font = (FONT_SMALL[0], FONT_SMALL[1], "bold")
         elif enabled and self.program_state == "PLAYING":
-            name = "playing"
+            fg = COLOR_PLAYING
+            bg = COLOR_PANEL
+            font = (FONT_SMALL[0], FONT_SMALL[1], "bold")
         else:
-            try:
-                caption.config(fg=COLOR_TEXT if enabled else COLOR_PLAYED, font=FONT_SMALL)
-            except tk.TclError:
-                pass
-            return
+            fg = COLOR_TEXT if enabled else COLOR_PLAYED
+            bg = COLOR_PANEL
+            font = FONT_SMALL
         try:
-            caption.config(
-                fg=resume_reaction_color(name),
-                font=(FONT_SMALL[0], FONT_SMALL[1], "bold"),
-            )
+            caption.config(fg=fg, bg=bg, font=font)
         except tk.TclError:
             pass
 

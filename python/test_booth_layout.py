@@ -424,7 +424,11 @@ class BoothChromeTests(unittest.TestCase):
         cinema_gui.VideoPlayerGUI.start_or_resume(self.app)
         self.assertEqual(seen["reaction"], "playing")
         self.assertEqual(seen["image"], str(self.app._transport_icon("play-playing")))
-        self.assertEqual(seen["caption"], cinema_gui.COLOR_PLAYING.lower())
+        self.assertEqual(seen["caption"], cinema_gui.COLOR_WHITE.lower())
+        self.assertEqual(
+            str(self.app.btn_play.master.cget("bg")).lower(),
+            cinema_gui.COLOR_PLAYING.lower(),
+        )
 
     def test_stopped_press_lights_program_blue_and_a_rolling_clip_ignores_it(self):
         self._build_program_transport()
@@ -434,6 +438,10 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(
             str(self.app.btn_play.cget("image")),
             str(self.app._transport_icon("start_program-program")),
+        )
+        self.assertEqual(
+            str(self.app.btn_play.master.cget("bg")).lower(),
+            cinema_gui.COLOR_PROGRAM.lower(),
         )
         self.app.program_state = "PLAYING"
         self.app.playlist = [_entry()]
