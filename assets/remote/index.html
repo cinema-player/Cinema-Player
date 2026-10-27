@@ -115,7 +115,24 @@
       margin-bottom: 16px;
       padding-top: 4px;
     }
-    #stop { background: var(--off); color: #fff; }
+    #resume {
+      grid-column: 1 / -1;
+      min-height: 84px;
+      font-size: 1.25rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    #resume[data-reaction="program"] { box-shadow: inset 0 0 0 3px var(--program); }
+    #resume[data-reaction="playing"] { box-shadow: inset 0 0 0 3px var(--playing); }
+    #resume.reaction-program,
+    #resume.reaction-playing {
+      color: #fff;
+      box-shadow: none;
+      opacity: 1;
+    }
+    #resume.reaction-program { background: var(--program); }
+    #resume.reaction-playing { background: var(--playing); }
+    #stop { grid-column: 2; background: var(--off); color: #fff; }
     button {
       appearance: none;
       border: 0;
@@ -291,6 +308,9 @@
     let envelopeSeeking = false;
     let skipTransportConfirm = false;
     let uiLang = "en";
+    let lastState = "OFF";
+    let resumeLit = null;
+    let resumeLitTimer = 0;
     const params = new URLSearchParams(location.search);
     const qToken = (params.get("token") || "").trim();
     const qLang = params.get("lang");
@@ -369,7 +389,12 @@
       document.getElementById("progress").style.width =
         `${Math.round((times.progress || 0) * 100)}%`;
       const actions = data.actions || {};
-      document.getElementById("resume").disabled = !actions.resume;
+      const resumeButton = document.getElementById("resume");
+      resumeButton.disabled = !actions.resume;
+      resumeButton.dataset.reaction = actions.resume
+        ? (state === "PLAYING" ? "playing" : "program")
+        : "";
+      lastState = state;
       document.getElementById("pause").disabled = !actions.pause;
       document.getElementById("still").disabled = !actions.still;
       document.getElementById("stop").disabled = !actions.stop;
@@ -398,6 +423,7 @@
       }
       uiLang = data.language || "en";
       applyLang(uiLang);
+      paintResumeReaction();
       const list = document.getElementById("playlist");
       const canCue = !!(actions.set_program);
       list.innerHTML = (data.playlist || []).map((row) => {
@@ -558,7 +584,48 @@
       else askConfirm(kind, path);
     }
 
-    document.getElementById("resume").onclick = () => command("/api/resume", "POST");
+    function paintResumeReaction() {
+      const button = document.getElementById("resume");
+      const lit = resumeLit && (
+        Date.now() < resumeLit.until || (resumeLit.pending && lastState !== resumeLit.expect)
+      );
+      button.classList.toggle("reaction-program", !!(lit && resumeLit.kind === "program"));
+      button.classList.toggle("reaction-playing", !!(lit && resumeLit.kind === "playing"));
+      if (resumeLit && !lit) resumeLit = null;
+    }
+
+    async function pressResume() {
+      const button = document.getElementById("resume");
+      if (button.disabled || button.dataset.busy === "1") return;
+      button.dataset.busy = "1";
+      // Blue arms a stopped show. Every later Weiter rolls or continues, in green.
+      // The fill stays until the show reports that state, and at least a moment
+      // when the answer comes back immediately.
+      const kind = lastState === "OFF" ? "program" : "playing";
+      resumeLit = {
+        kind: kind,
+        expect: kind === "program" ? "PROGRAM" : "PLAYING",
+        until: Date.now() + 700,
+        pending: true,
+      };
+      paintResumeReaction();
+      try {
+        await command("/api/resume", "POST");
+      } finally {
+        delete button.dataset.busy;
+        if (resumeLit) resumeLit.pending = false;
+        paintResumeReaction();
+        clearTimeout(resumeLitTimer);
+        if (resumeLit) {
+          resumeLitTimer = setTimeout(paintResumeReaction, Math.max(0, resumeLit.until - Date.now()) + 40);
+        }
+      }
+    }
+
+    document.getElementById("resume").addEventListener("pointerdown", (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      pressResume();
+    });
     document.getElementById("pause").onclick = () => transport("pause", "/api/pause");
     document.getElementById("still").onclick = () => transport("still", "/api/still");
     document.getElementById("stop").onclick = () => transport("stop", "/api/stop");

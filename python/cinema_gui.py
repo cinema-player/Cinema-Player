@@ -188,6 +188,17 @@ def default_idle_media_path():
 COLOR_OFF = "#c62828"
 COLOR_PROGRAM = "#1565c0"
 COLOR_PLAYING = "#2e9d3a"
+# How long a Weiter press stays lit if playback itself returns quickly.
+RESUME_REACTION_SECONDS = 0.45
+
+
+def resume_reaction_name(program_state):
+    """Colour of a Weiter press: blue arms a stopped show, green rolls or continues."""
+    return "program" if program_state == "OFF" else "playing"
+
+
+def resume_reaction_color(name):
+    return COLOR_PROGRAM if name == "program" else COLOR_PLAYING
 COLOR_PREVIEW = "#c9a227"
 COLOR_CALIBRATION = "#500070"
 COLOR_WARNING = "#d32f2f"
@@ -3200,6 +3211,9 @@ class VideoPlayerGUI:
         self.btn_pause = self._icon_button(row, "pause", self.confirm_pause, t("pause"), caption=True)
         self.btn_still = self._icon_button(row, "still", self.confirm_still, t("still"), caption=True)
         self.btn_play = self._icon_button(row, "start_program", self.start_or_resume, t("start"), caption=True)
+        # Weiter sits apart from Stop, Pause and Still so the press is easy to find.
+        self.btn_play.master.pack_configure(padx=(28, 0))
+        self.btn_play.bind("<ButtonPress-1>", self._on_resume_press)
 
     def _icon_button(self, parent, icon_name, command, fallback_text, tip=None, caption=False):
         host = parent
@@ -3283,12 +3297,19 @@ class VideoPlayerGUI:
         self._set_transport_active(self.btn_stop, False, enabled=self.program_state != "OFF")
         self._set_transport_active(self.btn_pause, paused, "preview", enabled=playing)
         self._set_transport_active(self.btn_still, frozen, "program", enabled=playing)
-        self._set_transport_active(
-            self.btn_play,
-            (rolling or armed) and not clip_rolling,
-            "playing" if rolling else "program",
-            enabled=not clip_rolling,
-        )
+        if self._resume_reaction_held():
+            self._set_transport_active(
+                self.btn_play, True, self._resume_reaction, enabled=True,
+            )
+        else:
+            self._resume_reaction = None
+            self._set_transport_active(
+                self.btn_play,
+                (rolling or armed) and not clip_rolling,
+                "playing" if rolling else "program",
+                enabled=not clip_rolling,
+            )
+        self._paint_resume_caption()
 
         entry = self.selected_entry()
         preview_ok = bool(entry and not entry.missing and not entry.is_image)
@@ -11019,6 +11040,70 @@ class VideoPlayerGUI:
             play=play,
         )
 
+    def _resume_reaction_held(self):
+        name = getattr(self, "_resume_reaction", None)
+        if not name:
+            return False
+        return time.monotonic() < (getattr(self, "_resume_reaction_until", 0) or 0)
+
+    def _on_resume_press(self, _event=None):
+        """Light the key on the way down, before the click releases into the action."""
+        if not getattr(self.btn_play, "_transport_enabled", True):
+            return
+        self._show_resume_reaction()
+
+    def _show_resume_reaction(self):
+        """Fill Weiter immediately, in program blue or playing green.
+
+        Playback can spend a while switching the projector. The light is the
+        press itself and is painted before that work starts. A phone Weiter
+        uses the same path, so the booth key answers at once.
+        """
+        button = getattr(self, "btn_play", None)
+        if button is None or not getattr(button, "_transport_enabled", True):
+            return
+        name = resume_reaction_name(self.program_state)
+        button.icon_name = "start_program" if self.program_state == "OFF" else "play"
+        self._resume_reaction = name
+        self._resume_reaction_until = time.monotonic() + RESUME_REACTION_SECONDS
+        self._set_transport_active(button, True, name, enabled=True)
+        self._paint_resume_caption()
+        root = getattr(self, "root", None)
+        if root is None:
+            return
+        try:
+            root.update_idletasks()
+        except tk.TclError:
+            pass
+
+    def _paint_resume_caption(self):
+        """Weiter stays in the program colour: blue while armed, green while it continues."""
+        button = getattr(self, "btn_play", None)
+        caption = getattr(button, "caption", None) if button is not None else None
+        if caption is None:
+            return
+        held = self._resume_reaction_held()
+        enabled = bool(getattr(button, "_transport_enabled", True))
+        if held:
+            name = self._resume_reaction
+        elif enabled and self.program_state == "PROGRAM":
+            name = "program"
+        elif enabled and self.program_state == "PLAYING":
+            name = "playing"
+        else:
+            try:
+                caption.config(fg=COLOR_TEXT if enabled else COLOR_PLAYED, font=FONT_SMALL)
+            except tk.TclError:
+                pass
+            return
+        try:
+            caption.config(
+                fg=resume_reaction_color(name),
+                font=(FONT_SMALL[0], FONT_SMALL[1], "bold"),
+            )
+        except tk.TclError:
+            pass
+
     def start_or_resume(self):
         if not self.playlist:
             if self._remote_action:
@@ -11026,6 +11111,11 @@ class VideoPlayerGUI:
             self.import_media()
             if not self.playlist:
                 return
+        if self.program_state == "PLAYING" and not (
+            self.still_waiting or self._program_loop_active() or self.main_pause
+        ):
+            return
+        self._show_resume_reaction()
         if self.program_state == "OFF":
             # Start only arms the program; Resume then rolls the clip.
             self.program_state = "PROGRAM"
