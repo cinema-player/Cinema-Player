@@ -784,8 +784,6 @@ class VideoInfo:
     height: int
     fps: float
     fps_fraction: Fraction
-    aspect: str = "--"
-    pixel_aspect: str = "--"
 
 
 @dataclass
@@ -1638,72 +1636,6 @@ def aspect_label(width, height, display_ar=None, sample_ar=None):
         if abs(ratio - value) < 0.05:
             return label
     return format_aspect_ratio(ratio, 1.0)
-
-
-TARGET_OUTPUT_ASPECT = 16 / 9
-# Square-pixel 16:9 canvas. SAR is applied first so anamorphic 16:9 stays 16:9
-# and 4:3 is pillarboxed. Wider pictures are never sent through this filter.
-MPV_16X9_VF = (
-    "lavfi=[scale=iw*sar:ih,setsar=1,pad=ceil(ih*16/9/2)*2:ih:(ow-iw)/2:0]"
-)
-
-
-def pixel_aspect_is_square(value):
-    """True when PAR is missing or 1:1."""
-    if value in (None, "", "--"):
-        return True
-    return same_aspect_ratio(value, "1:1")
-
-
-def output_aspect_ratio(aspect=None, pixel_aspect=None, width=0, height=0):
-    """Display aspect as a float, from labels or the storage size."""
-    parsed = parse_aspect_ratio(aspect)
-    if parsed:
-        return parsed[0] / parsed[1]
-    return display_aspect_ratio(width, height, aspect, pixel_aspect)
-
-
-def needs_16x9_output(aspect=None, pixel_aspect=None, width=0, height=0):
-    """True when mpv should emit a 16:9 frame.
-
-    Narrower-than-16:9 pictures are pillarboxed. Non-square pixels are
-    corrected first. Wider formats (21:9, 1.85, 2:1) stay as they are.
-    """
-    ratio = output_aspect_ratio(aspect, pixel_aspect, width, height)
-    if not ratio:
-        return False
-    if ratio > TARGET_OUTPUT_ASPECT + 0.05:
-        return False
-    if ratio < TARGET_OUTPUT_ASPECT - 0.05:
-        return True
-    return not pixel_aspect_is_square(pixel_aspect)
-
-
-def sixteen_by_nine_size(width, height):
-    """Even 16:9 size that keeps this picture height (pillarbox)."""
-    if not height:
-        return width, height
-    out_w = int(round(height * TARGET_OUTPUT_ASPECT))
-    if out_w % 2:
-        out_w += 1
-    return out_w, height
-
-
-def mpv_picture_filter(entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0):
-    """Per-file vf that forces a 16:9 canvas, or empty when none is needed."""
-    if entry is not None:
-        aspect = getattr(entry, "aspect", aspect)
-        pixel_aspect = getattr(entry, "pixel_aspect", pixel_aspect)
-        width = getattr(entry, "width", width) or 0
-        height = getattr(entry, "height", height) or 0
-    if not needs_16x9_output(aspect, pixel_aspect, width, height):
-        return ""
-    return MPV_16X9_VF
-
-
-def compose_mpv_vf(*parts):
-    """Join non-empty mpv video filters."""
-    return ",".join(part for part in parts if part)
 
 
 def media_file_available(entry):
@@ -4373,9 +4305,7 @@ class VideoOutputManager:
         result = subprocess.run(
             [
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries",
-                "stream=width,height,avg_frame_rate,r_frame_rate,"
-                "sample_aspect_ratio,display_aspect_ratio",
+                "-show_entries", "stream=width,height,avg_frame_rate,r_frame_rate",
                 "-of", "json", filename
             ],
             capture_output=True, text=True, check=True
@@ -4387,13 +4317,7 @@ class VideoOutputManager:
         if not rate or rate == "0/0":
             rate = stream["r_frame_rate"]
         fps_fraction = Fraction(rate)
-        sample_ar = stream.get("sample_aspect_ratio")
-        display_ar = stream.get("display_aspect_ratio")
-        return VideoInfo(
-            filename, width, height, float(fps_fraction), fps_fraction,
-            aspect=aspect_label(width, height, display_ar, sample_ar),
-            pixel_aspect=pixel_aspect_label(width, height, sample_ar, display_ar),
-        )
+        return VideoInfo(filename, width, height, float(fps_fraction), fps_fraction)
 
     @staticmethod
     def half_refresh_rate(fps):
@@ -4485,42 +4409,6 @@ class VideoOutputManager:
         best = max(modes, key=lambda m: m.width * m.height)
         return best.width, best.height
 
-    def _preferred_16x9_size(self, modes):
-        """Native or listed 16:9 size, so 4:3 and anamorphic clips stay 16:9."""
-        native = None
-        if self.video_output:
-            native = self.native_resolution(self.video_output)
-        if native and native[1] and abs(native[0] / native[1] - TARGET_OUTPUT_ASPECT) < 0.05:
-            return native
-        sixteen = [
-            (mode.width, mode.height) for mode in (modes or [])
-            if mode.height and abs(mode.width / mode.height - TARGET_OUTPUT_ASPECT) < 0.05
-        ]
-        if not sixteen:
-            return None
-        unique = list(dict.fromkeys(sixteen))
-        if native:
-            area = native[0] * native[1]
-            unique.sort(key=lambda size: abs(size[0] * size[1] - area))
-            return unique[0]
-        return max(unique, key=lambda size: size[0] * size[1])
-
-    def projection_size_for_video(self, video, modes=None):
-        """Pixel size to ask of the projector for this clip.
-
-        Narrower-than-16:9 and non-square-PAR pictures use a 16:9 frame.
-        Wider formats keep their storage size so 21:9 zoom stays intact.
-        """
-        width, height = video.width, video.height
-        if not needs_16x9_output(video.aspect, video.pixel_aspect, width, height):
-            return width, height
-        if modes is None:
-            modes = self.get_modes(self.video_output) if self.video_output else []
-        chosen = self._preferred_16x9_size(modes)
-        if chosen:
-            return chosen
-        return sixteen_by_nine_size(width, height)
-
     def find_refresh_mode(self, modes, width, height, rate):
         matches = [
             m for m in modes
@@ -4538,7 +4426,7 @@ class VideoOutputManager:
 
         targets = self.target_refresh_rates(video.fps)
         self.target_refresh = targets[0][0] if targets else video.fps
-        width, height = self.projection_size_for_video(video, modes)
+        width, height = video.width, video.height
 
         def match_targets(mode_list):
             for rate, _multiplier in targets:
@@ -5020,7 +4908,6 @@ class MPVController:
         self.pending_start = None
         self.pending_end = None
         self.play_on_load = False
-        self.output_vf = ""
 
     def _read_log_tail(self, limit=2000):
         try:
@@ -5144,13 +5031,12 @@ class MPVController:
 
     def load_file(
         self, filename, start=None, end=None, play=True, aid=None, sid=None,
-        loop=None, clear_end=False, vf=None,
+        loop=None, clear_end=False,
     ):
         self.loaded_path = os.path.abspath(filename)
         self.pending_start = None if start is None else float(start)
         self.pending_end = None if end is None else float(end)
         self.play_on_load = play
-        self.output_vf = vf or ""
         options = {}
         if self.pending_start is not None:
             options["start"] = str(self.pending_start)
@@ -5166,10 +5052,6 @@ class MPVController:
             options["aid"] = str(aid)
         if sid is not None:
             options["sid"] = str(sid)
-        # 0.37 packs options as comma-separated key=value; a lavfi graph
-        # contains commas, so only 0.38+ can take the pad as a per-file vf.
-        if self.output_vf and mpv_version_tuple(read_mpv_version(self.mpv_path)) >= (0, 38, 0):
-            options["vf"] = self.output_vf
         # Per-file options, chosen for this mpv version. A follow-up
         # loop-file property would hit the HDMI keepalive still on screen.
         self.command(*mpv_loadfile_command(
@@ -5196,7 +5078,6 @@ class MPVController:
         self.pending_start = None
         self.pending_end = None
         self.play_on_load = True
-        self.output_vf = ""
         self.set_ab_loop(None, None)
         self.set_loop_file(True)
         self.set_vid(True)
@@ -5216,15 +5097,10 @@ class MPVController:
             return
         self.command("set_property", "end", f"{float(end):.3f}")
 
-    def apply_picture_filter(self, extra=""):
-        """Restore the 16:9 pad, optionally stacked with a still fade."""
-        self.command("set_property", "vf", compose_mpv_vf(self.output_vf, extra))
-
     def apply_pending_range(self):
         if self.pending_start is not None:
             self.set_position(self.pending_start)
         self.set_end(self.pending_end)
-        self.apply_picture_filter()
         if self.play_on_load:
             self.set_pause(False)
         else:

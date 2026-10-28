@@ -427,7 +427,6 @@ class HdmiKeepaliveTests(unittest.TestCase):
         ctl.apply_pending_range()
         self.assertIn(("set_property", "end", "none"), sent)
         self.assertNotIn(("set_property", "end", "no"), sent)
-        self.assertIn(("set_property", "vf", ""), sent)
 
 
 if __name__ == "__main__":
