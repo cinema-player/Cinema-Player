@@ -1689,6 +1689,28 @@ def sixteen_by_nine_size(width, height):
     return out_w, height
 
 
+def sixteen_nine_hint_fields(entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0):
+    """Playlist cells that should say this picture is padded to 16:9.
+
+    Narrower-than-16:9 formats mark Format. Non-square PAR marks PAR.
+    Wider pictures (21:9) stay unmarked because they are not converted.
+    """
+    if entry is not None:
+        aspect = getattr(entry, "aspect", aspect)
+        pixel_aspect = getattr(entry, "pixel_aspect", pixel_aspect)
+        width = getattr(entry, "width", width) or 0
+        height = getattr(entry, "height", height) or 0
+    if not needs_16x9_output(aspect, pixel_aspect, width, height):
+        return set()
+    fields = set()
+    ratio = output_aspect_ratio(aspect, pixel_aspect, width, height)
+    if ratio and ratio < TARGET_OUTPUT_ASPECT - 0.05:
+        fields.add("aspect")
+    if not pixel_aspect_is_square(pixel_aspect):
+        fields.add("par")
+    return fields
+
+
 def mpv_picture_filter(entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0):
     """Per-file vf that forces a 16:9 canvas, or empty when none is needed."""
     if entry is not None:

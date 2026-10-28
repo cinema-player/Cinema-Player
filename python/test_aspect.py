@@ -48,6 +48,41 @@ class Needs16x9OutputTests(unittest.TestCase):
         self.assertFalse(player.needs_16x9_output("--", "--"))
 
 
+class SixteenNineHintFieldsTests(unittest.TestCase):
+    def test_4x3_marks_format_only(self):
+        entry = player.PlaylistEntry(
+            path="/clip.mp4", aspect="4:3", pixel_aspect="1:1",
+            width=1440, height=1080,
+        )
+        self.assertEqual(player.sixteen_nine_hint_fields(entry), {"aspect"})
+
+    def test_anamorphic_16x9_marks_par_only(self):
+        entry = player.PlaylistEntry(
+            path="/dv.avi", aspect="16:9", pixel_aspect="64:45",
+            width=720, height=576,
+        )
+        self.assertEqual(player.sixteen_nine_hint_fields(entry), {"par"})
+
+    def test_4x3_with_non_square_par_marks_both(self):
+        entry = player.PlaylistEntry(
+            path="/pal.avi", aspect="4:3", pixel_aspect="16:15",
+            width=720, height=576,
+        )
+        self.assertEqual(player.sixteen_nine_hint_fields(entry), {"aspect", "par"})
+
+    def test_wide_and_square_16x9_are_unmarked(self):
+        wide = player.PlaylistEntry(
+            path="/wide.mp4", aspect="21:9", pixel_aspect="1:1",
+            width=2560, height=1080,
+        )
+        hd = player.PlaylistEntry(
+            path="/hd.mp4", aspect="16:9", pixel_aspect="1:1",
+            width=1920, height=1080,
+        )
+        self.assertEqual(player.sixteen_nine_hint_fields(wide), set())
+        self.assertEqual(player.sixteen_nine_hint_fields(hd), set())
+
+
 class MpvPictureFilterTests(unittest.TestCase):
     def test_filter_is_the_16x9_pad_for_4x3(self):
         entry = player.PlaylistEntry(

@@ -60,6 +60,23 @@ class PlaylistMarkTests(unittest.TestCase):
         self.assertNotIn("Rate", notes)
         self.assertNotIn("Zoom", notes)
 
+    def test_narrow_format_and_par_show_16x9_conversion(self):
+        four_three = _entry(aspect="4:3", pixel_aspect="1:1", width=1440, height=1080)
+        self.assertEqual(cinema_gui.playlist_aspect_text(four_three), "4:3 →16:9")
+        self.assertEqual(cinema_gui.playlist_par_text(four_three), "1:1")
+        anamorphic = _entry(aspect="16:9", pixel_aspect="64:45", width=720, height=576)
+        self.assertEqual(cinema_gui.playlist_aspect_text(anamorphic), "16:9")
+        self.assertEqual(cinema_gui.playlist_par_text(anamorphic), "64:45 →16:9")
+        pal = _entry(
+            aspect="4:3", pixel_aspect="16:15", width=720, height=576,
+            aspect_warning=True, par_warning=True,
+        )
+        self.assertEqual(cinema_gui.playlist_aspect_text(pal), "4:3 →16:9 Zoom")
+        self.assertEqual(cinema_gui.playlist_par_text(pal), "16:15 →16:9 PAR")
+        wide = _entry(aspect="21:9", pixel_aspect="1:1", width=2560, height=1080)
+        self.assertEqual(cinema_gui.playlist_aspect_text(wide), "21:9")
+        self.assertEqual(cinema_gui.playlist_par_text(wide), "1:1")
+
     def test_reload_replaces_picture_metadata_and_keeps_cues(self):
         entry = _entry(
             hdr_status="Unknown", colorspace="--", autoplay=True, volume=80,
@@ -301,6 +318,28 @@ class BoothChromeTests(unittest.TestCase):
             texts,
             ["Dauer", "fps", "Format", "PAR", "Farbe", "Laut", "LUFS", "Hinweise"],
         )
+
+    def test_playlist_row_shows_16x9_conversion_on_format_and_par(self):
+        parent = tk.Frame(self.root)
+        parent.pack(fill="both", expand=True)
+        cinema_gui.VideoPlayerGUI._build_playlist(self.app, parent)
+        self.app.projection_zoom.set(False)
+        self.app.playlist = [
+            _entry(
+                path="/media/films/day/pal.avi", aspect="4:3", pixel_aspect="16:15",
+                width=720, height=576, fps=25,
+            ),
+            _entry(
+                path="/media/films/day/hd.mp4", aspect="16:9", pixel_aspect="1:1",
+                width=1920, height=1080, fps=24,
+            ),
+        ]
+        cinema_gui.VideoPlayerGUI.refresh_playlist(self.app)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.row_widgets[0]["aspect"].cget("text"), "4:3 →16:9")
+        self.assertEqual(self.app.row_widgets[0]["par"].cget("text"), "16:15 →16:9")
+        self.assertEqual(self.app.row_widgets[1]["aspect"].cget("text"), "16:9")
+        self.assertEqual(self.app.row_widgets[1]["par"].cget("text"), "1:1")
 
     def test_mouse_wheel_scrolls_the_playlist_from_a_row(self):
         parent = tk.Frame(self.root, height=180)
