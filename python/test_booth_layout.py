@@ -374,6 +374,86 @@ class BoothChromeTests(unittest.TestCase):
         )
         self.assertEqual(button.caption.cget("text"), "Pause")
 
+    def test_resume_reaction_is_blue_to_arm_and_green_to_roll(self):
+        self.assertEqual(cinema_gui.resume_reaction_name("OFF"), "program")
+        self.assertEqual(cinema_gui.resume_reaction_color("program"), cinema_gui.COLOR_PROGRAM)
+        self.assertEqual(cinema_gui.resume_reaction_name("PROGRAM"), "playing")
+        self.assertEqual(cinema_gui.resume_reaction_name("PLAYING"), "playing")
+        self.assertEqual(cinema_gui.resume_reaction_color("playing"), cinema_gui.COLOR_PLAYING)
+
+    def _build_program_transport(self):
+        self.app.root = self.root
+        parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
+        parent.pack()
+        cinema_gui.VideoPlayerGUI._build_transport(self.app, parent)
+        self.app.main_pause = False
+        self.app.blackout = False
+        self.app.still_waiting = False
+        self.app._program_loop_active = lambda: False
+        return parent
+
+    def test_weiter_sits_apart_and_an_armed_show_uses_the_blue_icon(self):
+        self._build_program_transport()
+        padx = self.app.btn_play.master.pack_info()["padx"]
+        self.assertIn("28", str(padx))
+        self.app.program_state = "PROGRAM"
+        self.app.btn_play.icon_name = "play"
+        cinema_gui.VideoPlayerGUI.refresh_transport(self.app)
+        self.assertEqual(
+            str(self.app.btn_play.cget("image")),
+            str(self.app._transport_icon("play-program")),
+        )
+        self.assertEqual(
+            str(self.app.btn_play.caption.cget("fg")).lower(),
+            cinema_gui.COLOR_PROGRAM.lower(),
+        )
+
+    def test_weiter_press_lights_before_the_clip_starts(self):
+        self._build_program_transport()
+        self.app.program_state = "PROGRAM"
+        self.app.playlist = [_entry()]
+        self.app._remote_action = False
+        seen = {}
+
+        def start_current_clip():
+            seen["reaction"] = self.app._resume_reaction
+            seen["image"] = str(self.app.btn_play.cget("image"))
+            seen["caption"] = str(self.app.btn_play.caption.cget("fg")).lower()
+
+        self.app.start_current_clip = start_current_clip
+        cinema_gui.VideoPlayerGUI.start_or_resume(self.app)
+        self.assertEqual(seen["reaction"], "playing")
+        self.assertEqual(seen["image"], str(self.app._transport_icon("play-playing")))
+        self.assertEqual(seen["caption"], cinema_gui.COLOR_WHITE.lower())
+        self.assertEqual(
+            str(self.app.btn_play.master.cget("bg")).lower(),
+            cinema_gui.COLOR_PLAYING.lower(),
+        )
+
+    def test_stopped_press_lights_program_blue_and_a_rolling_clip_ignores_it(self):
+        self._build_program_transport()
+        self.app.program_state = "OFF"
+        cinema_gui.VideoPlayerGUI._show_resume_reaction(self.app)
+        self.assertEqual(self.app._resume_reaction, "program")
+        self.assertEqual(
+            str(self.app.btn_play.cget("image")),
+            str(self.app._transport_icon("start_program-program")),
+        )
+        self.assertEqual(
+            str(self.app.btn_play.master.cget("bg")).lower(),
+            cinema_gui.COLOR_PROGRAM.lower(),
+        )
+        self.app.program_state = "PLAYING"
+        self.app.playlist = [_entry()]
+        self.app._remote_action = False
+        self.app._resume_reaction = None
+        self.app._resume_reaction_until = 0
+        called = []
+        self.app.start_current_clip = lambda: called.append("start")
+        cinema_gui.VideoPlayerGUI.start_or_resume(self.app)
+        self.assertEqual(called, [])
+        self.assertFalse(cinema_gui.VideoPlayerGUI._resume_reaction_held(self.app))
+
     def test_idle_media_shares_the_next_clip_line(self):
         parent = tk.Frame(self.root)
         parent.pack(fill="x")
