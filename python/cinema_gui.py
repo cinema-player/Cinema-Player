@@ -4581,14 +4581,12 @@ class VideoPlayerGUI:
         )
         self.beamer_ok.pack(side="right")
 
-        self.beamer_hwdec_summary = self._beamer_value_row(panel, "beamer_hwdec")
-
         self.beamer_summary = tk.Frame(panel, bg=COLOR_PANEL)
-        self.beamer_resolution = self._beamer_value_row(self.beamer_summary, "beamer_resolution")
-        self.beamer_rate = self._beamer_value_row(self.beamer_summary, "beamer_rate")
-        self.beamer_colorspace_value = self._beamer_value_row(
-            self.beamer_summary, "beamer_colorspace",
-        )
+        chosen = tk.Frame(self.beamer_summary, bg=COLOR_PANEL)
+        chosen.pack(fill="x", padx=8, pady=(0, 4))
+        self.beamer_resolution = self._beamer_inline_value(chosen, "beamer_resolution")
+        self.beamer_rate = self._beamer_inline_value(chosen, "beamer_rate")
+        self.beamer_colorspace_value = self._beamer_inline_value(chosen, "beamer_colorspace")
         self.beamer_drop_summary = tk.Label(
             self.beamer_summary, text="", font=FONT_SMALL, bg=COLOR_PANEL,
             fg=COLOR_OFF, anchor="w",
@@ -4697,6 +4695,19 @@ class VideoPlayerGUI:
             row, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
         )
         value.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        return value
+
+    def _beamer_inline_value(self, parent, key):
+        """Label and value packed left, so several set values share one row."""
+        group = tk.Frame(parent, bg=COLOR_PANEL)
+        group.pack(side="left", padx=(0, 16))
+        tk.Label(
+            group, text=t(key), font=FONT_SMALL, bg=COLOR_PANEL, fg=COLOR_MUTED,
+        ).pack(side="left")
+        value = tk.Label(
+            group, text="--", font=FONT_STATUS, bg=COLOR_PANEL, fg=COLOR_TEXT, anchor="w",
+        )
+        value.pack(side="left", padx=(8, 0))
         return value
 
     def _toggle_beamer_details(self, _event=None):
@@ -5781,7 +5792,6 @@ class VideoPlayerGUI:
 
     def _refresh_beamer_decode(self):
         hwdec = getattr(self, "beamer_hwdec", None)
-        hwdec_summary = getattr(self, "beamer_hwdec_summary", None)
         mpv_drops = getattr(self, "beamer_drops_mpv", None)
         decoder_drops = getattr(self, "beamer_drops_decoder", None)
         if hwdec is None or mpv_drops is None or decoder_drops is None:
@@ -5789,16 +5799,12 @@ class VideoPlayerGUI:
         summary = getattr(self, "beamer_drop_summary", None)
         if not self._program_decode_active():
             hwdec.config(text="--", fg=COLOR_TEXT)
-            if hwdec_summary is not None:
-                hwdec_summary.config(text="--", fg=COLOR_TEXT)
             mpv_drops.config(text="--", fg=COLOR_TEXT)
             decoder_drops.config(text="--", fg=COLOR_TEXT)
             self._set_drop_summary(summary, "")
             return
         name = format_hwdec_current(self.program_hwdec) or "--"
         hwdec.config(text=name, fg=COLOR_TEXT)
-        if hwdec_summary is not None:
-            hwdec_summary.config(text=name, fg=COLOR_TEXT)
         vo = parse_mpv_count(self.program_frame_drops)
         decoder = parse_mpv_count(self.program_decoder_drops)
         mpv_drops.config(text=str(vo), fg=COLOR_OFF if vo else COLOR_TEXT)

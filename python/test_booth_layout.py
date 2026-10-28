@@ -1254,10 +1254,8 @@ class BeamerSummaryTests(unittest.TestCase):
         self.app.program_hwdec = "nvdec-copy"
         cinema_gui.VideoPlayerGUI._refresh_beamer_decode(self.app)
         self.assertEqual(self.app.beamer_hwdec.cget("text"), "nvdec-copy")
-        self.assertEqual(self.app.beamer_hwdec_summary.cget("text"), "nvdec-copy")
-        self.assertEqual(
-            self.app.beamer_hwdec_summary.master.master, self.app.beamer_summary.master,
-        )
+        self.assertEqual(self.app.beamer_hwdec.master.master, self.app.beamer_details)
+        self.assertFalse(self.app.beamer_hwdec.winfo_ismapped())
 
     def test_program_light_block_hides_when_control_is_off(self):
         parent = tk.Frame(self.root)

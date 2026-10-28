@@ -132,9 +132,27 @@ class BeamerFoldTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_ok.cget("text"), "OK")
         self.assertEqual(self.app.beamer_gpu.master.master, self.app.beamer_details)
         self.assertFalse(self.app.beamer_gpu.winfo_ismapped())
-        self.assertEqual(self.app.beamer_hwdec_summary.cget("text"), "--")
-        self.assertEqual(
-            self.app.beamer_hwdec_summary.master.master, self.app.beamer_summary.master,
+        self.assertEqual(self.app.beamer_hwdec.cget("text"), "--")
+        self.assertEqual(self.app.beamer_hwdec.master.master, self.app.beamer_details)
+        self.assertFalse(self.app.beamer_hwdec.winfo_ismapped())
+        line = self.app.beamer_resolution.master.master
+        self.assertEqual(self.app.beamer_rate.master.master, line)
+        self.assertEqual(self.app.beamer_colorspace_value.master.master, line)
+        self.assertLess(
+            self.app.beamer_resolution.winfo_rootx(),
+            self.app.beamer_rate.winfo_rootx(),
+        )
+        self.assertLess(
+            self.app.beamer_rate.winfo_rootx(),
+            self.app.beamer_colorspace_value.winfo_rootx(),
+        )
+        self.assertLess(
+            abs(self.app.beamer_resolution.winfo_rooty() - self.app.beamer_rate.winfo_rooty()),
+            4,
+        )
+        self.assertLess(
+            abs(self.app.beamer_rate.winfo_rooty() - self.app.beamer_colorspace_value.winfo_rooty()),
+            4,
         )
 
     def test_arrow_opens_and_closes_the_full_readout(self):
@@ -149,6 +167,8 @@ class BeamerFoldTests(unittest.TestCase):
         self.assertEqual(self.app.beamer_fold_tip.text, "Nur eingestellte Werte anzeigen")
         self.assertEqual(self.app.beamer_gpu.cget("text"), "NVIDIA GeForce RTX 4070")
         self.assertTrue(self.app.beamer_gpu.winfo_ismapped())
+        self.assertTrue(self.app.beamer_hwdec.winfo_ismapped())
+        self.assertEqual(self.app.beamer_summary.winfo_ismapped(), 0)
         children = self.app.beamer_details.pack_slaves()
         gpu_row = self.app.beamer_gpu.master
         device_row = self.app.beamer_device.master
