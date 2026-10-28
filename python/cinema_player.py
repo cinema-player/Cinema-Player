@@ -1663,12 +1663,14 @@ def output_aspect_ratio(aspect=None, pixel_aspect=None, width=0, height=0):
     return display_aspect_ratio(width, height, aspect, pixel_aspect)
 
 
-def needs_16x9_output(aspect=None, pixel_aspect=None, width=0, height=0):
+def needs_16x9_output(aspect=None, pixel_aspect=None, width=0, height=0, enabled=True):
     """True when mpv should emit a 16:9 frame.
 
     Narrower-than-16:9 pictures are pillarboxed. Non-square pixels are
     corrected first. Wider formats (21:9, 1.85, 2:1) stay as they are.
     """
+    if not enabled:
+        return False
     ratio = output_aspect_ratio(aspect, pixel_aspect, width, height)
     if not ratio:
         return False
@@ -1689,7 +1691,9 @@ def sixteen_by_nine_size(width, height):
     return out_w, height
 
 
-def sixteen_nine_hint_fields(entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0):
+def sixteen_nine_hint_fields(
+    entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0, enabled=True,
+):
     """Playlist cells that should say this picture is padded to 16:9.
 
     Narrower-than-16:9 formats mark Format. Non-square PAR marks PAR.
@@ -1700,7 +1704,7 @@ def sixteen_nine_hint_fields(entry=None, *, aspect=None, pixel_aspect=None, widt
         pixel_aspect = getattr(entry, "pixel_aspect", pixel_aspect)
         width = getattr(entry, "width", width) or 0
         height = getattr(entry, "height", height) or 0
-    if not needs_16x9_output(aspect, pixel_aspect, width, height):
+    if not needs_16x9_output(aspect, pixel_aspect, width, height, enabled=enabled):
         return set()
     fields = set()
     ratio = output_aspect_ratio(aspect, pixel_aspect, width, height)
@@ -1711,14 +1715,16 @@ def sixteen_nine_hint_fields(entry=None, *, aspect=None, pixel_aspect=None, widt
     return fields
 
 
-def mpv_picture_filter(entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0):
+def mpv_picture_filter(
+    entry=None, *, aspect=None, pixel_aspect=None, width=0, height=0, enabled=True,
+):
     """Per-file vf that forces a 16:9 canvas, or empty when none is needed."""
     if entry is not None:
         aspect = getattr(entry, "aspect", aspect)
         pixel_aspect = getattr(entry, "pixel_aspect", pixel_aspect)
         width = getattr(entry, "width", width) or 0
         height = getattr(entry, "height", height) or 0
-    if not needs_16x9_output(aspect, pixel_aspect, width, height):
+    if not needs_16x9_output(aspect, pixel_aspect, width, height, enabled=enabled):
         return ""
     return MPV_16X9_VF
 
@@ -4527,14 +4533,16 @@ class VideoOutputManager:
             return unique[0]
         return max(unique, key=lambda size: size[0] * size[1])
 
-    def projection_size_for_video(self, video, modes=None):
+    def projection_size_for_video(self, video, modes=None, pad_16x9=True):
         """Pixel size to ask of the projector for this clip.
 
         Narrower-than-16:9 and non-square-PAR pictures use a 16:9 frame.
         Wider formats keep their storage size so 21:9 zoom stays intact.
         """
         width, height = video.width, video.height
-        if not needs_16x9_output(video.aspect, video.pixel_aspect, width, height):
+        if not needs_16x9_output(
+            video.aspect, video.pixel_aspect, width, height, enabled=pad_16x9,
+        ):
             return width, height
         if modes is None:
             modes = self.get_modes(self.video_output) if self.video_output else []
@@ -4553,14 +4561,14 @@ class VideoOutputManager:
             return matches[0]
         return None
 
-    def find_best_mode(self, video, create=True):
+    def find_best_mode(self, video, create=True, pad_16x9=True):
         modes = self.get_modes(self.video_output)
         if not modes:
             return None, False
 
         targets = self.target_refresh_rates(video.fps)
         self.target_refresh = targets[0][0] if targets else video.fps
-        width, height = self.projection_size_for_video(video, modes)
+        width, height = self.projection_size_for_video(video, modes, pad_16x9=pad_16x9)
 
         def match_targets(mode_list):
             for rate, _multiplier in targets:
@@ -4919,12 +4927,12 @@ class VideoOutputManager:
 
         self.video_mode = mode
 
-    def prepare_for_video(self, filename):
+    def prepare_for_video(self, filename, pad_16x9=True):
         if not self.video_output:
             self.select_video_output()
 
         video = self.get_video_info(filename)
-        mode, matched = self.find_best_mode(video)
+        mode, matched = self.find_best_mode(video, pad_16x9=pad_16x9)
         if mode is None:
             raise RuntimeError("Kein geeigneter Display-Modus gefunden.")
 

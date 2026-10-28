@@ -76,6 +76,8 @@ class PlaylistMarkTests(unittest.TestCase):
         wide = _entry(aspect="21:9", pixel_aspect="1:1", width=2560, height=1080)
         self.assertEqual(cinema_gui.playlist_aspect_text(wide), "21:9")
         self.assertEqual(cinema_gui.playlist_par_text(wide), "1:1")
+        self.assertEqual(cinema_gui.playlist_aspect_text(four_three, pad_16x9=False), "4:3")
+        self.assertEqual(cinema_gui.playlist_par_text(anamorphic, pad_16x9=False), "64:45")
 
     def test_reload_replaces_picture_metadata_and_keeps_cues(self):
         entry = _entry(
@@ -340,6 +342,11 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(self.app.row_widgets[0]["par"].cget("text"), "16:15 →16:9")
         self.assertEqual(self.app.row_widgets[1]["aspect"].cget("text"), "16:9")
         self.assertEqual(self.app.row_widgets[1]["par"].cget("text"), "1:1")
+        self.app.pad_16x9 = tk.BooleanVar(master=self.root, value=False)
+        cinema_gui.VideoPlayerGUI.refresh_playlist(self.app)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.row_widgets[0]["aspect"].cget("text"), "4:3")
+        self.assertEqual(self.app.row_widgets[0]["par"].cget("text"), "16:15")
 
     def test_mouse_wheel_scrolls_the_playlist_from_a_row(self):
         parent = tk.Frame(self.root, height=180)
@@ -1075,6 +1082,7 @@ class BoothChromeTests(unittest.TestCase):
         self.app.autoplay_delay = tk.StringVar(master=self.root, value="0")
         self.app.autosave_on_program_change = tk.BooleanVar(master=self.root, value=False)
         self.app.load_last_playlist_at_start = tk.BooleanVar(master=self.root, value=False)
+        self.app.pad_16x9 = tk.BooleanVar(master=self.root, value=True)
         self.app.projection_zoom.set(False)
         program = cinema_gui.DropdownMenu(self.root, self.app)
         cinema_gui.VideoPlayerGUI._fill_program_menu(self.app, program)
@@ -1105,6 +1113,20 @@ class BoothChromeTests(unittest.TestCase):
         self.assertNotIn("Pausenmedium", playlist_text)
         self.assertNotIn("Einstellungswarnung", playlist_text)
         self.assertNotIn("Lautstärke einstellen", playlist_text)
+        self.assertIn("4:3 auf 16:9 umrechnen", playlist_text)
+
+    def test_pad_16x9_toggle_is_remembered(self):
+        self.app.pad_16x9 = tk.BooleanVar(master=self.root, value=False)
+        self.app.settings = {}
+        self.app.program_state = "OFF"
+        self.app.refresh_playlist = lambda: None
+        self.app._apply_pad_16x9_to_players = lambda: None
+        self.app.apply_beamer_mode_for_pointer = lambda: None
+        self.app.refresh_beamer = lambda: None
+        with patch.object(cinema_gui, "save_settings") as saved:
+            cinema_gui.VideoPlayerGUI._on_pad_16x9(self.app)
+        self.assertFalse(self.app.settings["pad_16x9"])
+        saved.assert_called_once_with(self.app.settings)
 
     def test_audiosync_save_includes_beamer_hdmi_and_audio_output(self):
         class Manager:

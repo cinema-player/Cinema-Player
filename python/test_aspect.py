@@ -47,6 +47,10 @@ class Needs16x9OutputTests(unittest.TestCase):
         self.assertFalse(player.needs_16x9_output())
         self.assertFalse(player.needs_16x9_output("--", "--"))
 
+    def test_toggle_disables_padding(self):
+        self.assertFalse(player.needs_16x9_output("4:3", "1:1", 1440, 1080, enabled=False))
+        self.assertFalse(player.needs_16x9_output("16:9", "64:45", 720, 576, enabled=False))
+
 
 class SixteenNineHintFieldsTests(unittest.TestCase):
     def test_4x3_marks_format_only(self):
@@ -81,6 +85,11 @@ class SixteenNineHintFieldsTests(unittest.TestCase):
         )
         self.assertEqual(player.sixteen_nine_hint_fields(wide), set())
         self.assertEqual(player.sixteen_nine_hint_fields(hd), set())
+        pal = player.PlaylistEntry(
+            path="/pal.avi", aspect="4:3", pixel_aspect="16:15",
+            width=720, height=576,
+        )
+        self.assertEqual(player.sixteen_nine_hint_fields(pal, enabled=False), set())
 
 
 class MpvPictureFilterTests(unittest.TestCase):
@@ -104,6 +113,13 @@ class MpvPictureFilterTests(unittest.TestCase):
         )
         self.assertEqual(player.mpv_picture_filter(wide), "")
         self.assertEqual(player.mpv_picture_filter(hd), "")
+
+    def test_filter_is_off_when_disabled(self):
+        entry = player.PlaylistEntry(
+            path="/clip.mp4", aspect="4:3", pixel_aspect="1:1",
+            width=1440, height=1080,
+        )
+        self.assertEqual(player.mpv_picture_filter(entry, enabled=False), "")
 
     def test_compose_keeps_the_pad_in_front_of_a_still_fade(self):
         fade = "lavfi=[eq=brightness=-1.000]"
@@ -173,6 +189,16 @@ class ProjectionSizeTests(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual((mode.width, mode.height), (1920, 1080))
         self.assertEqual(mode.refresh, 50.0)
+
+    def test_find_best_mode_keeps_4x3_storage_when_pad_disabled(self):
+        video = _video(720, 576, fps=25, aspect="4:3", pixel_aspect="16:15")
+        with patch.object(self.manager, "get_modes", return_value=self.modes), \
+                patch.object(self.manager, "native_resolution", return_value=(1920, 1080)):
+            mode, matched = self.manager.find_best_mode(
+                video, create=False, pad_16x9=False,
+            )
+        self.assertTrue(matched)
+        self.assertEqual((mode.width, mode.height), (720, 576))
 
     def test_find_best_mode_keeps_21x9_storage(self):
         video = _video(2560, 1080, fps=25, aspect="21:9", pixel_aspect="1:1")

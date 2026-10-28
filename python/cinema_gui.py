@@ -1616,9 +1616,9 @@ def warned_meta_text(value, warning, word, hint=False, hint_word=""):
     return text
 
 
-def playlist_aspect_text(entry):
+def playlist_aspect_text(entry, pad_16x9=True):
     """Format cell: 4:3 →16:9, plus Zoom when the beamer setting changes."""
-    hint = "aspect" in sixteen_nine_hint_fields(entry)
+    hint = "aspect" in sixteen_nine_hint_fields(entry, enabled=pad_16x9)
     return warned_meta_text(
         getattr(entry, "aspect", None),
         getattr(entry, "aspect_warning", False),
@@ -1628,9 +1628,9 @@ def playlist_aspect_text(entry):
     )
 
 
-def playlist_par_text(entry):
+def playlist_par_text(entry, pad_16x9=True):
     """PAR cell: 64:45 →16:9 when non-square pixels are corrected to 16:9."""
-    hint = "par" in sixteen_nine_hint_fields(entry)
+    hint = "par" in sixteen_nine_hint_fields(entry, enabled=pad_16x9)
     return warned_meta_text(
         getattr(entry, "pixel_aspect", None),
         getattr(entry, "par_warning", False),
@@ -2292,6 +2292,7 @@ class VideoPlayerGUI:
             self.last_playlist_path = ""
 
         self.projection_zoom = tk.BooleanVar(value=False)
+        self.pad_16x9 = tk.BooleanVar(value=bool(self.settings.get("pad_16x9", True)))
         self.autosave_on_program_change = tk.BooleanVar(
             value=bool(self.settings.get("autosave_on_program_change", False))
         )
@@ -4485,6 +4486,11 @@ class VideoPlayerGUI:
         menu.add_command(label=t("reset_played"), command=self.reset_played)
         menu.add_separator()
         menu.add_checkbutton(
+            label=t("pad_16x9"),
+            variable=self.pad_16x9,
+            command=self._on_pad_16x9,
+        )
+        menu.add_checkbutton(
             label=t("autosave_program_change"),
             variable=self.autosave_on_program_change,
             command=self._on_autosave_program_change,
@@ -5374,12 +5380,13 @@ class VideoPlayerGUI:
             text=warned_meta_text(format_fps_label(entry.fps), rate_bad, t("warn_rate")),
             bg=bg, fg=COLOR_WARNING if rate_bad else fg,
         )
+        pad_16x9 = self._pad_16x9_enabled()
         widgets["aspect"].config(
-            text=playlist_aspect_text(entry),
+            text=playlist_aspect_text(entry, pad_16x9=pad_16x9),
             bg=bg, fg=COLOR_WARNING if entry.aspect_warning else fg,
         )
         widgets["par"].config(
-            text=playlist_par_text(entry),
+            text=playlist_par_text(entry, pad_16x9=pad_16x9),
             bg=bg, fg=COLOR_WARNING if entry.par_warning else fg,
         )
         widgets["colorspace"].config(
@@ -6249,7 +6256,9 @@ class VideoPlayerGUI:
         if output:
             before = self.output_manager.get_current_mode(output)
         try:
-            _video, mode, matched = self.output_manager.prepare_for_video(entry.path)
+            _video, mode, matched = self.output_manager.prepare_for_video(
+                entry.path, pad_16x9=self._pad_16x9_enabled(),
+            )
             entry.refresh_ok = matched
         except Exception as exc:
             print(f"Beamer-Modus nicht gesetzt: {exc}")
@@ -6373,7 +6382,9 @@ class VideoPlayerGUI:
                 self.output_manager.select_video_output()
             video = self.output_manager.get_video_info(entry.path)
             if video:
-                _mode, matched = self.output_manager.find_best_mode(video, create=False)
+                _mode, matched = self.output_manager.find_best_mode(
+                    video, create=False, pad_16x9=self._pad_16x9_enabled(),
+                )
                 entry.refresh_ok = matched
         except Exception:
             entry.refresh_ok = False
@@ -6439,7 +6450,9 @@ class VideoPlayerGUI:
                 self.output_manager.select_video_output()
             video = self.output_manager.get_video_info(path) if not probed.is_image else None
             if video:
-                mode, matched = self.output_manager.find_best_mode(video, create=False)
+                mode, matched = self.output_manager.find_best_mode(
+                    video, create=False, pad_16x9=self._pad_16x9_enabled(),
+                )
                 probed.refresh_ok = matched
         except Exception:
             probed.refresh_ok = False
@@ -9853,7 +9866,9 @@ class VideoPlayerGUI:
                 self.output_manager.select_video_output()
             video = self.output_manager.get_video_info(path) if not entry.is_image else None
             if video:
-                mode, matched = self.output_manager.find_best_mode(video, create=False)
+                mode, matched = self.output_manager.find_best_mode(
+                    video, create=False, pad_16x9=self._pad_16x9_enabled(),
+                )
                 entry.refresh_ok = matched
         except Exception:
             entry.refresh_ok = False
@@ -10793,6 +10808,54 @@ class VideoPlayerGUI:
             json.dump(payload, handle, indent=2)
         self._playlist_saved_token = json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
+    def _pad_16x9_enabled(self):
+        """True when 4:3 and non-square PAR should be padded to 16:9."""
+        var = getattr(self, "pad_16x9", None)
+        if var is None:
+            return True
+        try:
+            return bool(var.get())
+        except tk.TclError:
+            return True
+
+    def _picture_filter(self, entry):
+        return mpv_picture_filter(entry, enabled=self._pad_16x9_enabled())
+
+    def _on_pad_16x9(self):
+        self.settings["pad_16x9"] = bool(self.pad_16x9.get())
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        self.refresh_playlist()
+        self._apply_pad_16x9_to_players()
+        if self.program_state != "PLAYING":
+            self.apply_beamer_mode_for_pointer()
+            self.refresh_beamer()
+
+    def _apply_pad_16x9_to_players(self):
+        """Push the current pad setting onto files already in mpv."""
+        extra = still_level_filter(getattr(self, "_still_level", 1.0))
+        main = getattr(self, "main_mpv", None)
+        if main is not None and getattr(main, "process", None):
+            clip = None
+            if self.program_state == "PLAYING" and not getattr(self, "idle_showing", False):
+                clip = self.current_entry()
+            main.output_vf = self._picture_filter(clip)
+            apply = getattr(main, "apply_picture_filter", None)
+            if apply:
+                apply(extra if clip and getattr(clip, "is_image", False) else "")
+        preview = getattr(self, "preview_mpv", None)
+        if preview is not None and getattr(preview, "process", None):
+            if getattr(self, "preview_live", False):
+                clip = self.current_entry() if self.program_state == "PLAYING" else None
+            else:
+                clip = self.selected_entry()
+            preview.output_vf = self._picture_filter(clip)
+            apply = getattr(preview, "apply_picture_filter", None)
+            if apply:
+                apply(extra if clip and getattr(clip, "is_image", False) else "")
+
     def _on_autosave_program_change(self):
         self.settings["autosave_on_program_change"] = bool(self.autosave_on_program_change.get())
         try:
@@ -11211,7 +11274,7 @@ class VideoPlayerGUI:
             start=start,
             end=end,
             play=play,
-            vf=mpv_picture_filter(entry),
+            vf=self._picture_filter(entry),
         )
 
     def _resume_reaction_held(self):
@@ -11365,7 +11428,9 @@ class VideoPlayerGUI:
         if output:
             before = self.output_manager.get_current_mode(output)
         try:
-            video, mode, matched = self.output_manager.prepare_for_video(entry.path)
+            video, mode, matched = self.output_manager.prepare_for_video(
+                entry.path, pad_16x9=self._pad_16x9_enabled(),
+            )
             entry.refresh_ok = matched
         except Exception as exc:
             if not media_file_available(entry):
@@ -11480,7 +11545,7 @@ class VideoPlayerGUI:
             sid=sid,
             loop=looping,
             clear_end=out_point is None,
-            vf=mpv_picture_filter(entry),
+            vf=self._picture_filter(entry),
         )
         # Loop and Out are per-file options above. Setting them here would
         # hit the keepalive that is still on screen and end it at once.
