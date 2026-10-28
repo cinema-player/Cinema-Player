@@ -219,6 +219,39 @@ def light_meter_fill(height, percent):
     span = max(0.0, min(100.0, float(percent))) / 100.0
     return int(round(usable * span))
 
+
+# Program output eases to a new level instead of stepping. One second is long
+# enough to hear the move and short enough to stay with the operator's hand.
+PROGRAM_VOLUME_GLIDE_SECONDS = 1.0
+PROGRAM_VOLUME_GLIDE_TICK_MS = 40
+
+
+def program_volume_glide(start, target, elapsed, duration=PROGRAM_VOLUME_GLIDE_SECONDS):
+    """Level between start and target after elapsed seconds.
+
+    Smoothstep (3t² − 2t³) so the ramp leaves the old level and settles on the
+    new one without a corner. At half the duration the level is the midpoint.
+    """
+    start = float(start)
+    target = float(target)
+    try:
+        elapsed = float(elapsed)
+    except (TypeError, ValueError):
+        elapsed = 0.0
+    try:
+        duration = float(duration)
+    except (TypeError, ValueError):
+        duration = PROGRAM_VOLUME_GLIDE_SECONDS
+    if not math.isfinite(elapsed):
+        elapsed = 0.0
+    if not math.isfinite(duration) or duration <= 0 or elapsed >= duration:
+        return target
+    if elapsed <= 0 or start == target:
+        return start
+    t = elapsed / duration
+    smooth = t * t * (3.0 - 2.0 * t)
+    return start + (target - start) * smooth
+
 PALETTES = {
     "light": {
         "bg": "#d0d0d0",
@@ -2324,6 +2357,11 @@ class VideoPlayerGUI:
         self.beamer_details_open = False
         self._volume_preview_key = None
         self._volume_program_key = None
+        # Last level actually sent to the program player. None until the first
+        # clip, so a show does not fade up out of silence.
+        self._program_volume_output = None
+        self._program_volume_glide = None
+        self._program_volume_glide_after = None
         self.root.tooltip_screen_bounds = self._tooltip_screen_bounds
 
         self.create_gui()
@@ -2749,6 +2787,7 @@ class VideoPlayerGUI:
 
     def rebuild_gui(self):
         """Rebuild the window for the current design and re-embed the preview player."""
+        self._cancel_program_volume_glide()
         self._cancel_header_clock()
         if getattr(self, "lights_window", None) is not None:
             self._commit_lights_settings()
@@ -3090,8 +3129,109 @@ class VideoPlayerGUI:
         volume = clamp_volume(value)
         self.program_volume.set(volume)
         self._set_volume_label(self.program_volume_label, volume)
-        if self.main_mpv.process and not self.idle_showing:
-            self.main_mpv.set_volume(volume)
+        # The fader stays under the finger. Only the program output eases.
+        self._glide_program_volume(volume, move_fader=False)
+
+    def _cancel_program_volume_glide(self):
+        """Stop the ramp timer. The last level sent stays remembered."""
+        after_id = getattr(self, "_program_volume_glide_after", None)
+        self._program_volume_glide_after = None
+        self._program_volume_glide = None
+        if after_id:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+
+    def _remember_program_output(self, level):
+        try:
+            value = float(level)
+        except (TypeError, ValueError):
+            value = float(clamp_volume(level))
+        if not math.isfinite(value):
+            value = float(clamp_volume(None))
+        self._program_volume_output = max(0.0, min(100.0, value))
+
+    def _paint_program_fader(self, volume):
+        shown = clamp_volume(volume)
+        self.program_volume.set(shown)
+        self._set_volume_label(getattr(self, "program_volume_label", None), shown)
+        bar = getattr(self, "program_volume_bar", None)
+        if bar is not None:
+            bar.set_volume(shown)
+
+    def _send_program_output_volume(self, mpv=None):
+        """Write the live output level. A file reload must not jump to the target."""
+        player = self.main_mpv if mpv is None else mpv
+        if not getattr(player, "process", None) or getattr(self, "idle_showing", False):
+            return
+        level = getattr(self, "_program_volume_output", None)
+        if level is None:
+            level = self.program_volume.get()
+        player.set_volume(level)
+
+    def _glide_program_volume(self, target, move_fader=False):
+        """Ease the program output to target over about one second.
+
+        Returns True while a ramp is running. The first clip, a stopped
+        player, and a level that is already there snap instead, so a show
+        does not fade up from silence. A new target restarts the second from
+        the level that is playing now.
+        """
+        target = float(clamp_volume(target))
+        audible = (
+            bool(getattr(self.main_mpv, "process", None))
+            and not getattr(self, "idle_showing", False)
+        )
+        rolling = audible and getattr(self, "program_state", "PLAYING") == "PLAYING"
+        current = getattr(self, "_program_volume_output", None)
+        if not rolling or current is None or abs(float(current) - target) < 0.05:
+            self._cancel_program_volume_glide()
+            # Outside a rolling show the level still applies at once. Idle
+            # video keeps its own full level and is not overwritten here.
+            if audible:
+                self._remember_program_output(target)
+                self._send_program_output_volume()
+            if move_fader:
+                self._paint_program_fader(target)
+            return False
+        self._cancel_program_volume_glide()
+        self._program_volume_glide = {
+            "start": float(current),
+            "target": target,
+            "begun": time.monotonic(),
+            "duration": PROGRAM_VOLUME_GLIDE_SECONDS,
+            "move_fader": bool(move_fader),
+        }
+        self._step_program_volume_glide()
+        return self._program_volume_glide is not None
+
+    def _step_program_volume_glide(self):
+        glide = getattr(self, "_program_volume_glide", None)
+        self._program_volume_glide_after = None
+        if not glide:
+            return
+        if getattr(self, "idle_showing", False) or getattr(self, "program_state", "PLAYING") != "PLAYING":
+            self._program_volume_glide = None
+            return
+        elapsed = time.monotonic() - glide["begun"]
+        finished = elapsed >= glide["duration"]
+        level = glide["target"] if finished else program_volume_glide(
+            glide["start"], glide["target"], elapsed, glide["duration"],
+        )
+        self._remember_program_output(level)
+        try:
+            self._send_program_output_volume()
+            if glide.get("move_fader"):
+                self._paint_program_fader(level)
+            if finished:
+                self._program_volume_glide = None
+                return
+            self._program_volume_glide_after = self.root.after(
+                PROGRAM_VOLUME_GLIDE_TICK_MS, self._step_program_volume_glide,
+            )
+        except tk.TclError:
+            self._program_volume_glide = None
 
     def _on_preview_volume(self, value):
         volume = clamp_volume(value)
@@ -3141,8 +3281,7 @@ class VideoPlayerGUI:
             self._set_volume_label(self.program_volume_label, entry.volume)
             if getattr(self, "program_volume_bar", None):
                 self.program_volume_bar.set_volume(entry.volume)
-            if self.main_mpv.process and not self.idle_showing:
-                self.main_mpv.set_volume(entry.volume)
+            self._glide_program_volume(entry.volume, move_fader=False)
         self.repaint_playlist()
 
     def save_program_volume(self):
@@ -10909,6 +11048,7 @@ class VideoPlayerGUI:
         if self.idle_after_id:
             self.root.after_cancel(self.idle_after_id)
             self.idle_after_id = None
+        self._cancel_program_volume_glide()
         if not self.main_mpv.process:
             self._reset_program_meter()
             return
@@ -10948,6 +11088,8 @@ class VideoPlayerGUI:
         if self.beamer_test_active:
             return
         self.main_mpv.set_ab_loop(None, None)
+        self._cancel_program_volume_glide()
+        self._remember_program_output(100)
         self.main_mpv.set_volume(100)
         self.main_mpv.load_file(path, play=True, loop=True)
         self.blackout = False
@@ -11279,8 +11421,11 @@ class VideoPlayerGUI:
         looping = bool(entry.loop and not entry.is_image)
         volume = clamp_volume(entry.volume)
         aid, sid = self._entry_track_ids(entry)
-        self._load_program_volume(entry, force=True)
-        self.main_mpv.set_volume(volume)
+        self._volume_program_key = id(entry)
+        shown = clamp_volume(self.program_volume.get())
+        # Ease the booth fader only when it still shows the previous clip.
+        if not self._glide_program_volume(volume, move_fader=(shown != volume)):
+            self._load_program_volume(entry, force=True)
         self._apply_program_audio_delay(entry)
         out_point = playback_out_point(entry, looping)
         # Arm before the load so an eof from the silent keepalive cannot
@@ -11956,7 +12101,7 @@ class VideoPlayerGUI:
                 if program_file_loaded_starts_clip(
                     self.program_state == "PLAYING", keepalive, True,
                 ):
-                    mpv.set_volume(clamp_volume(self.program_volume.get()))
+                    self._send_program_output_volume(mpv)
             self.main_pause = False
             return
         if event == "playback-restart":
@@ -11971,7 +12116,7 @@ class VideoPlayerGUI:
                 bool(entry and mpv.has_file(entry.path)),
             ):
                 self._program_playback_started = True
-                mpv.set_volume(clamp_volume(self.program_volume.get()))
+                self._send_program_output_volume(mpv)
             return
         if event == "end-file" and message.get("reason") in (None, "eof", "stop"):
             if message.get("reason") == "eof" and self._program_eof_should_advance():
@@ -12237,8 +12382,11 @@ class VideoPlayerGUI:
             self.preview_meter.set_levels(
                 self._meter_post_fader(self._meter_shown, self.preview_volume.get())
             )
+            output = getattr(self, "_program_volume_output", None)
+            if output is None:
+                output = self.program_volume.get()
             self.program_meter.set_levels(
-                self._meter_post_fader(self._program_meter_shown, self.program_volume.get())
+                self._meter_post_fader(self._program_meter_shown, output)
             )
             self._meter_after_id = self.root.after(50, self._tick_meters)
         except (tk.TclError, AttributeError):
@@ -12393,6 +12541,7 @@ class VideoPlayerGUI:
             return "break"
         self._close_menus()
         self._stop_remote_api()
+        self._cancel_program_volume_glide()
         self._cancel_header_clock()
         for after_id in (
             self.autoplay_after_id, self.idle_after_id, self.still_after_id, self._meter_after_id,

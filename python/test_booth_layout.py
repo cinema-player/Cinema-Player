@@ -2314,5 +2314,184 @@ class _BrightnessPlayer:
         self.commands.append(args)
 
 
+class _ProgramSpeaker:
+    def __init__(self, sent, process=True):
+        self.sent = sent
+        self.process = object() if process else None
+
+    def set_volume(self, volume, muted=None):
+        self.sent.append(volume)
+
+
+class ProgramVolumeGlideTests(unittest.TestCase):
+    def test_smoothstep_is_the_midpoint_at_half_a_second(self):
+        self.assertEqual(cinema_gui.program_volume_glide(20, 80, 0), 20)
+        self.assertEqual(cinema_gui.program_volume_glide(20, 80, -1), 20)
+        self.assertEqual(cinema_gui.program_volume_glide(20, 80, 0.5), 50)
+        self.assertAlmostEqual(cinema_gui.program_volume_glide(0, 100, 0.25), 15.625)
+        self.assertEqual(cinema_gui.program_volume_glide(20, 80, 1.0), 80)
+        self.assertEqual(cinema_gui.program_volume_glide(20, 80, 2.0), 80)
+        self.assertEqual(cinema_gui.program_volume_glide(40, 40, 0.3), 40)
+
+    def setUp(self):
+        self.root = tk.Tk()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.program_state = "PLAYING"
+        self.app.idle_showing = False
+        self.app.program_volume = tk.DoubleVar(master=self.root, value=80)
+        self.app.program_volume_label = None
+        self.app.program_volume_bar = None
+        self.app._program_volume_output = 20.0
+        self.app._program_volume_glide = None
+        self.app._program_volume_glide_after = None
+        self.sent = []
+        self.app.main_mpv = _ProgramSpeaker(self.sent)
+
+    def tearDown(self):
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def _clock(self):
+        clock = {"t": 1000.0}
+        scheduled = {}
+
+        def monotonic():
+            return clock["t"]
+
+        def after(ms, fn):
+            scheduled["ms"] = ms
+            scheduled["fn"] = fn
+            return "glide-timer"
+
+        def after_cancel(_after_id):
+            scheduled.clear()
+
+        self.app.root.after = after
+        self.app.root.after_cancel = after_cancel
+        return clock, scheduled, monotonic
+
+    def test_output_eases_while_the_fader_stays_on_the_target(self):
+        clock, scheduled, monotonic = self._clock()
+        with patch("cinema_gui.time.monotonic", side_effect=monotonic):
+            running = cinema_gui.VideoPlayerGUI._glide_program_volume(self.app, 80, move_fader=False)
+            self.assertTrue(running)
+            self.assertAlmostEqual(self.sent[-1], 20)
+            self.assertEqual(self.app.program_volume.get(), 80)
+            clock["t"] += 0.5
+            scheduled["fn"]()
+            self.assertAlmostEqual(self.sent[-1], 50)
+            self.assertEqual(self.app.program_volume.get(), 80)
+            clock["t"] += 0.5
+            scheduled["fn"]()
+        self.assertEqual(self.sent[-1], 80)
+        self.assertIsNone(self.app._program_volume_glide)
+        self.assertIsNone(self.app._program_volume_glide_after)
+
+    def test_clip_change_eases_the_fader_from_the_current_level(self):
+        clock, scheduled, monotonic = self._clock()
+        self.app.program_volume.set(80)
+        with patch("cinema_gui.time.monotonic", side_effect=monotonic):
+            running = cinema_gui.VideoPlayerGUI._glide_program_volume(self.app, 80, move_fader=True)
+            self.assertTrue(running)
+            self.assertEqual(self.app.program_volume.get(), 20)
+            clock["t"] += 1.0
+            scheduled["fn"]()
+        self.assertEqual(self.app.program_volume.get(), 80)
+        self.assertEqual(self.sent[-1], 80)
+        self.assertIsNone(self.app._program_volume_glide)
+
+    def test_first_clip_snaps_instead_of_fading_up_from_silence(self):
+        self.app._program_volume_output = None
+        self.app.program_volume.set(10)
+        running = cinema_gui.VideoPlayerGUI._glide_program_volume(self.app, 80, move_fader=True)
+        self.assertFalse(running)
+        self.assertEqual(self.sent, [80.0])
+        self.assertEqual(self.app.program_volume.get(), 80)
+        self.assertIsNone(self.app._program_volume_glide)
+        self.assertEqual(self.app._program_volume_output, 80.0)
+
+    def test_a_new_target_restarts_from_the_level_now_playing(self):
+        clock, scheduled, monotonic = self._clock()
+        self.app._program_volume_output = 0.0
+        with patch("cinema_gui.time.monotonic", side_effect=monotonic):
+            cinema_gui.VideoPlayerGUI._glide_program_volume(self.app, 100, move_fader=False)
+            clock["t"] += 0.5
+            scheduled["fn"]()
+            self.assertAlmostEqual(self.app._program_volume_output, 50)
+            cinema_gui.VideoPlayerGUI._glide_program_volume(self.app, 80, move_fader=False)
+            self.assertAlmostEqual(self.sent[-1], 50)
+            clock["t"] += 1.0
+            scheduled["fn"]()
+        self.assertEqual(self.sent[-1], 80)
+        self.assertIsNone(self.app._program_volume_glide)
+
+    def test_file_reload_repeats_the_live_level(self):
+        self.app._program_volume_output = 33.5
+        self.app.program_volume.set(90)
+        cinema_gui.VideoPlayerGUI._send_program_output_volume(self.app)
+        self.assertEqual(self.sent, [33.5])
+        self.app.idle_showing = True
+        cinema_gui.VideoPlayerGUI._send_program_output_volume(self.app)
+        self.assertEqual(self.sent, [33.5])
+
+    def test_fader_move_keeps_the_command_and_eases_the_output(self):
+        clock, scheduled, monotonic = self._clock()
+        with patch("cinema_gui.time.monotonic", side_effect=monotonic):
+            cinema_gui.VideoPlayerGUI._on_program_volume(self.app, 80)
+            self.assertEqual(self.app.program_volume.get(), 80)
+            self.assertAlmostEqual(self.sent[-1], 20)
+            clock["t"] += 1.0
+            scheduled["fn"]()
+        self.assertEqual(self.sent[-1], 80)
+
+    def test_idle_cancels_the_ramp_and_is_remembered_at_full_level(self):
+        cancelled = []
+        loaded = []
+        self.app.root.after_cancel = lambda after_id: cancelled.append(after_id)
+        self.app._program_volume_glide = {"start": 20, "target": 80}
+        self.app._program_volume_glide_after = "timer"
+        self.app.program_state = "PROGRAM"
+        self.app.calibration_mode = None
+        self.app.beamer_test_active = False
+        self.app.idle_media_path = os.path.abspath(__file__)
+
+        def load_file(*_args, **_kwargs):
+            loaded.append(True)
+
+        self.app.main_mpv.set_ab_loop = lambda *_args, **_kwargs: None
+        self.app.main_mpv.load_file = load_file
+        cinema_gui.VideoPlayerGUI.show_idle_media(self.app)
+        self.assertEqual(cancelled, ["timer"])
+        self.assertIsNone(self.app._program_volume_glide)
+        self.assertEqual(self.app._program_volume_output, 100)
+        self.assertEqual(self.sent[-1], 100)
+        self.assertTrue(self.app.idle_showing)
+        self.assertTrue(loaded)
+
+    def test_real_timer_settles_in_about_one_second(self):
+        self.app._program_volume_output = 0.0
+        self.app.program_volume.set(0)
+        started = time.monotonic()
+        running = cinema_gui.VideoPlayerGUI._glide_program_volume(self.app, 100, move_fader=True)
+        self.assertTrue(running)
+        deadline = started + 1.6
+        while self.app._program_volume_glide is not None and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.02)
+        elapsed = time.monotonic() - started
+        self.assertIsNone(self.app._program_volume_glide)
+        self.assertEqual(self.sent[-1], 100)
+        self.assertEqual(self.app.program_volume.get(), 100)
+        self.assertGreater(elapsed, 0.85)
+        self.assertLess(elapsed, 1.45)
+        self.assertGreater(len(self.sent), 10)
+        self.assertLess(self.sent[1], 30)
+        self.assertGreater(self.sent[len(self.sent) // 2], self.sent[1])
+        self.assertEqual(self.sent, sorted(self.sent))
+
+
 if __name__ == "__main__":
     unittest.main()
