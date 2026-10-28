@@ -79,6 +79,8 @@ from cinema_player import (
     playlist_location_short,
     probe_audio,
     probe_media,
+    compose_mpv_vf,
+    mpv_picture_filter,
     same_aspect_ratio,
     session_display_name,
     session_is_wayland,
@@ -11182,6 +11184,7 @@ class VideoPlayerGUI:
             start=start,
             end=end,
             play=play,
+            vf=mpv_picture_filter(entry),
         )
 
     def _resume_reaction_held(self):
@@ -11450,6 +11453,7 @@ class VideoPlayerGUI:
             sid=sid,
             loop=looping,
             clear_end=out_point is None,
+            vf=mpv_picture_filter(entry),
         )
         # Loop and Out are per-file options above. Setting them here would
         # hit the keepalive that is still on screen and end it at once.
@@ -11543,7 +11547,7 @@ class VideoPlayerGUI:
     def _apply_still_level(self, level, players=None):
         level = max(0.0, min(1.0, float(level)))
         self._still_level = level
-        graph = still_level_filter(level)
+        extra = still_level_filter(level)
         if players is None:
             players = self._still_dim_players()
         for player in players:
@@ -11551,7 +11555,15 @@ class VideoPlayerGUI:
                 continue
             # Keep the equalizer property neutral. A stuck -100 hides the still.
             player.command("set_property", "brightness", 0)
-            player.command("set_property", "vf", graph)
+            apply = getattr(player, "apply_picture_filter", None)
+            if apply:
+                apply(extra)
+            else:
+                player.command(
+                    "set_property",
+                    "vf",
+                    compose_mpv_vf(getattr(player, "output_vf", ""), extra),
+                )
 
     def _release_still_picture(self):
         self._still_level = 1.0
@@ -11559,7 +11571,15 @@ class VideoPlayerGUI:
             if player is None or not getattr(player, "process", None):
                 continue
             player.command("set_property", "brightness", 0)
-            player.command("set_property", "vf", "")
+            apply = getattr(player, "apply_picture_filter", None)
+            if apply:
+                apply()
+            else:
+                player.command(
+                    "set_property",
+                    "vf",
+                    getattr(player, "output_vf", "") or "",
+                )
 
     def _restart_still_fade_in(self):
         if self._still_fading_out or not self._still_dim_active():

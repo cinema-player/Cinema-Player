@@ -9,6 +9,7 @@ Two-instance mpv video player for X11, GNOME Wayland, or KWin/Plasma Wayland wit
 - Display mode switching via XRandR (X11), GNOME gdctl, or KWin kscreen-doctor (Wayland)
 - Automatic video FPS detection with ffprobe
 - Selects a matching display refresh rate at the video resolution
+- Pads clips narrower than 16:9, and files with PAR other than 1:1, to a 16:9 mpv frame; 21:9 stays unchanged
 - `--geometry` / fullscreen placement for the video window
 - Tkinter control GUI
 - Play/pause, stop, seek and volume
