@@ -3142,13 +3142,11 @@ class VideoPlayerGUI:
                 command=self.save_program_volume, cursor="hand2",
             )
             self.program_save_volume = save_program
+            save_program.pack(side="left", padx=(8, 0))
             self.program_delay_readout = tk.Label(
                 row, text="", width=9, anchor="e",
                 bg=bg, fg=COLOR_MUTED, font=FONT_SMALL,
             )
-            self.program_delay_readout.pack(side="left", padx=(8, 0))
-            save_program.pack(side="left", padx=(8, 0), before=self.program_delay_readout)
-            save_program.pack_forget()
         return row
 
     def _set_volume_label(self, label, volume):
@@ -3329,26 +3327,38 @@ class VideoPlayerGUI:
         self.repaint_playlist()
 
     def _apply_volume_setup_chrome(self):
+        """Keep Save volume beside the program fader so the level can go into the playlist."""
         button = getattr(self, "program_save_volume", None)
         if button is None:
             return
-        visible = bool(getattr(self, "volume_setup", False))
+        readout = getattr(self, "program_delay_readout", None)
         try:
             managed = bool(button.winfo_manager())
         except tk.TclError:
             return
-        readout = getattr(self, "program_delay_readout", None)
-        if visible and not managed:
-            if readout is not None and not str(readout.cget("text") or "").strip():
-                readout.pack_forget()
-            button.pack(side="left", padx=(8, 0))
-        elif visible and readout is not None and not str(readout.cget("text") or "").strip():
-            if readout.winfo_manager():
-                readout.pack_forget()
-        elif not visible and managed:
-            button.pack_forget()
-            if readout is not None and not readout.winfo_manager():
-                readout.pack(side="left", padx=(8, 0))
+        if not managed:
+            before = None
+            if readout is not None:
+                try:
+                    if readout.winfo_manager():
+                        before = readout
+                except tk.TclError:
+                    before = None
+            if before is not None:
+                button.pack(side="left", padx=(8, 0), before=before)
+            else:
+                button.pack(side="left", padx=(8, 0))
+        if readout is None:
+            return
+        has_text = bool(str(readout.cget("text") or "").strip())
+        try:
+            readout_managed = bool(readout.winfo_manager())
+        except tk.TclError:
+            return
+        if has_text and not readout_managed:
+            readout.pack(side="left", padx=(8, 0))
+        elif not has_text and readout_managed:
+            readout.pack_forget()
 
     def _load_preview_volume(self, entry):
         key = id(entry) if entry else None
@@ -10132,6 +10142,7 @@ class VideoPlayerGUI:
         readout = getattr(self, "program_delay_readout", None)
         if readout is not None and visible:
             readout.config(text="")
+            self._apply_volume_setup_chrome()
 
     @staticmethod
     def _normalize_audiosync_delays(raw):
@@ -10172,9 +10183,10 @@ class VideoPlayerGUI:
             return
         if self.calibration_mode == "audio":
             readout.config(text="")
-            return
-        delay = self._audiosync_lookup(entry)
-        readout.config(text=format_delay_ms(delay) if delay is not None else "")
+        else:
+            delay = self._audiosync_lookup(entry)
+            readout.config(text=format_delay_ms(delay) if delay is not None else "")
+        self._apply_volume_setup_chrome()
 
     def _sync_audiosync_slider(self, entry, force=False):
         bar = getattr(self, "audiosync_delay_bar", None)

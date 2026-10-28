@@ -2098,24 +2098,43 @@ class VolumeSetupTests(unittest.TestCase):
         status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
         self.assertNotIn("envelope", status.get("clip") or {})
 
-    def test_save_button_appears_only_in_the_mode(self):
+    def test_save_button_stays_next_to_the_program_fader(self):
         parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
         parent.pack(fill="x")
-        cinema_gui.VideoPlayerGUI._build_volume_row(
+        row = cinema_gui.VideoPlayerGUI._build_volume_row(
             self.app, parent, self.app.program_volume, lambda value: None,
             cinema_gui.COLOR_PANEL,
         )
+        row.pack(fill="x")
         self.root.update()
         button = self.app.program_save_volume
+        readout = self.app.program_delay_readout
         self.assertEqual(button.cget("text"), "Lautstärke speichern")
-        self.assertEqual(button.winfo_manager(), "")
-        self.app.volume_setup = True
+        self.assertEqual(button.winfo_manager(), "pack")
+        self.assertEqual(readout.winfo_manager(), "")
+        self.app.program_volume.set(61)
+        button.invoke()
+        self.assertEqual(self.app.playlist[0].volume, 61)
+        self.assertEqual(self.app.preview_volume.get(), 61)
+        self.assertIn("repaint", self.calls)
+        self.app.volume_setup = False
         cinema_gui.VideoPlayerGUI._apply_volume_setup_chrome(self.app)
         self.root.update()
         self.assertEqual(button.winfo_manager(), "pack")
-        self.app.volume_setup = False
+        self.app.volume_setup = True
         cinema_gui.VideoPlayerGUI._apply_volume_setup_chrome(self.app)
-        self.assertEqual(button.winfo_manager(), "")
+        self.assertEqual(button.winfo_manager(), "pack")
+        button.pack_forget()
+        readout.config(text="+40 ms")
+        cinema_gui.VideoPlayerGUI._apply_volume_setup_chrome(self.app)
+        self.root.update()
+        self.assertEqual(button.winfo_manager(), "pack")
+        self.assertEqual(readout.winfo_manager(), "pack")
+        self.assertLess(button.winfo_x(), readout.winfo_x())
+        readout.config(text="")
+        cinema_gui.VideoPlayerGUI._apply_volume_setup_chrome(self.app)
+        self.assertEqual(button.winfo_manager(), "pack")
+        self.assertEqual(readout.winfo_manager(), "")
 
 
 class PreviewMuteTests(unittest.TestCase):
