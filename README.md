@@ -8,6 +8,8 @@ The video output displays only the video image. When no playback is active, the 
 
 Two mpv instances run in parallel: one on the projector output, and one embedded in the control window for preview. Subtitles stay off unless a track is chosen for a clip.
 
+Clips narrower than 16:9, and files whose pixel aspect is not 1:1, are padded by mpv to a 16:9 frame so the projector stays in 16:9. Wider formats such as 21:9 are left unchanged. The playlist shows **→16:9** beside those Format or PAR values. Playlist → **Convert 4:3 to 16:9** turns that padding off.
+
 # Function
 
 ## Controller
@@ -69,6 +71,7 @@ The playlist menu offers:
 
 - Check video files
 - Reset playlist (clears played flags and moves the program pointer to the first entry)
+- **Convert 4:3 to 16:9** — pad clips narrower than 16:9, and files with a pixel aspect other than 1:1, to a 16:9 mpv frame. Wider formats such as 21:9 stay unchanged. Format and PAR then show **→16:9**. The choice is remembered. Turn it off to send those files at their storage size.
 - **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start

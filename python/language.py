@@ -262,6 +262,7 @@ STRINGS = {
         "warn_zoom": "Zoom",
         "warn_par": "PAR",
         "warn_color": "Color",
+        "hint_16x9": "→16:9",
         "stop": "Stop",
         "pause": "Pause",
         "still": "Still",
@@ -285,6 +286,7 @@ STRINGS = {
         "reset_played_message": (
             "Clear played flags and move the program pointer to the first entry?"
         ),
+        "pad_16x9": "Convert 4:3 to 16:9",
         "autosave_program_change": "Autosave at program change",
         "load_last_playlist_at_start": "Load last playlist at start",
         "analyze_loudness": "Analyze loudness",
@@ -671,6 +673,7 @@ STRINGS = {
         "warn_zoom": "Zoom",
         "warn_par": "PAR",
         "warn_color": "Farbe",
+        "hint_16x9": "→16:9",
         "stop": "Stop",
         "pause": "Pause",
         "still": "Standbild",
@@ -694,6 +697,7 @@ STRINGS = {
         "reset_played_message": (
             "Gespielte Markierungen löschen und den Programmzeiger auf den ersten Eintrag setzen?"
         ),
+        "pad_16x9": "4:3 auf 16:9 umrechnen",
         "autosave_program_change": "Autosave bei Programmwechsel",
         "load_last_playlist_at_start": "Letzte Playlist beim Start laden",
         "analyze_loudness": "Lautheit analysieren",
