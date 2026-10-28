@@ -8,7 +8,7 @@ The video output displays only the video image. When no playback is active, the 
 
 Two mpv instances run in parallel: one on the projector output, and one embedded in the control window for preview. Subtitles stay off unless a track is chosen for a clip.
 
-Clips narrower than 16:9, and files whose pixel aspect is not 1:1, are padded by mpv to a 16:9 frame so the projector stays in 16:9. Wider formats such as 21:9 are left unchanged.
+Clips narrower than 16:9, and files whose pixel aspect is not 1:1, are padded by mpv to a 16:9 frame so the projector stays in 16:9. Wider formats such as 21:9 are left unchanged. The playlist shows **→16:9** beside those Format or PAR values.
 
 # Function
 
@@ -71,7 +71,7 @@ The playlist menu offers:
 
 - Check video files
 - Reset playlist (clears played flags and moves the program pointer to the first entry)
-- **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Clips narrower than 16:9, or with a pixel aspect other than 1:1, are padded by mpv to 16:9 and do not need that zoom change. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
+- **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Clips narrower than 16:9, or with a pixel aspect other than 1:1, are padded by mpv to 16:9 and do not need that zoom change; Format and PAR then show **→16:9**. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
 - **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `idle` at startup.

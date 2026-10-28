@@ -81,6 +81,7 @@ from cinema_player import (
     probe_media,
     compose_mpv_vf,
     mpv_picture_filter,
+    sixteen_nine_hint_fields,
     same_aspect_ratio,
     session_display_name,
     session_is_wayland,
@@ -1540,8 +1541,8 @@ def save_settings(settings):
 PLAYLIST_META_COLUMNS = (
     ("duration", "col_duration", 8),
     ("fps", "col_fps", 13),
-    ("aspect", "col_format", 12),
-    ("par", "col_par", 10),
+    ("aspect", "col_format", 14),
+    ("par", "col_par", 16),
     ("colorspace", "col_color", 25),
     ("volume", "col_volume", 5),
     ("loudness", "col_lufs", 9),
@@ -1605,12 +1606,38 @@ def playlist_note_text(entry, projection_zoom):
     return " ".join(notes)
 
 
-def warned_meta_text(value, warning, word):
+def warned_meta_text(value, warning, word, hint=False, hint_word=""):
     """Keep a warning word in the same cell as the value it belongs to."""
     text = value or "--"
+    if hint and hint_word:
+        text = f"{text} {hint_word}"
     if warning and word:
         return f"{text} {word}"
     return text
+
+
+def playlist_aspect_text(entry):
+    """Format cell: 4:3 →16:9, plus Zoom when the beamer setting changes."""
+    hint = "aspect" in sixteen_nine_hint_fields(entry)
+    return warned_meta_text(
+        getattr(entry, "aspect", None),
+        getattr(entry, "aspect_warning", False),
+        t("warn_zoom"),
+        hint=hint,
+        hint_word=t("hint_16x9"),
+    )
+
+
+def playlist_par_text(entry):
+    """PAR cell: 64:45 →16:9 when non-square pixels are corrected to 16:9."""
+    hint = "par" in sixteen_nine_hint_fields(entry)
+    return warned_meta_text(
+        getattr(entry, "pixel_aspect", None),
+        getattr(entry, "par_warning", False),
+        t("warn_par"),
+        hint=hint,
+        hint_word=t("hint_16x9"),
+    )
 
 
 def next_program_label(playlist, program_index, program_state, projection_zoom):
@@ -5348,11 +5375,11 @@ class VideoPlayerGUI:
             bg=bg, fg=COLOR_WARNING if rate_bad else fg,
         )
         widgets["aspect"].config(
-            text=warned_meta_text(entry.aspect, entry.aspect_warning, t("warn_zoom")),
+            text=playlist_aspect_text(entry),
             bg=bg, fg=COLOR_WARNING if entry.aspect_warning else fg,
         )
         widgets["par"].config(
-            text=warned_meta_text(entry.pixel_aspect, entry.par_warning, t("warn_par")),
+            text=playlist_par_text(entry),
             bg=bg, fg=COLOR_WARNING if entry.par_warning else fg,
         )
         widgets["colorspace"].config(
