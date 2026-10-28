@@ -2098,6 +2098,23 @@ class VolumeSetupTests(unittest.TestCase):
         status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
         self.assertNotIn("envelope", status.get("clip") or {})
 
+    def test_remote_save_volume_stays_available(self):
+        self.app.volume_setup = False
+        self.app.program_state = "PLAYING"
+        self.app.program_volume.set(62)
+        status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
+        self.assertTrue(status["actions"]["save_volume"])
+        result = cinema_gui.VideoPlayerGUI.remote_save_volume(self.app)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["actions"]["save_volume"])
+        self.assertEqual(self.app.playlist[0].volume, 62)
+        self.assertIn("repaint", self.calls)
+        self.app.playlist = []
+        result = cinema_gui.VideoPlayerGUI.remote_save_volume(self.app)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "no_clip")
+        self.assertTrue(result["actions"]["save_volume"])
+
     def test_save_button_stays_next_to_the_program_fader(self):
         parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
         parent.pack(fill="x")

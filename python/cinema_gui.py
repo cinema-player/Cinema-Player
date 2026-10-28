@@ -8955,7 +8955,7 @@ class VideoPlayerGUI:
                 "stop": self.program_state == "PLAYING",
                 "confirm_transport": not volume_setup,
                 "volume": True,
-                "save_volume": volume_setup,
+                "save_volume": True,
                 "seek": self.program_seek_allowed(),
                 "set_program": bool(self.playlist) and self.program_state != "PLAYING",
                 "lights": bool(self.lights_control.get()),
@@ -8994,8 +8994,7 @@ class VideoPlayerGUI:
             self._remote_action = False
 
     def remote_save_volume(self):
-        if not getattr(self, "volume_setup", False):
-            return self._remote_result(False, "not_volume_setup")
+        """Write the program fader into the playlist entry on the program pointer."""
         if not self.current_entry():
             return self._remote_result(False, "no_clip")
         self.save_program_volume()
