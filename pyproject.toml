@@ -1,6 +1,6 @@
 [project]
 name = "cinema-player"
-version = "0.3.5-Beta"
+version = "0.3.6-Beta"
 description = "Two-instance mpv video player for a small private cinema"
 requires-python = ">=3.12"
 dependencies = []
