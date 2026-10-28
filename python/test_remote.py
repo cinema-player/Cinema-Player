@@ -107,6 +107,9 @@ class RemotePageTests(unittest.TestCase):
             self.assertIn(b"dragEnvelope", body)
             self.assertNotIn(b'id="volume-setup"', body)
             self.assertNotIn(b"/api/volume-setup", body)
+            self.assertIn(b'id="save-volume"', body)
+            self.assertNotIn(b'id="save-volume" type="button" hidden', body)
+            self.assertIn(b"/api/volume/save", body)
             self.assertGreater(len(body), 100)
         finally:
             httpd.shutdown()
