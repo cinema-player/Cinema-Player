@@ -178,6 +178,8 @@ STRINGS = {
         "default_idle_media_missing": "The media/idle folder was not found.",
         "default_idle_media_empty": "No media was found in media/idle.",
         "beamer_status": "Beamer status",
+        "beamer_menu": "Beamer",
+        "output": "Output",
         "beamer_output": "Beamer output",
         "beamer_output_busy": "Stop playback before changing the projector output.",
         "patch": "Patchbay",
@@ -400,7 +402,7 @@ STRINGS = {
         "beamer_no_output_title": "No projector output",
         "beamer_no_output": (
             "No dedicated display was found for the projector.\n"
-            "Connect a second output and choose it under Beamer output."
+            "Connect a second output and choose it under Beamer → Output."
         ),
         "pause_title": "Pause",
         "pause_message": "Pause playback? The projector output will go black.",
@@ -589,6 +591,8 @@ STRINGS = {
         "default_idle_media_missing": "Der Ordner media/idle wurde nicht gefunden.",
         "default_idle_media_empty": "Im Ordner media/idle wurde kein Medium gefunden.",
         "beamer_status": "Beamer-Status",
+        "beamer_menu": "Beamer",
+        "output": "Ausgang",
         "beamer_output": "Beamerausgang",
         "beamer_output_busy": "Wiedergabe beenden, bevor der Beamerausgang gewechselt wird.",
         "patch": "Audio-Steckfeld",
@@ -811,7 +815,7 @@ STRINGS = {
         "beamer_no_output_title": "Kein Beamerausgang",
         "beamer_no_output": (
             "Es wurde kein eigener Bildschirm für den Beamer gefunden.\n"
-            "Schließen Sie einen zweiten Ausgang an und wählen Sie ihn unter Beamerausgang."
+            "Schließen Sie einen zweiten Ausgang an und wählen Sie ihn unter Beamer → Ausgang."
         ),
         "pause_title": "Pause",
         "pause_message": "Wiedergabe pausieren? Die Beamerausgabe wird schwarz.",

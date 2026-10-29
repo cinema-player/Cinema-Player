@@ -95,7 +95,7 @@
       width: 0;
       background: var(--playing);
     }
-    .bar[hidden], #seek[hidden], #envelope[hidden], #save-volume[hidden] { display: none; }
+    .bar[hidden], #seek[hidden], #envelope[hidden], #save-volume[hidden], .vol[hidden] { display: none; }
     #seek { width: 100%; margin: 0; accent-color: var(--cal); }
     #envelope {
       display: block;
@@ -402,6 +402,7 @@
       document.getElementById("still").classList.toggle("active", !!data.still);
       skipTransportConfirm = actions.confirm_transport === false;
       document.getElementById("save-volume").hidden = !actions.save_volume;
+      document.querySelector(".vol").hidden = actions.volume === false || !!(clip && clip.is_image);
       const seek = document.getElementById("seek");
       const canSeek = !!actions.seek && Number(clip.duration) > 0;
       seek.hidden = !canSeek;

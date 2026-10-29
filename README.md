@@ -8,7 +8,7 @@ The video output displays only the video image. When no playback is active, the 
 
 Two mpv instances run in parallel: one on the projector output, and one embedded in the control window for preview. Subtitles stay off unless a track is chosen for a clip.
 
-Clips narrower than 16:9, and files whose pixel aspect is not 1:1, are padded by mpv to a 16:9 frame so the projector stays in 16:9. Wider formats such as 21:9 are left unchanged. The playlist shows **→16:9** beside those Format or PAR values. Playlist → **Convert 4:3 to 16:9** turns that padding off.
+Clips narrower than 16:9, and files whose pixel aspect is not 1:1, are padded by mpv to a 16:9 frame so the projector stays in 16:9. Wider formats such as 21:9 are left unchanged. The playlist shows **→16:9** beside those Format or PAR values. Settings → System settings → Beamer → **Convert 4:3 to 16:9** turns that padding off.
 
 # Function
 
@@ -32,7 +32,7 @@ The header shows the Cinema Player logo, the program version beside the mpv vers
 - Preview video with a VU meter and optional integrated LUFS readout.
 - Preview transport and In/Out marks, then audio track and subtitles on the next line. Preview volume is yellow; program volume stays cyan. Live bitrates appear only while that player is rolling.
 
-In **OFF**, the status title reads as program not started and the program clocks show `--:--`. Transport buttons that cannot be used in the current state are shown disabled.
+In **OFF**, the status title reads as program not started. The program block keeps the transport buttons and hides the progress bar, volume, clocks, and meter. Transport buttons that cannot be used in the current state are shown disabled.
 
 The window can be switched to fullscreen on the control monitor (**F11** or Settings → Fullscreen). Cinema Player can only be quit, or the window closed, while the program is **OFF**.
 
@@ -43,9 +43,11 @@ The burger menu in the header covers booth setup:
 - Fullscreen on the control monitor (`F11`)
 - Media directories (saved folders offered when importing into the playlist)
 - **Program** — Use default Idle Media (checkbox; remembered, applies the file in `media/idle` at startup)
-- **Playlist** — check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness
+- **Playlist** — check files, reset, autosave, load last playlist, analyze loudness
 - **System settings**
-  - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
+  - **Beamer**
+    - Output (the connector used for the projector; cannot be changed while **PLAYING**)
+    - Convert 4:3 to 16:9 — pad clips narrower than 16:9, and files with a pixel aspect other than 1:1, to a 16:9 frame. Wider formats such as 21:9 stay unchanged. Format and PAR then show **→16:9**. The choice is remembered.
   - Patch (connect Beamer and Preview to a picture output and a sound device; remembered)
   - Light or dark design
   - Language (English / Deutsch)
@@ -59,7 +61,7 @@ The burger menu in the header covers booth setup:
     - Playlists in that folder, listed below a separator when present
 - Quit
 
-If only one display is connected at startup, a warning asks the projectionist to attach a second output and select it under **Beamer output**.
+If only one display is connected at startup, a warning asks the projectionist to attach a second output and select it under **Beamer → Output**.
 
 ## Playlist
 
@@ -71,7 +73,6 @@ The playlist menu offers:
 
 - Check video files
 - Reset playlist (clears played flags and moves the program pointer to the first entry)
-- **Convert 4:3 to 16:9** — pad clips narrower than 16:9, and files with a pixel aspect other than 1:1, to a 16:9 mpv frame. Wider formats such as 21:9 stay unchanged. Format and PAR then show **→16:9**. The choice is remembered. Turn it off to send those files at their storage size.
 - **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
@@ -109,7 +110,7 @@ Cinema Player listens on the LAN (default port **8765**) so a smartphone can run
 - `POST /api/program` — body `{"index": 0…}` sets the program pointer (not while **PLAYING**)
 - `POST /api/lights` — body `{"preset": "dark"|"medium"|"bright"}` and/or `{"enabled": true|false}`
 
-The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. **Remaining** and **End** are the large clocks. Dark / Medium / Bright, transport, and volume stay pinned at the bottom of the phone page. The token field hides after the first successful connection.
+The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. **Remaining** and **End** are the large clocks. Dark / Medium / Bright, transport, and volume stay pinned at the bottom of the phone page. While the program pointer is on a still, the volume slider and **Save volume** are hidden. The token field hides after the first successful connection.
 
 ### Lights
 
@@ -213,7 +214,7 @@ Different options can be selected for each entry in the playlist.
 - A checkbox overrides the automatic stop behavior and automatically starts playback of the next entry.
 - **Loop** repeats a video (In/Out if set) until **Resume** ends it.
 - **Dimmer** (`Dark`, `Medium`, `Bright`) is applied when the clip starts, not at the end. House lights come up automatically after the film unless Autoplay continues.
-- Volume is adjusted in preview and stored on the entry with **Save volume**. After **Analyze loudness**, a peak envelope for the clip is stored in the playlist and drawn under the preview progress bar, with a white line at the current time.
+- Volume is stored on that playlist film. **Save volume** in the program writes the program fader into the film under the program pointer; the other films keep their own levels. The same button in the preview writes the preview fader into the film shown there. After **Analyze loudness**, a peak envelope for the clip is stored in the playlist and drawn under the preview progress bar, with a white line at the current time.
 
 ### Images
 
@@ -231,7 +232,7 @@ The preview displays a video in a window within the control panel. The source ca
 
 When a playlist entry is selected, the playback position can be selected using a progress bar. A start point and an end point can be defined (buttons or **I** / **O**) to determine where the video starts and ends when it goes on air. This option is disabled while the video is on air. Preview In/Out/Clear sit beside the preview transport.
 
-The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row, and a peak envelope is drawn under the preview progress bar (white line = current time). During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview).
+The preview meter shows program-independent audio levels. After **Analyze loudness**, integrated LUFS is shown above the meter and in the playlist row, and a peak envelope is drawn under the preview progress bar (white line = current time). During playback the current video bitrate sits next to the progress bar and the current audio bitrate next to the volume slider (program and preview). A still hides those audio readouts and controls in both places; the playlist volume and LUFS cells stay empty.
 
 # Technique
 

@@ -80,8 +80,8 @@
     <p data-lang="de">Die wichtigsten Daten des Extended Display Identification Data (EDID) des Beamers werden ausgelesen und angezeigt. Die Werte werden mit den Metadaten der Filme verglichen.</p>
     <p data-lang="en">If the clip can play with the projector’s native modes, a green <strong>OK</strong> sits at the top right. If there is a problem, red <strong>Mismatch</strong> is shown. While a clip is on air, <strong>HW decode</strong> shows mpv’s current hardware decoder (<code>hwdec-current</code>). <strong>Drop frames</strong> splits the counters: <strong>mpv</strong> is frames skipped at display (<code>frame-drop-count</code>), <strong>decoder</strong> is frames skipped in the decoder (<code>decoder-frame-drop-count</code>). If any frames are dropped, the badge turns red <strong>Dropped</strong> instead of OK.</p>
     <p data-lang="de">Kann ein Film mit nativen Einstellungen des Beamers gezeigt werden, ist rechts oben ein grünes <strong>OK</strong> zu sehen. Bei einem Problem wird <strong>Abweichung</strong> in rot gezeigt. Während der Wiedergabe zeigt <strong>HW-Dekodierung</strong> den aktuellen Hardware-Decoder von mpv (<code>hwdec-current</code>). Bei <strong>Dropframes</strong> steht <strong>mpv</strong> für Bilder, die der Player bei der Ausgabe überspringt (<code>frame-drop-count</code>), und <strong>Decoder</strong> für Bilder, die der Decoder nicht schafft (<code>decoder-frame-drop-count</code>). Werden Bilder verworfen, steht statt OK rot <strong>Dropped</strong>.</p>
-    <p data-lang="en">The complete EDID record is under <em>Settings → Beamer output → EDID</em>.</p>
-    <p data-lang="de">Der komplette EDID-Datensatz kann in den Einstellungen unter <em>Einstellungen → Beamerausgang → EDID</em> abgerufen werden.</p>
+    <p data-lang="en">The complete EDID record is under <em>Settings → System settings → Beamer → Output → EDID</em>.</p>
+    <p data-lang="de">Der komplette EDID-Datensatz kann in den Einstellungen unter <em>Einstellungen → Systemeinstellungen → Beamer → Ausgang → EDID</em> abgerufen werden.</p>
     <p data-lang="en">Playback options that belong to the clip under the program pointer are marked blue. If a clip is loaded in preview, the matching values are yellow.</p>
     <p data-lang="de">Die theoretisch möglichen Wiedergabeoptionen des aktuellen Films, auf dem der Programmzeiger steht, sind blau markiert. Ist ein Film als Vorschau gewählt, werden die entsprechenden Werte gelb dargestellt.</p>
     <p data-lang="en">Values that have been negotiated and set on the projector have a border.</p>
@@ -153,8 +153,8 @@
       <figcaption data-lang="en">Each row shows the file name and the main metadata. A red value conflicts with the projector.</figcaption>
       <figcaption data-lang="de">Jeder Medieneintrag zeigt den Dateinamen und die wichtigsten Metadaten. Ist ein Wert rot, gibt es einen Konflikt mit den Möglichkeiten des Beamers.</figcaption>
     </figure>
-    <p data-lang="en">An arrow on the left marks the program pointer — that entry plays next. With the program started the row is filled blue. While the clip is on air it is green.</p>
-    <p data-lang="de">Ein Pfeil links vom Eintrag markiert den Programmzeiger. Dieser Eintrag wird als nächstes gespielt. Bei gestartetem Programm ist dieser Eintrag blau hinterlegt. Läuft der Film, ist er grün gekennzeichnet.</p>
+    <p data-lang="en">An arrow on the left marks the program pointer — that entry plays next. With the program started the row is filled blue. While the clip is on air it is green. A still has a small picture icon in front of the file name.</p>
+    <p data-lang="de">Ein Pfeil links vom Eintrag markiert den Programmzeiger. Dieser Eintrag wird als nächstes gespielt. Bei gestartetem Programm ist dieser Eintrag blau hinterlegt. Läuft der Film, ist er grün gekennzeichnet. Ein Standbild hat vor dem Dateinamen ein kleines Bild-Icon.</p>
     <p data-lang="en">The entry loaded in the <em>preview window</em> has a yellow border.</p>
     <p data-lang="de">Der Eintrag, der im <em>Vorschaufenster</em> geladen ist, wird gelb umrandet dargestellt.</p>
 
@@ -181,6 +181,8 @@
       <li data-lang="en">Measured loudness (LUFS) via <em>Settings → Playlist → Analyze loudness</em></li>
       <li data-lang="de">Berechneter Loudness-Wert (LUFS) unter <em>Einstellungen → Playlist → Audioanalyse</em></li>
     </ul>
+    <p data-lang="en">Stills leave the volume and LUFS cells empty. In the program, the preview, and the phone remote, the volume slider and the other audio readouts are hidden.</p>
+    <p data-lang="de">Bei Standbildern bleiben Lautstärke und LUFS leer. Im Programm, in der Vorschau und in der Fernsteuerung sind der Lautstärkeregler und die übrigen Tonanzeigen ausgeblendet.</p>
 
     <h3>
       <span data-lang="en">Options</span>
@@ -266,9 +268,11 @@
     <p data-lang="de">Solange das Programm nicht gestartet ist, bleibt die Leinwand schwarz. Nur in diesem Zustand können Funktionen wie die Tonanalyse oder die Kalibrierung vorgenommen werden.</p>
     <figure>
       <img src="images/guide/program-off.png" alt="Program block while OFF">
-      <figcaption data-lang="en">Program block while off. Start is the only transport that is armed.</figcaption>
-      <figcaption data-lang="de">Programmblock bei AUS. Nur Start ist scharf.</figcaption>
+      <figcaption data-lang="en">Program block while off. Only the transport buttons stay; Start is the one that is armed.</figcaption>
+      <figcaption data-lang="de">Programmblock bei AUS. Nur die Transportknöpfe bleiben sichtbar, und nur Start ist scharf.</figcaption>
     </figure>
+    <p data-lang="en">While the program is off, the progress bar, volume, clocks, and meter are hidden. The transport buttons stay.</p>
+    <p data-lang="de">Solange das Programm aus ist, sind Fortschrittsbalken, Lautstärke, Uhren und Pegelanzeige ausgeblendet. Die Transportknöpfe bleiben.</p>
     <p data-lang="en">The program is begun with <strong>Start</strong> <img class="inline" src="images/guide/icon-start.png" alt="">. The colour changes from red to blue, and the buttons for <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt=""> and <strong>Resume</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> become active.</p>
     <p data-lang="de">Das Programm wird mit der <strong>Start</strong>-Taste <img class="inline" src="images/guide/icon-start.png" alt=""> begonnen. Die Farbe wechselt von rot auf blau und die Tasten für <strong>Stop</strong> <img class="inline" src="images/guide/icon-stop.png" alt=""> und <strong>Weiter</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> werden aktiviert.</p>
     <figure>
@@ -313,8 +317,8 @@
       <figcaption data-lang="en"><span class="badge playing">PLAYING</span> — a clip is on air.</figcaption>
       <figcaption data-lang="de"><span class="badge playing">WIEDERGABE</span> — ein Film läuft.</figcaption>
     </figure>
-    <p data-lang="en">While a clip plays, the status bar is green. Current video and audio bitrates sit next to the progress bar. The meter shows the level after the volume fader. <strong>Save volume</strong> stays next to the program volume slider and writes that level into the playlist entry.</p>
-    <p data-lang="de">Während ein Film wiedergegeben wird, ist die Statuszeile grün. Die aktuellen Datenraten für Video und Audio werden neben dem Fortschrittsbalken angezeigt. Die Lautstärke lässt sich in der Aussteuerungsanzeige ablesen. Die Anzeige zeigt den Wert nach dem Lautstärkeregler. <strong>Lautstärke speichern</strong> steht immer neben dem Lautstärkeregler im Programm und übernimmt den Wert in den Playlist-Eintrag.</p>
+    <p data-lang="en">While a clip plays, the status bar is green. Current video and audio bitrates sit next to the progress bar. The meter shows the level after the volume fader. <strong>Save volume</strong> stays next to the program volume slider and writes that level only into this film in the playlist. The other entries keep their own volume.</p>
+    <p data-lang="de">Während ein Film wiedergegeben wird, ist die Statuszeile grün. Die aktuellen Datenraten für Video und Audio werden neben dem Fortschrittsbalken angezeigt. Die Lautstärke lässt sich in der Aussteuerungsanzeige ablesen. Die Anzeige zeigt den Wert nach dem Lautstärkeregler. <strong>Lautstärke speichern</strong> steht immer neben dem Lautstärkeregler im Programm und schreibt den Pegel nur in diesen Film in der Playlist. Die übrigen Einträge behalten ihre eigene Lautstärke.</p>
     <figure>
       <img src="images/guide/program-playing.png" alt="Program block while playing">
       <figcaption data-lang="en">Program block during playback: progress, volume, clocks, meter, Stop, Pause and Still.</figcaption>
@@ -474,10 +478,10 @@
         <img src="images/guide/phone-transport.png" alt="Phone remote transport">
       </figure>
     </div>
-    <p data-lang="en">There are buttons for <strong>STOP</strong>, <strong>PAUSE</strong>, <strong>STILL</strong> and <strong>RESUME</strong>. <strong>Remaining</strong> and <strong>End</strong> are the large clocks. Lights, transport, and volume stay at the bottom while the playlist scrolls. The token field hides after the phone has connected. Transport needs the same confirmation as on the Cinema Player window.</p>
-    <p data-lang="de">Es gibt Tasten für die Transportfunktionen <strong>STOP</strong>, <strong>PAUSE</strong>, <strong>STILL</strong> und <strong>WEITER</strong>. <strong>Rest</strong> und <strong>Ende</strong> sind die großen Uhren. Licht, Transport und Lautstärke bleiben unten, während die Playlist scrollt. Das Token-Feld verschwindet, sobald das Telefon verbunden ist. Die Transporttasten erfordern die gleiche Bestätigung wie auf der Oberfläche des Cinema Players.</p>
-    <p data-lang="en"><strong>Save volume</strong> always sits under the volume slider and writes that level into the playlist entry. Volume setup is started from the booth Program menu, not from the phone. Once that mode is on, the status is purple and the progress bar and audio envelope can be dragged. Pause and Still run without confirmation. Stop ends the clip on air; it does not leave the mode.</p>
-    <p data-lang="de"><strong>Lautstärke speichern</strong> steht immer unter dem Lautstärkeregler und übernimmt den Wert in den Playlist-Eintrag. Lautstärke einstellen wird im Program-Menü des Kontrollfensters gestartet, nicht am Telefon. Ist der Modus aktiv, ist der Status lila und Fortschrittsbalken und Audio-Hüllkurve lassen sich verschieben. Pause und Still laufen ohne Bestätigung. Stop beendet den laufenden Clip, verlässt den Modus aber nicht.</p>
+    <p data-lang="en">There are buttons for <strong>STOP</strong>, <strong>PAUSE</strong>, <strong>STILL</strong> and <strong>RESUME</strong>. <strong>Remaining</strong> and <strong>End</strong> are the large clocks. Lights, transport, and volume stay at the bottom while the playlist scrolls. On a still, the volume block is hidden. The token field hides after the phone has connected. Transport needs the same confirmation as on the Cinema Player window.</p>
+    <p data-lang="de">Es gibt Tasten für die Transportfunktionen <strong>STOP</strong>, <strong>PAUSE</strong>, <strong>STILL</strong> und <strong>WEITER</strong>. <strong>Rest</strong> und <strong>Ende</strong> sind die großen Uhren. Licht, Transport und Lautstärke bleiben unten, während die Playlist scrollt. Bei einem Standbild ist der Lautstärkeblock ausgeblendet. Das Token-Feld verschwindet, sobald das Telefon verbunden ist. Die Transporttasten erfordern die gleiche Bestätigung wie auf der Oberfläche des Cinema Players.</p>
+    <p data-lang="en"><strong>Save volume</strong> sits under the volume slider and writes that level into the playlist entry. Both are hidden while the program pointer is on a still. Volume setup is started from the booth Program menu, not from the phone. Once that mode is on, the status is purple and the progress bar and audio envelope can be dragged. Pause and Still run without confirmation. Stop ends the clip on air; it does not leave the mode.</p>
+    <p data-lang="de"><strong>Lautstärke speichern</strong> steht unter dem Lautstärkeregler und übernimmt den Wert in den Playlist-Eintrag. Beides ist ausgeblendet, solange der Programmzeiger auf einem Standbild steht. Lautstärke einstellen wird im Program-Menü des Kontrollfensters gestartet, nicht am Telefon. Ist der Modus aktiv, ist der Status lila und Fortschrittsbalken und Audio-Hüllkurve lassen sich verschieben. Pause und Still laufen ohne Bestätigung. Stop beendet den laufenden Clip, verlässt den Modus aber nicht.</p>
     <figure class="mid">
       <img src="images/guide/phone-playlist.png" alt="Phone remote playlist">
       <figcaption data-lang="en">The playlist is below. Tap a row to set the program pointer. The action must be confirmed and is locked during playback.</figcaption>
@@ -608,8 +612,8 @@
     </h3>
     <figure class="snip">
       <img src="images/guide/menu-system.png" alt="System settings submenu">
-      <figcaption data-lang="en">Light design, language, text size, remote control, light control, beamer output, patchbay.</figcaption>
-      <figcaption data-lang="de">Helles Design, Sprache, Schriftgröße, Fernsteuerung, Lichtsteuerung, Beamerausgang, Audio-Steckfeld.</figcaption>
+      <figcaption data-lang="en">Light design, language, text size, remote control, light control, Beamer, patchbay.</figcaption>
+      <figcaption data-lang="de">Helles Design, Sprache, Schriftgröße, Fernsteuerung, Lichtsteuerung, Beamer, Audio-Steckfeld.</figcaption>
     </figure>
     <p data-lang="en">
       <strong>Text size</strong> (under Language) steps the control-window type from A−− to A++. The choice is saved and applied again at the next start.
@@ -618,15 +622,21 @@
       <strong>Schriftgröße</strong> (unter Sprache) stellt die Schrift im Kontrollfenster von A−− bis A++. Die Wahl wird gespeichert und beim nächsten Start wieder angewendet.
     </p>
     <p data-lang="en">
+      <strong>Beamer</strong> holds <strong>Output</strong> (the projector connector; it cannot change while the program is <strong>PLAYING</strong>; <strong>EDID</strong> is the last item) and <strong>Convert 4:3 to 16:9</strong>. That switch pads clips narrower than 16:9, and files whose pixel aspect is not 1:1, to a 16:9 frame. Wider formats such as 21:9 stay unchanged. The choice is saved.
+    </p>
+    <p data-lang="de">
+      <strong>Beamer</strong> enthält <strong>Ausgang</strong> (der Projektoranschluss; er ist während <strong>WIEDERGABE</strong> gesperrt; <strong>EDID</strong> steht ganz unten) und <strong>4:3 auf 16:9 umrechnen</strong>. Der Schalter setzt Filme schmaler als 16:9 und Dateien mit einem Pixelseitenverhältnis ungleich 1:1 in ein 16:9-Bild. Breitere Formate wie 21:9 bleiben unverändert. Die Wahl wird gespeichert.
+    </p>
+    <p data-lang="en">
       <strong>Patch</strong> connects the Beamer and Preview players to an output.
-      Beamer picture is a connected display (the same choice as Beamer output; it cannot change while the program is <strong>PLAYING</strong>).
+      Beamer picture is a connected display (the same choice as Beamer → Output; it cannot change while the program is <strong>PLAYING</strong>).
       Preview picture stays in the control window.
       Sound lists the output devices mpv can open. <strong>Automatic</strong> sends Beamer sound to the projector and Preview sound to the booth.
       <strong>Off</strong> disconnects that player. The patch is saved.
     </p>
     <p data-lang="de">
       <strong>Patch</strong> verbindet die Player Beamer und Vorschau mit einem Ausgang.
-      Das Beamer-Bild ist ein angeschlossener Bildschirm (dieselbe Wahl wie Beamerausgang; sie ist während <strong>WIEDERGABE</strong> gesperrt).
+      Das Beamer-Bild ist ein angeschlossener Bildschirm (dieselbe Wahl wie Beamer → Ausgang; sie ist während <strong>WIEDERGABE</strong> gesperrt).
       Das Vorschaubild bleibt im Kontrollfenster.
       Ton listet die Ausgabegeräte, die mpv öffnen kann. <strong>Automatisch</strong> legt den Beamer-Ton auf den Projektor und den Vorschau-Ton in den Vorführraum.
       <strong>Aus</strong> trennt diesen Player. Die Verbindung wird gespeichert.

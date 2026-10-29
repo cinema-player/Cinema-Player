@@ -1826,17 +1826,17 @@ _DRIVE_ICON_ROWS = (
 )
 
 
-def removable_drive_photo(color):
-    """Small USB-stick icon. Transparent pixels let the row colour show through."""
+def _bitmap_photo(rows, color):
+    """RGBA photo from ASCII rows. '#' is the colour, anything else is clear."""
     import base64
     import struct
     import zlib
 
     red, green, blue = (int(color[index:index + 2], 16) for index in (1, 3, 5))
-    width = len(_DRIVE_ICON_ROWS[0])
-    height = len(_DRIVE_ICON_ROWS)
+    width = len(rows[0])
+    height = len(rows)
     raw = bytearray()
-    for line in _DRIVE_ICON_ROWS:
+    for line in rows:
         raw.append(0)
         for pixel in line:
             if pixel == "#":
@@ -1860,6 +1860,40 @@ def removable_drive_photo(color):
         + chunk(b"IEND", b"")
     )
     return tk.PhotoImage(data=base64.b64encode(png))
+
+
+def removable_drive_photo(color):
+    """Small USB-stick icon. Transparent pixels let the row colour show through."""
+    return _bitmap_photo(_DRIVE_ICON_ROWS, color)
+
+
+# Picture frame, sun, and a hill. One pixel per character.
+_STILL_ICON_ROWS = (
+    "################",
+    "#           ## #",
+    "#           ## #",
+    "#  ##          #",
+    "# ####         #",
+    "##   ##   #    #",
+    "# ###### ###   #",
+    "#              #",
+    "################",
+)
+_STILL_ICON_CACHE = {}
+
+
+def still_icon_photo(color):
+    """Small picture mark for a still. Cached per colour, rebuilt if Tk dropped it."""
+    photo = _STILL_ICON_CACHE.get(color)
+    if photo is not None:
+        try:
+            photo.width()
+            return photo
+        except tk.TclError:
+            photo = None
+    photo = _bitmap_photo(_STILL_ICON_ROWS, color)
+    _STILL_ICON_CACHE[color] = photo
+    return photo
 
 
 class ImportFolderList(tk.Frame):
@@ -2985,6 +3019,7 @@ class VideoPlayerGUI:
         progress.grid(row=0, column=0, sticky="ew")
         progress.columnconfigure(0, weight=1)
 
+        self.program_progress = progress
         self.main_progress = RangeProgressBar(
             progress, on_seek=self._on_main_seek, can_seek=self.program_seek_allowed,
             height=32, bg=COLOR_PANEL,
@@ -3002,6 +3037,7 @@ class VideoPlayerGUI:
         volume = self._build_volume_row(
             progress, self.program_volume, self._on_program_volume, COLOR_PANEL,
         )
+        self.program_volume_row = volume
         volume.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 0))
         self.program_audio_bitrate = self._bitrate_readout(progress, "audio_bitrate")
         self.program_audio_bitrate.grid(row=2, column=1, sticky="e", padx=(8, 8), pady=(4, 0))
@@ -3057,6 +3093,7 @@ class VideoPlayerGUI:
         self._build_transport(bottom)
 
         times = tk.Frame(bottom, bg=COLOR_PANEL)
+        self.program_clocks = times
         times.grid(row=0, column=1, sticky="ew")
         for col in range(4):
             times.columnconfigure(col, weight=1)
@@ -3215,10 +3252,10 @@ class VideoPlayerGUI:
         current = getattr(self, "_program_volume_output", None)
         if not rolling or current is None or abs(float(current) - target) < 0.05:
             self._cancel_program_volume_glide()
-            # Outside a rolling show the level still applies at once. Idle
-            # video keeps its own full level and is not overwritten here.
+            # Remember this film's level even before the player is audible, so
+            # the next file does not inherit the previous clip's output.
+            self._remember_program_output(target)
             if audible:
-                self._remember_program_output(target)
                 self._send_program_output_volume()
             if move_fader:
                 self._paint_program_fader(target)
@@ -3313,7 +3350,11 @@ class VideoPlayerGUI:
         self.repaint_playlist()
 
     def save_program_volume(self):
-        """Write the program fader into the clip on the program pointer."""
+        """Store the program fader on the film at the program pointer.
+
+        Other playlist films keep their own levels. Nothing is written into
+        the application settings.
+        """
         entry = self.current_entry()
         if not entry:
             return
@@ -4113,9 +4154,16 @@ class VideoPlayerGUI:
             )
         system.add_cascade(label=t("text_size"), menu=sizes)
         system.add_separator()
-        outputs = self._menu(system)
+        beamer = self._menu(system)
+        outputs = self._menu(beamer)
         self._fill_beamer_output_menu(outputs)
-        system.add_cascade(label=t("beamer_output"), menu=outputs)
+        beamer.add_cascade(label=t("output"), menu=outputs)
+        beamer.add_checkbutton(
+            label=t("pad_16x9"),
+            variable=self.pad_16x9,
+            command=self._on_pad_16x9,
+        )
+        system.add_cascade(label=t("beamer_menu"), menu=beamer)
         system.add_command(
             label=t("patch"),
             command=self.show_patch,
@@ -4495,11 +4543,6 @@ class VideoPlayerGUI:
         menu.add_command(label=t("refresh_playlist"), command=self.check_playlist_files)
         menu.add_command(label=t("reset_played"), command=self.reset_played)
         menu.add_separator()
-        menu.add_checkbutton(
-            label=t("pad_16x9"),
-            variable=self.pad_16x9,
-            command=self._on_pad_16x9,
-        )
         menu.add_checkbutton(
             label=t("autosave_program_change"),
             variable=self.autosave_on_program_change,
@@ -4926,6 +4969,7 @@ class VideoPlayerGUI:
         self.preview_video = tk.Frame(video_row, bg=COLOR_VIDEO, width=480, height=270)
         self.preview_video.grid(row=0, column=0, sticky="nsew")
         meter_col = tk.Frame(video_row, bg=COLOR_PANEL)
+        self.preview_meter_col = meter_col
         meter_col.grid(row=0, column=1, sticky="ns", padx=(6, 0))
         meter_col.rowconfigure(1, weight=1)
         self.preview_lufs = tk.Label(
@@ -5128,13 +5172,16 @@ class VideoPlayerGUI:
             self.time_remaining.config(text=times["remaining"])
             self.time_end.config(text=times["end"])
         if self.program_state != "PLAYING":
-            self._load_program_volume(entry)
+            # The fader belongs to the film under the program pointer, also
+            # while the show is stopped. A stopped show has no rolling entry.
+            self._load_program_volume(self.current_entry())
         self._refresh_program_delay_readout(entry)
         if self.calibration_mode == "audio":
             self._sync_audiosync_slider(entry)
         if getattr(self, "lights_fading", False):
             self._refresh_light_buttons()
         self._apply_volume_setup_chrome()
+        self._apply_program_stop_chrome()
         self._apply_booth_chrome()
 
     def _refresh_next_clip(self):
@@ -5156,6 +5203,29 @@ class VideoPlayerGUI:
                 label.grid(row=1, column=1, sticky="ew", pady=(4, 0))
         except tk.TclError:
             pass
+
+    def _apply_program_stop_chrome(self):
+        """A stopped show keeps the transport buttons and hides the rest of the block."""
+        visible = getattr(self, "program_state", "OFF") != "OFF"
+        self._set_grid_visible(getattr(self, "program_progress", None), visible)
+        self._set_grid_visible(getattr(self, "program_clocks", None), visible)
+        self._apply_program_audio_chrome()
+
+    def _apply_program_audio_chrome(self):
+        """A still has no soundtrack. Drop the program fader, envelope, and meter."""
+        entry = self.current_entry() if getattr(self, "playlist", None) is not None else None
+        still = bool(entry and getattr(entry, "is_image", False))
+        running = getattr(self, "program_state", "OFF") != "OFF"
+        self._set_grid_visible(getattr(self, "program_meter", None), running and not still)
+        for name in ("program_envelope", "program_volume_row", "program_audio_bitrate"):
+            self._set_grid_visible(getattr(self, name, None), not still)
+        if getattr(self, "calibration_mode", None) == "audio":
+            self._set_grid_visible(getattr(self, "audiosync_frame", None), not still)
+
+    def _apply_preview_audio_chrome(self, entry):
+        """Hide the preview meter for a still. The control strip is already gone."""
+        still = bool(entry and getattr(entry, "is_image", False))
+        self._set_grid_visible(getattr(self, "preview_meter_col", None), not still)
 
     def _booth_show_mode(self):
         """Armed or rolling show. Calibration keeps the preparation tools."""
@@ -5318,13 +5388,18 @@ class VideoPlayerGUI:
         cursor = tk.Label(row, text="", width=2, bg=bg, fg=fg, font=FONT_ROW_BOLD)
         cursor.grid(row=0, column=0, rowspan=2)
 
+        name = tk.Frame(row, bg=bg)
+        name.grid(row=0, column=1, rowspan=2, sticky="nsew")
+        name.columnconfigure(1, weight=1)
+        still_icon = tk.Label(name, bg=bg, bd=0, highlightthickness=0)
+        still_icon.tooltip = IconTooltip(still_icon, t("still"))
         wrap = self._playlist_name_wrap()
         filename = tk.Label(
-            row, text=entry.filename, anchor="w", justify="left",
+            name, text=entry.filename, anchor="w", justify="left",
             bg=bg, fg=fg, font=FONT_ROW_BOLD, wraplength=wrap,
         )
         detail = tk.Label(
-            row, text="", anchor="w", justify="left",
+            name, text="", anchor="w", justify="left",
             bg=bg, fg=self._location_fg(fg), font=FONT_SMALL, wraplength=wrap,
         )
         filename.grid(row=0, column=1, sticky="ew")
@@ -5339,6 +5414,8 @@ class VideoPlayerGUI:
         self.row_widgets.append({
             "row": row,
             "cursor": cursor,
+            "name": name,
+            "still_icon": still_icon,
             "plain": plain,
             "filename": filename,
             "detail": detail,
@@ -5346,7 +5423,12 @@ class VideoPlayerGUI:
         })
         self._paint_row(index, entry)
 
-        bind_targets = [row, *row.winfo_children()]
+        bind_targets = []
+        pending = [row]
+        while pending:
+            widget = pending.pop()
+            bind_targets.append(widget)
+            pending.extend(widget.winfo_children())
         for widget in bind_targets:
             widget.bind("<ButtonPress-1>", lambda e, i=index: self.on_row_press(i, e))
             widget.bind("<B1-Motion>", lambda e: self.on_row_drag(e))
@@ -5386,16 +5468,29 @@ class VideoPlayerGUI:
         widgets["cursor"].config(
             text=">" if index == self.program_index else " ", bg=bg, fg=fg
         )
+        widgets["name"].config(bg=bg)
+        still_icon = widgets["still_icon"]
+        if getattr(entry, "is_image", False):
+            photo = still_icon_photo(fg)
+            still_icon.config(image=photo, bg=bg)
+            still_icon.image = photo
+            if not still_icon.winfo_manager():
+                still_icon.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 6))
+        else:
+            still_icon.config(image="")
+            still_icon.image = None
+            if still_icon.winfo_manager():
+                still_icon.grid_remove()
         warnings = set(playlist_warning_keys(entry))
         widgets["duration"].config(text=self._row_duration_text(entry), bg=bg, fg=fg)
-        widgets["volume"].config(
-            text=f"{clamp_volume(entry.volume)}%",
-            bg=bg, fg=COLOR_VOLUME,
-        )
-        widgets["loudness"].config(
-            text=format_loudness(entry.loudness_lufs),
-            bg=bg, fg=COLOR_VOLUME,
-        )
+        if getattr(entry, "is_image", False):
+            volume_text = ""
+            loudness_text = ""
+        else:
+            volume_text = f"{clamp_volume(entry.volume)}%"
+            loudness_text = format_loudness(entry.loudness_lufs)
+        widgets["volume"].config(text=volume_text, bg=bg, fg=COLOR_VOLUME)
+        widgets["loudness"].config(text=loudness_text, bg=bg, fg=COLOR_VOLUME)
         rate_bad = "rate" in warnings
         widgets["fps"].config(
             text=warned_meta_text(format_fps_label(entry.fps), rate_bad, t("warn_rate")),
@@ -5535,6 +5630,7 @@ class VideoPlayerGUI:
             if not self.preview_played_box.winfo_manager():
                 self.preview_played_box.pack(side="left")
         self._place_light_dimmer(image)
+        self._apply_preview_audio_chrome(entry)
         self._refresh_safety_group()
 
     def repaint_playlist(self):
@@ -5546,6 +5642,14 @@ class VideoPlayerGUI:
             self._paint_row(index, entry)
 
     def _set_preview_lufs(self, entry):
+        label = self.preview_lufs
+        if entry and getattr(entry, "is_image", False):
+            label.config(text="")
+            if label.winfo_manager():
+                label.grid_remove()
+            return
+        if not label.winfo_manager():
+            label.grid(row=0, column=0, pady=(0, 2))
         if entry and not entry.missing and not entry.is_image:
             value = format_loudness(entry.loudness_lufs)
         else:
@@ -8878,6 +8982,7 @@ class VideoPlayerGUI:
         rolling = self.program_state == "PLAYING" and not self.main_pause
         clip_rolling = rolling and not self.still_waiting and not self._program_loop_active()
         volume_setup = bool(getattr(self, "volume_setup", False))
+        still_clip = bool(entry and getattr(entry, "is_image", False))
         if volume_setup:
             state_key = "state_volume_setup"
         else:
@@ -8911,6 +9016,7 @@ class VideoPlayerGUI:
                 "position": self.position if self.program_state == "PLAYING" else 0.0,
                 "in_point": entry.in_point,
                 "out_point": entry.out_point,
+                "is_image": bool(entry.is_image),
             }
             envelope = remote_clip_envelope(
                 entry, volume_setup or self.program_seek_allowed(),
@@ -8954,8 +9060,8 @@ class VideoPlayerGUI:
                 "still": self.program_state == "PLAYING",
                 "stop": self.program_state == "PLAYING",
                 "confirm_transport": not volume_setup,
-                "volume": True,
-                "save_volume": True,
+                "volume": not still_clip,
+                "save_volume": not still_clip,
                 "seek": self.program_seek_allowed(),
                 "set_program": bool(self.playlist) and self.program_state != "PLAYING",
                 "lights": bool(self.lights_control.get()),
