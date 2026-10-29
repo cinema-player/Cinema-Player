@@ -10,7 +10,7 @@ import video_color_status as color
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TESTDATA = os.path.join(ROOT, "testdata", "videotestdata")
+TESTDATA = os.path.join(ROOT, "media", "testdata", "videotestdata")
 
 
 class ClassifyTests(unittest.TestCase):

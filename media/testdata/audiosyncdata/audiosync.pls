@@ -2,12 +2,12 @@
   "projection_zoom": false,
   "autoplay_delay": 5.0,
   "idle_media": "AFC Idle.mp4",
-  "idle_media_path": "/home/administrator/Cinema-Player/idle/AFC Idle.mp4",
+  "idle_media_path": "/home/administrator/Cinema-Player/media/idle/AFC Idle.mp4",
   "program_index": 0,
   "autosave_on_program_change": true,
   "entries": [
     {
-      "path": "/home/administrator/Cinema-Player/testdata/audiosyncdata/rec2020-test.mp4",
+      "path": "/home/administrator/Cinema-Player/media/testdata/audiosyncdata/rec2020-test.mp4",
       "filename": "rec2020-test.mp4",
       "duration": 6.0,
       "container": "MP4",

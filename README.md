@@ -42,7 +42,7 @@ The burger menu in the header covers booth setup:
 
 - Fullscreen on the control monitor (`F11`)
 - Media directories (saved folders offered when importing into the playlist)
-- **Program** — Use default Idle Media (checkbox; remembered, applies the file in `idle` at startup)
+- **Program** — Use default Idle Media (checkbox; remembered, applies the file in `media/idle` at startup)
 - **Playlist** — check files, reset, settings warning, autosave, load last playlist, idle media, analyze loudness
 - **System settings**
   - Beamer output (the connector used for the projector; cannot be changed while **PLAYING**)
@@ -55,7 +55,7 @@ The burger menu in the header covers booth setup:
 - **Calibration** (in **OFF** and while already calibrating)
   - Beamer test image (Cinema Player logo on the projector; only in **OFF**)
   - Video / Audio
-    - Load all files (clips from `testdata/videotestdata` or `testdata/audiosyncdata`, loop on)
+    - Load all files (clips from `media/testdata/videotestdata` or `media/testdata/audiosyncdata`, loop on)
     - Playlists in that folder, listed below a separator when present
 - Quit
 
@@ -75,7 +75,7 @@ The playlist menu offers:
 - **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
-- **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `idle` at startup.
+- **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `media/idle` at startup.
 - Analyze loudness (ffmpeg EBU R128 and audio envelope; only while **OFF**)
 
 ### Global Settings
@@ -129,7 +129,7 @@ Each playlist entry has a **Dimmer** (`Dark` default, `Medium`, `Bright`). It ru
 
 ### Calibration
 
-**Video** and **Audio** under **Calibration** (only while **OFF** or already calibrating) use the same mode. Each submenu offers **Load all files** (every clip in `testdata/videotestdata` or `testdata/audiosyncdata`) and, below a separator, any `.pls` playlists in that folder. The chosen list replaces the current playlist with loop on and arms the program. Idle media is not shown. The status reads **Video calibration** or **Audio calibration**. Stop from **PROGRAM** leaves the mode and clears the test playlist.
+**Video** and **Audio** under **Calibration** (only while **OFF** or already calibrating) use the same mode. Each submenu offers **Load all files** (every clip in `media/testdata/videotestdata` or `media/testdata/audiosyncdata`) and, below a separator, any `.pls` playlists in that folder. The chosen list replaces the current playlist with loop on and arms the program. Idle media is not shown. The status reads **Video calibration** or **Audio calibration**. Stop from **PROGRAM** leaves the mode and clears the test playlist.
 
 In **Audio calibration**, a delay slider under the program volume sets audio vs. video in 1 ms steps (mpv `audio-delay`); the value is stored per resolution and frame rate. **Delays** lists the stored values; **Load** / **Save** read and write them as JSON. During a normal show, the matching delay is applied and shown next to the program volume.
 

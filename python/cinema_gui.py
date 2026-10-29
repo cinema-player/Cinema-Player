@@ -162,9 +162,9 @@ BEAMER_TEST_FILE = os.path.join(ROOT_DIR, "assets", "logo", "cinema-player-logo.
 # mpv log2 zoom: -0.8 ≈ 57% size, so the wide logo does not fill the screen width.
 BEAMER_TEST_ZOOM = -0.8
 ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
-TESTDATA_DIR = os.path.join(ROOT_DIR, "testdata", "videotestdata")
-AUDIOSYNC_DIR = os.path.join(ROOT_DIR, "testdata", "audiosyncdata")
-IDLE_DIR = os.path.join(ROOT_DIR, "idle")
+TESTDATA_DIR = os.path.join(ROOT_DIR, "media", "testdata", "videotestdata")
+AUDIOSYNC_DIR = os.path.join(ROOT_DIR, "media", "testdata", "audiosyncdata")
+IDLE_DIR = os.path.join(ROOT_DIR, "media", "idle")
 TRANSPORT_ICON_PX = 52
 DRAG_THRESHOLD = 12
 AUDIO_DELAY_MIN_MS = -50

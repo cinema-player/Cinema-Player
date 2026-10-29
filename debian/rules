@@ -33,7 +33,7 @@ binary-indep: build-indep
 		case $$(basename $$src) in test_*) continue ;; esac; \
 		install -m 0644 $$src $(share)/python/; \
 	done
-	cp -a assets idle testdata $(share)/
+	cp -a assets media $(share)/
 	mkdir -p $(share)/manual
 	cp -a manual/index.html manual/style.css manual/images $(share)/manual/
 	install -m 0644 pyproject.toml COPYRIGHT $(share)/
