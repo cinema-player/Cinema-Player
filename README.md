@@ -294,4 +294,6 @@ sudo dnf install ./dist/cinema-player-0.3.5-beta1.noarch.rpm
 
 On openSUSE use `sudo zypper install ./dist/cinema-player-0.3.5-beta1.noarch.rpm`.
 
+Cutting a new version is described in [PACKAGING.md](PACKAGING.md).
+
 mpv must be the distro build (the conda-forge mpv cannot open a GPU window). On X11 the player uses `xrandr`; on GNOME Wayland it uses `gdctl`; on KWin/Plasma Wayland it uses `kscreen-doctor`.
