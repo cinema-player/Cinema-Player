@@ -85,7 +85,7 @@ sudo apt install ./dist/cinema-player_0.3.6-1_all.deb
 Install `rpm-build`, then build from anywhere:
 
 ```bash
-sudo dnf install rpm-build
+sudo apt install rpm-build
 packaging/build-rpm.sh
 ```
 

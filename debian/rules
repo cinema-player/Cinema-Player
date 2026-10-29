@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 
 pkg := cinema-player
-version := 0.3.5~beta-1
+version := 0.3.6-1
 root := debian/$(pkg)
 share := $(root)/usr/share/$(pkg)
 deb := dist/$(pkg)_$(version)_all.deb
