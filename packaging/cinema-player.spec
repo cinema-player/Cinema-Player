@@ -41,7 +41,7 @@ for src in %{srcroot}/python/*.py; do
     case $(basename "$src") in test_*) continue ;; esac
     install -m 0644 "$src" %{buildroot}%{_datadir}/cinema-player/python/
 done
-cp -a %{srcroot}/assets %{srcroot}/idle %{srcroot}/testdata %{buildroot}%{_datadir}/cinema-player/
+cp -a %{srcroot}/assets %{srcroot}/media %{buildroot}%{_datadir}/cinema-player/
 cp -a %{srcroot}/manual/index.html %{srcroot}/manual/style.css %{srcroot}/manual/images %{buildroot}%{_datadir}/cinema-player/manual/
 install -m 0644 %{srcroot}/pyproject.toml %{srcroot}/COPYRIGHT %{buildroot}%{_datadir}/cinema-player/
 find %{buildroot} -type d -name __pycache__ -exec rm -rf {} +

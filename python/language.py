@@ -175,8 +175,8 @@ STRINGS = {
         "idle_media_choose": "Choose file…",
         "idle_none": "none",
         "default_idle_media": "Use default Idle Media",
-        "default_idle_media_missing": "The idle folder was not found.",
-        "default_idle_media_empty": "No media was found in the idle folder.",
+        "default_idle_media_missing": "The media/idle folder was not found.",
+        "default_idle_media_empty": "No media was found in media/idle.",
         "beamer_status": "Beamer status",
         "beamer_output": "Beamer output",
         "beamer_output_busy": "Stop playback before changing the projector output.",
@@ -348,11 +348,11 @@ STRINGS = {
         "state_video_calibration": "Video calibration",
         "state_audio_calibration": "Audio calibration",
         "calibration_video_warning": (
-            "Video calibration replaces the current playlist with the files from testdata/videotestdata.\n"
+            "Video calibration replaces the current playlist with the files from media/testdata/videotestdata.\n"
             "Continue?"
         ),
-        "calibration_video_missing": "The testdata/videotestdata folder was not found.",
-        "calibration_video_empty": "No videos were found in testdata/videotestdata.",
+        "calibration_video_missing": "The media/testdata/videotestdata folder was not found.",
+        "calibration_video_empty": "No videos were found in media/testdata/videotestdata.",
         "calibration_video_stop": "Leave video calibration and delete the test playlist?",
         "calibration_playlist_warning": (
             "{mode} replaces the current playlist with {name}.\nContinue?"
@@ -361,11 +361,11 @@ STRINGS = {
         "calibration_playlist_error": "The playlist {name} could not be read.\n{error}",
         "audiosync": "Audio calibration",
         "calibration_audio_warning": (
-            "Audio calibration replaces the current playlist with the files from testdata/audiosyncdata.\n"
+            "Audio calibration replaces the current playlist with the files from media/testdata/audiosyncdata.\n"
             "Continue?"
         ),
-        "calibration_audio_missing": "The testdata/audiosyncdata folder was not found.",
-        "calibration_audio_empty": "No videos were found in testdata/audiosyncdata.",
+        "calibration_audio_missing": "The media/testdata/audiosyncdata folder was not found.",
+        "calibration_audio_empty": "No videos were found in media/testdata/audiosyncdata.",
         "calibration_audio_stop": "Leave audio calibration and delete the test playlist?",
         "audiosync_delay": "A/V delay:",
         "audiosync_list": "Delays",
@@ -586,8 +586,8 @@ STRINGS = {
         "idle_media_choose": "Datei wählen…",
         "idle_none": "keins",
         "default_idle_media": "Standard-Pausenmedium verwenden",
-        "default_idle_media_missing": "Der Ordner idle wurde nicht gefunden.",
-        "default_idle_media_empty": "Im Ordner idle wurde kein Medium gefunden.",
+        "default_idle_media_missing": "Der Ordner media/idle wurde nicht gefunden.",
+        "default_idle_media_empty": "Im Ordner media/idle wurde kein Medium gefunden.",
         "beamer_status": "Beamer-Status",
         "beamer_output": "Beamerausgang",
         "beamer_output_busy": "Wiedergabe beenden, bevor der Beamerausgang gewechselt wird.",
@@ -759,11 +759,11 @@ STRINGS = {
         "state_video_calibration": "Videokalibrierung",
         "state_audio_calibration": "Audiokalibrierung",
         "calibration_video_warning": (
-            "Die Videokalibrierung ersetzt die aktuelle Playlist durch die Dateien aus testdata/videotestdata.\n"
+            "Die Videokalibrierung ersetzt die aktuelle Playlist durch die Dateien aus media/testdata/videotestdata.\n"
             "Fortfahren?"
         ),
-        "calibration_video_missing": "Der Ordner testdata/videotestdata wurde nicht gefunden.",
-        "calibration_video_empty": "Im Ordner testdata/videotestdata wurden keine Videos gefunden.",
+        "calibration_video_missing": "Der Ordner media/testdata/videotestdata wurde nicht gefunden.",
+        "calibration_video_empty": "Im Ordner media/testdata/videotestdata wurden keine Videos gefunden.",
         "calibration_video_stop": "Videokalibrierung verlassen und die Test-Playlist löschen?",
         "calibration_playlist_warning": (
             "{mode} ersetzt die aktuelle Playlist durch {name}.\nFortfahren?"
@@ -772,11 +772,11 @@ STRINGS = {
         "calibration_playlist_error": "Die Playlist {name} konnte nicht gelesen werden.\n{error}",
         "audiosync": "Audiokalibrierung",
         "calibration_audio_warning": (
-            "Die Audiokalibrierung ersetzt die aktuelle Playlist durch die Dateien aus testdata/audiosyncdata.\n"
+            "Die Audiokalibrierung ersetzt die aktuelle Playlist durch die Dateien aus media/testdata/audiosyncdata.\n"
             "Fortfahren?"
         ),
-        "calibration_audio_missing": "Der Ordner testdata/audiosyncdata wurde nicht gefunden.",
-        "calibration_audio_empty": "Im Ordner testdata/audiosyncdata wurden keine Videos gefunden.",
+        "calibration_audio_missing": "Der Ordner media/testdata/audiosyncdata wurde nicht gefunden.",
+        "calibration_audio_empty": "Im Ordner media/testdata/audiosyncdata wurden keine Videos gefunden.",
         "calibration_audio_stop": "Audiokalibrierung verlassen und die Test-Playlist löschen?",
         "audiosync_delay": "A/V-Versatz:",
         "audiosync_list": "Delays",
