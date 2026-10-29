@@ -28,7 +28,7 @@ The header shows the Cinema Player logo, the program version beside the mpv vers
 
 - Beamer status: aspect ratio, the rates and resolutions the projector reports, and **OK** / **Mismatch**. The active mode has a border; program values are blue, preview values yellow. The expanded list says so. **OK** means a listed rate can show the clip (including 2×, so 25 fps is shown at 50 Hz and 30 fps is OK when 60 Hz is listed, and 50/60 fps is OK at 25/30 Hz if 50/60 Hz is missing). While frames are dropped, the short form shows the drop count. Entering **PROGRAM** or **PLAYING** folds the list back to the short form.
 - Preview header with the Live/Preview badge and clip metadata.
-- Clip settings in two groups: **Playback** (autoplay, loop) and **Safety** (settings warning, played), or the still display time. The groups fold away while the show is **PROGRAM** or **PLAYING**.
+- Clip settings: autoplay and loop, then **Safety** (settings warning, played), or the still display time. The groups fold away while the show is **PROGRAM** or **PLAYING**.
 - Preview video with a VU meter and optional integrated LUFS readout.
 - Preview transport and In/Out marks, then audio track and subtitles on the next line. Preview volume is yellow; program volume stays cyan. Live bitrates appear only while that player is rolling.
 
@@ -110,7 +110,7 @@ Cinema Player listens on the LAN (default port **8765**) so a smartphone can run
 - `POST /api/program` — body `{"index": 0…}` sets the program pointer (not while **PLAYING**)
 - `POST /api/lights` — body `{"preset": "dark"|"medium"|"bright"}` and/or `{"enabled": true|false}`
 
-The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. **Remaining** and **End** are the large clocks. Dark / Medium / Bright, transport, and volume stay pinned at the bottom of the phone page. While the program pointer is on a still, the volume slider and **Save volume** are hidden. The token field hides after the first successful connection.
+The smartphone page asks to confirm **Pause**, **Still**, and **Stop**, like the booth. Stop on the phone only ends the clip on air; it cannot stop the program. The large button reads **Start** while the show is **OFF**, and **Resume** once it is armed. Tapping a playlist row sets the program pointer after confirmation. If a beamer settings change is required, resume returns `projection_zoom_required` until it has been confirmed on the control PC. **Remaining** and **End** are the large clocks. Dark / Medium / Bright, transport, and volume stay pinned at the bottom of the phone page. While the program pointer is on a still, the volume slider and **Save volume** are hidden. The token field hides after the first successful connection. If the phone cannot reach Cinema Player, the page turns grey and shows **Offline** in the centre.
 
 ### Lights
 

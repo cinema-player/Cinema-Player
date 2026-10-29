@@ -210,6 +210,28 @@
       z-index: 20;
     }
     .modal[hidden] { display: none; }
+    .offline {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(150, 150, 150, .78);
+      backdrop-filter: grayscale(1);
+      color: #f4f4f4;
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .offline[hidden] { display: none; }
+    #input-shield {
+      position: fixed;
+      inset: 0;
+      z-index: 35;
+      background: transparent;
+    }
+    #input-shield[hidden] { display: none; }
     .dialog {
       background: var(--panel);
       border-radius: 16px;
@@ -250,7 +272,7 @@
     <div id="light-scenes" class="scenes"></div>
   </div>
   <div class="actions">
-    <button id="resume" type="button">Resume</button>
+    <button id="resume" type="button" disabled>Start</button>
     <button id="pause" type="button">Pause</button>
     <button id="still" type="button">Still</button>
     <button id="stop" type="button">Stop</button>
@@ -261,6 +283,8 @@
     <button id="save-volume" type="button">Save volume</button>
   </div>
   </div>
+  <div id="offline" class="offline" hidden>Offline</div>
+  <div id="input-shield" hidden></div>
   <div class="modal" id="confirm" hidden>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <h2 id="confirm-title"></h2>
@@ -273,7 +297,7 @@
   </div>
   <script>
     const I18N = {
-      en: { resume: "Resume", pause: "Pause", still: "Still", stop: "Stop", volume: "Volume",
+      en: { start: "Start", resume: "Resume", pause: "Pause", still: "Still", stop: "Stop", volume: "Volume",
             total: "Total", elapsed: "Elapsed", remaining: "Remaining", end: "End",
             lights_control: "House lights",
             token: "Token", yes: "Yes", no: "No",
@@ -286,7 +310,7 @@
             set_program: "Set program pointer",
             program_message: "Set the program pointer to {name}?",
             save_volume: "Save volume" },
-      de: { resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
+      de: { start: "Start", resume: "Weiter", pause: "Pause", still: "Standbild", stop: "Stop", volume: "Lautstärke",
             total: "Gesamt", elapsed: "Gelaufen", remaining: "Rest", end: "Ende",
             lights_control: "Lichtsteuerung",
             token: "Token", yes: "Ja", no: "Nein",
@@ -309,6 +333,9 @@
     let skipTransportConfirm = false;
     let uiLang = "en";
     let lastState = "OFF";
+    let seenStatus = false;
+    let transportReadyAt = Infinity;
+    let shieldTimer = 0;
     let resumeLit = null;
     let resumeLitTimer = 0;
     const params = new URLSearchParams(location.search);
@@ -349,7 +376,8 @@
 
     function applyLang(lang) {
       const table = I18N[lang] || I18N.en;
-      document.getElementById("resume").textContent = table.resume;
+      document.getElementById("resume").textContent =
+        lastState === "OFF" ? table.start : table.resume;
       document.getElementById("pause").textContent = table.pause;
       document.getElementById("still").textContent = table.still;
       document.getElementById("stop").textContent = table.stop;
@@ -450,19 +478,62 @@
       }[ch]));
     }
 
+    function setOffline(offline) {
+      const panel = document.getElementById("offline");
+      const wasOffline = !panel.hidden;
+      panel.hidden = !offline;
+      if (offline) {
+        document.getElementById("err").textContent = "";
+        transportReadyAt = Infinity;
+        clearTimeout(shieldTimer);
+        document.getElementById("input-shield").hidden = true;
+      }
+      return wasOffline && !offline;
+    }
+
+    function holdTransport() {
+      // A reconnect can deliver the tap that was on the offline veil to Start.
+      const wait = 600;
+      transportReadyAt = Date.now() + wait;
+      const shield = document.getElementById("input-shield");
+      shield.hidden = false;
+      clearTimeout(shieldTimer);
+      shieldTimer = setTimeout(() => { shield.hidden = true; }, wait);
+    }
+
+    function connectionLost(exc) {
+      return !exc || exc.message !== "unauthorized";
+    }
+
     async function poll() {
       try {
         render(await api("/api/status"));
+        const cameOnline = setOffline(false);
+        if (!seenStatus || cameOnline) {
+          seenStatus = true;
+          holdTransport();
+        }
       } catch (exc) {
-        document.getElementById("err").textContent = exc.message;
+        if (!connectionLost(exc)) {
+          setOffline(false);
+          document.getElementById("err").textContent = exc.message;
+          return;
+        }
+        setOffline(true);
       }
     }
 
     async function command(path, method, body) {
       try {
         render(await api(path, method, body));
+        setOffline(false);
       } catch (exc) {
-        document.getElementById("err").textContent = exc.message;
+        if (!connectionLost(exc)) {
+          setOffline(false);
+          document.getElementById("err").textContent = exc.message;
+          return;
+        }
+        setOffline(true);
       }
     }
 
@@ -598,6 +669,8 @@
     async function pressResume() {
       const button = document.getElementById("resume");
       if (button.disabled || button.dataset.busy === "1") return;
+      if (Date.now() < transportReadyAt) return;
+      if (!document.getElementById("offline").hidden) return;
       button.dataset.busy = "1";
       // Blue arms a stopped show. Every later Weiter rolls or continues, in green.
       // The fill stays until the show reports that state, and at least a moment
@@ -623,7 +696,8 @@
       }
     }
 
-    document.getElementById("resume").addEventListener("pointerdown", (event) => {
+    document.getElementById("resume").addEventListener("click", (event) => {
+      if (!event.isTrusted) return;
       if (event.button !== undefined && event.button !== 0) return;
       pressResume();
     });

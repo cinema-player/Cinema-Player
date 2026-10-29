@@ -575,6 +575,31 @@ class BoothChromeTests(unittest.TestCase):
         )
         self.assertEqual(button.caption.cget("text"), "Pause")
 
+    def test_preview_has_no_playback_heading(self):
+        self.app.autoplay_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.loop_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.clip_settings_warning_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.played_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.display_time = tk.StringVar(master=self.root, value="0")
+        self.app.still_dim = tk.BooleanVar(master=self.root, value=False)
+        self.app.still_dim_seconds = tk.StringVar(master=self.root, value="1")
+        self.app.preview_volume = tk.DoubleVar(master=self.root, value=10)
+        self.app.audio_var = tk.StringVar(master=self.root, value="--")
+        self.app.subtitle_var = tk.StringVar(master=self.root, value="--")
+        self.app.light_start_var = tk.StringVar(master=self.root, value="")
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=False)
+        parent = tk.Frame(self.root)
+        parent.pack(fill="both", expand=True)
+        cinema_gui.VideoPlayerGUI._build_preview(self.app, parent)
+        self.root.update_idletasks()
+        labels = [
+            child.cget("text")
+            for child in self.app.preview_clip_settings.master.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        self.assertNotIn("Ablauf", labels)
+        self.assertTrue(self.app.autoplay_check.winfo_ismapped())
+
     def test_resume_reaction_is_blue_to_arm_and_green_to_roll(self):
         self.assertEqual(cinema_gui.resume_reaction_name("OFF"), "program")
         self.assertEqual(cinema_gui.resume_reaction_color("program"), cinema_gui.COLOR_PROGRAM)
@@ -782,6 +807,8 @@ class BoothChromeTests(unittest.TestCase):
             self.assertIn("1 Medium", lines[1])
             self.assertIn("Importpfad", window._path_label.cget("text"))
             self.assertIn(root, window._path_label.cget("text"))
+            free = cinema_gui.VideoPlayerGUI._format_copy_size(shutil.disk_usage(root).free)
+            self.assertIn(f"{free} frei", window._path_label.cget("text"))
             window._listbox.selection_clear(0, "end")
             window._listbox.selection_set(0)
             self.assertEqual(window._delete_media.cget("text"), "Mediendateien löschen")
@@ -926,6 +953,24 @@ class BoothChromeTests(unittest.TestCase):
             self.assertEqual(self.app.playlist_path, saved)
             with open(saved, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "saved")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_import_path_label_shows_free_space(self):
+        self.app.import_path = ""
+        empty = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
+        self.assertIn("nicht gesetzt", empty)
+        self.assertNotIn("frei", empty)
+        root = tempfile.mkdtemp()
+        try:
+            self.app.import_path = root
+            label = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
+            free = cinema_gui.VideoPlayerGUI._format_copy_size(shutil.disk_usage(root).free)
+            self.assertEqual(label, f"Importpfad  —  {root}  —  {free} frei")
+            self.app.import_path = os.path.join(root, "missing")
+            missing = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
+            self.assertIn("fehlt", missing)
+            self.assertNotIn("frei", missing)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -2344,6 +2389,13 @@ class VolumeSetupTests(unittest.TestCase):
         self.assertFalse(status["clip"]["is_image"])
         self.assertTrue(status["actions"]["volume"])
         self.assertTrue(status["actions"]["save_volume"])
+
+    def test_remote_ignores_start_during_the_first_second(self):
+        self.app._remote_ready_at = time.monotonic() + 30
+        self.app.program_state = "OFF"
+        status = cinema_gui.VideoPlayerGUI.remote_resume(self.app)
+        self.assertTrue(status["ok"])
+        self.assertEqual(self.app.program_state, "OFF")
 
     def test_save_button_stays_next_to_the_program_fader(self):
         parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)

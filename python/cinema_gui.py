@@ -2238,6 +2238,8 @@ class VideoPlayerGUI:
         self.playlist = []
         self.playlist_path = ""
         self.program_state = "OFF"
+        # The phone may still be touching the offline veil when the server appears.
+        self._remote_ready_at = time.monotonic() + 1.0
         self.playlist_tools_open = False
         self.calibration_mode = None
         self.volume_setup = False
@@ -4910,9 +4912,6 @@ class VideoPlayerGUI:
 
         flow = tk.Frame(footer, bg=COLOR_PANEL)
         flow.pack(side="left")
-        tk.Label(
-            flow, text=t("group_playback"), bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
-        ).pack(side="left", padx=(0, 6))
         self.autoplay_check = CheckLabel(
             flow, t("autoplay"), self.autoplay_var, self.apply_entry_settings, COLOR_PANEL,
         )
@@ -9069,6 +9068,9 @@ class VideoPlayerGUI:
         }
 
     def remote_resume(self):
+        ready_at = getattr(self, "_remote_ready_at", 0) or 0
+        if time.monotonic() < ready_at:
+            return self._remote_result(True)
         self._remote_action = True
         try:
             if not self.playlist:
@@ -9272,6 +9274,15 @@ class VideoPlayerGUI:
             text = f"{text}  ({t('media_directories_missing')})"
         return text
 
+    def _free_space_on_path(self, path):
+        """Free bytes on the volume that holds path, or None when it cannot be read."""
+        if not path or not os.path.isdir(path):
+            return None
+        try:
+            return shutil.disk_usage(path).free
+        except OSError:
+            return None
+
     def _import_path_label(self):
         mark = t("import_path_mark")
         path = getattr(self, "import_path", "") or ""
@@ -9279,8 +9290,11 @@ class VideoPlayerGUI:
             return f"{mark}  —  {t('import_path_missing')}"
         text = f"{mark}  —  {path}"
         if not os.path.isdir(path):
-            text = f"{text}  ({t('media_directories_missing')})"
-        return text
+            return f"{text}  ({t('media_directories_missing')})"
+        free = self._free_space_on_path(path)
+        if free is None:
+            return text
+        return f"{text}  —  {t('import_path_free', size=self._format_copy_size(free))}"
 
     def _mark_import_path_row(self, listbox):
         """Keep the import path visibly distinct, including while it is selected."""
@@ -10635,6 +10649,12 @@ class VideoPlayerGUI:
     def _refresh_playlist_library(self, window, select_path=None):
         rows = library_playlists(self.import_path)
         window._rows = rows
+        path_label = getattr(window, "_path_label", None)
+        if path_label is not None:
+            try:
+                path_label.configure(text=self._import_path_label())
+            except tk.TclError:
+                pass
         status = window._status
         status.configure(text="" if rows else t("playlist_library_empty"))
         listbox = window._listbox
