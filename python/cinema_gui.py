@@ -72,8 +72,10 @@ from cinema_player import (
     merge_import_directories,
     normalize_media_directories,
     path_is_inside,
+    path_is_in_install,
     place_playlist,
     playlist_entries,
+    playlist_for_install_file,
     resolve_install_path,
     path_is_on_removable_volume,
     playlist_folder_name,
@@ -10823,8 +10825,9 @@ class VideoPlayerGUI:
 
     def _write_playlist(self, path):
         payload = self._playlist_payload()
+        written = playlist_for_install_file(payload) if path_is_in_install(path) else payload
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
+            json.dump(written, handle, indent=2)
         self._playlist_saved_token = json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
     def _pad_16x9_enabled(self):

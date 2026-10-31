@@ -56,6 +56,54 @@ def resolve_install_path(path):
     return os.path.abspath(os.path.join(ROOT_DIR, raw))
 
 
+def path_is_in_install(path):
+    """True when ``path`` is the installation directory or a file inside it."""
+    if not isinstance(path, str) or not path.strip():
+        return False
+    try:
+        absolute = os.path.abspath(path)
+        root = os.path.abspath(ROOT_DIR)
+        return os.path.commonpath([absolute, root]) == root
+    except (OSError, ValueError):
+        return False
+
+
+def relativize_install_path(path):
+    """Path relative to the installation directory when the file lives there.
+
+    Anything outside the installation stays absolute. Saving a playlist under
+    ``media/testdata`` can therefore keep portable paths instead of a machine path.
+    """
+    absolute = resolve_install_path(path)
+    if not absolute or not path_is_in_install(absolute):
+        return absolute
+    relative = os.path.relpath(absolute, os.path.abspath(ROOT_DIR))
+    if relative in ("", "."):
+        return ""
+    return relative.replace("\\", "/")
+
+
+def playlist_for_install_file(document):
+    """Playlist document with media paths stored relative to the installation."""
+    if not isinstance(document, dict):
+        return document
+    stored = dict(document)
+    entries = []
+    for entry in document.get("entries") or []:
+        if not isinstance(entry, dict):
+            entries.append(entry)
+            continue
+        item = dict(entry)
+        if item.get("path"):
+            item["path"] = relativize_install_path(item["path"])
+        entries.append(item)
+    stored["entries"] = entries
+    idle = document.get("idle_media_path")
+    if isinstance(idle, str) and idle.strip():
+        stored["idle_media_path"] = relativize_install_path(idle)
+    return stored
+
+
 def read_app_version():
     """Program version lives in pyproject.toml so packaging and the GUI stay in sync."""
     path = os.path.join(ROOT_DIR, "pyproject.toml")

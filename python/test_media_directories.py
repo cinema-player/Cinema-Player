@@ -349,6 +349,32 @@ class InstallRelativePlaylistTests(unittest.TestCase):
             relative,
             os.path.join(player.ROOT_DIR, "media", "testdata", "videotestdata", "UHD_25fps.mp4"),
         )
+        self.assertEqual(
+            player.relativize_install_path(relative),
+            "media/testdata/videotestdata/UHD_25fps.mp4",
+        )
+        self.assertEqual(player.relativize_install_path("/data/films/clip.mp4"), "/data/films/clip.mp4")
+        shipped = os.path.join(player.ROOT_DIR, "media", "testdata", "videotestdata", "framerates.pls")
+        self.assertTrue(player.path_is_in_install(shipped))
+        self.assertFalse(player.path_is_in_install(os.path.join(tempfile.gettempdir(), "show.pls")))
+
+    def test_saving_inside_the_install_tree_keeps_relative_paths(self):
+        clip = os.path.join(player.ROOT_DIR, "media", "testdata", "audiosyncdata", "rec2020-test.mp4")
+        idle = os.path.join(player.ROOT_DIR, "media", "idle", "AFC Idle.mp4")
+        outside = "/data/films/feature.mp4"
+        stored = player.playlist_for_install_file({
+            "idle_media_path": idle,
+            "entries": [
+                {"path": clip, "filename": "rec2020-test.mp4"},
+                {"path": outside, "filename": "feature.mp4"},
+            ],
+        })
+        self.assertEqual(stored["idle_media_path"], "media/idle/AFC Idle.mp4")
+        self.assertEqual(stored["entries"][0]["path"], "media/testdata/audiosyncdata/rec2020-test.mp4")
+        self.assertEqual(stored["entries"][1]["path"], outside)
+        loaded = player.playlist_entries(stored["entries"])
+        self.assertEqual(loaded[0].path, clip)
+        self.assertEqual(loaded[1].path, outside)
 
     def test_shipped_playlists_resolve_away_from_the_working_directory(self):
         previous = os.getcwd()
