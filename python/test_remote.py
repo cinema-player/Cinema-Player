@@ -110,6 +110,12 @@ class RemotePageTests(unittest.TestCase):
             self.assertIn(b'id="save-volume"', body)
             self.assertNotIn(b'id="save-volume" type="button" hidden', body)
             self.assertIn(b"/api/volume/save", body)
+            self.assertIn(b"clip.is_image", body)
+            self.assertIn(b".vol[hidden]", body)
+            self.assertIn(b'id="offline" class="offline" hidden>Offline</div>', body)
+            self.assertIn(b'id="resume" type="button" disabled>Start</button>', body)
+            self.assertIn(b"transportReadyAt", body)
+            self.assertIn(b'lastState === "OFF" ? table.start : table.resume', body)
             self.assertGreater(len(body), 100)
         finally:
             httpd.shutdown()

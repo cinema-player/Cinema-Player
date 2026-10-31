@@ -119,6 +119,7 @@ STRINGS = {
         "import_path_missing": "not set",
         "import_path_choose": "Set import path",
         "import_path_hint": "Copied files and the playlist are stored in a folder under this path.",
+        "import_path_free": "{size} free",
         "edit_imports_hint": "Folders under the import path. Each line shows the name, the number of media files, and the disk space.",
         "edit_imports_empty": "The import path has no folders yet.",
         "edit_imports_missing": "Set an import path in Media directories first.",
@@ -178,6 +179,8 @@ STRINGS = {
         "default_idle_media_missing": "The media/idle folder was not found.",
         "default_idle_media_empty": "No media was found in media/idle.",
         "beamer_status": "Beamer status",
+        "beamer_menu": "Beamer",
+        "output": "Output",
         "beamer_output": "Beamer output",
         "beamer_output_busy": "Stop playback before changing the projector output.",
         "patch": "Patchbay",
@@ -400,7 +403,7 @@ STRINGS = {
         "beamer_no_output_title": "No projector output",
         "beamer_no_output": (
             "No dedicated display was found for the projector.\n"
-            "Connect a second output and choose it under Beamer output."
+            "Connect a second output and choose it under Beamer → Output."
         ),
         "pause_title": "Pause",
         "pause_message": "Pause playback? The projector output will go black.",
@@ -530,6 +533,7 @@ STRINGS = {
         "import_path_missing": "nicht gesetzt",
         "import_path_choose": "Importpfad festlegen",
         "import_path_hint": "Kopierte Dateien und die Playlist landen in einem Ordner unter diesem Pfad.",
+        "import_path_free": "{size} frei",
         "edit_imports_hint": "Unterordner im Importpfad. Jede Zeile zeigt den Namen, die Anzahl der Mediendateien und den Speicherbedarf.",
         "edit_imports_empty": "Im Importpfad liegen noch keine Unterordner.",
         "edit_imports_missing": "Zuerst muss in den Medienverzeichnissen ein Importpfad festgelegt werden.",
@@ -589,6 +593,8 @@ STRINGS = {
         "default_idle_media_missing": "Der Ordner media/idle wurde nicht gefunden.",
         "default_idle_media_empty": "Im Ordner media/idle wurde kein Medium gefunden.",
         "beamer_status": "Beamer-Status",
+        "beamer_menu": "Beamer",
+        "output": "Ausgang",
         "beamer_output": "Beamerausgang",
         "beamer_output_busy": "Wiedergabe beenden, bevor der Beamerausgang gewechselt wird.",
         "patch": "Audio-Steckfeld",
@@ -811,7 +817,7 @@ STRINGS = {
         "beamer_no_output_title": "Kein Beamerausgang",
         "beamer_no_output": (
             "Es wurde kein eigener Bildschirm für den Beamer gefunden.\n"
-            "Schließen Sie einen zweiten Ausgang an und wählen Sie ihn unter Beamerausgang."
+            "Schließen Sie einen zweiten Ausgang an und wählen Sie ihn unter Beamer → Ausgang."
         ),
         "pause_title": "Pause",
         "pause_message": "Wiedergabe pausieren? Die Beamerausgabe wird schwarz.",

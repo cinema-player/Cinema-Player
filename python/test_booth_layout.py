@@ -321,6 +321,58 @@ class BoothChromeTests(unittest.TestCase):
             ["Dauer", "fps", "Format", "PAR", "Farbe", "Laut", "LUFS", "Hinweise"],
         )
 
+    def test_playlist_marks_stills_with_a_small_icon(self):
+        parent = tk.Frame(self.root)
+        parent.pack(fill="both", expand=True)
+        cinema_gui.VideoPlayerGUI._build_playlist(self.app, parent)
+        self.app.playlist = [
+            _entry(
+                path="/media/stills/day/card.png", is_image=True, display_time=12,
+                volume=40, loudness_lufs=-16.0,
+            ),
+            _entry(path="/media/films/day/one.mp4", volume=80, loudness_lufs=-23.0),
+        ]
+        cinema_gui.VideoPlayerGUI.refresh_playlist(self.app)
+        self.root.update_idletasks()
+        still = self.app.row_widgets[0]["still_icon"]
+        film = self.app.row_widgets[1]["still_icon"]
+        self.assertTrue(still.winfo_ismapped())
+        self.assertFalse(film.winfo_ismapped())
+        self.assertLessEqual(still.image.width(), 18)
+        self.assertLessEqual(still.image.height(), 14)
+        self.assertLess(still.winfo_rootx(), self.app.row_widgets[0]["filename"].winfo_rootx())
+        self.assertEqual(still.tooltip.text, "Standbild")
+        self.assertEqual(self._icon_pixel(still.image, 0, 0), cinema_gui.COLOR_TEXT.lower())
+        self.app.program_state = "PLAYING"
+        self.app.program_index = 0
+        cinema_gui.VideoPlayerGUI._paint_row(self.app, 0, self.app.playlist[0])
+        self.root.update_idletasks()
+        self.assertEqual(self._icon_pixel(still.image, 0, 0), cinema_gui.COLOR_WHITE)
+        self.assertEqual(self.app.row_widgets[0]["volume"].cget("text"), "")
+        self.assertEqual(self.app.row_widgets[0]["loudness"].cget("text"), "")
+        self.assertEqual(self.app.row_widgets[1]["volume"].cget("text"), "80%")
+        self.assertEqual(self.app.row_widgets[1]["loudness"].cget("text"), "-23.0 LUFS")
+        holder = tk.Frame(self.root)
+        holder.pack()
+        self.app.preview_lufs = tk.Label(holder, text="-23.0\nLUFS")
+        self.app.preview_lufs.grid(row=0, column=0, pady=(0, 2))
+        cinema_gui.VideoPlayerGUI._set_preview_lufs(self.app, self.app.playlist[0])
+        self.root.update_idletasks()
+        self.assertEqual(self.app.preview_lufs.cget("text"), "")
+        self.assertFalse(self.app.preview_lufs.winfo_ismapped())
+        cinema_gui.VideoPlayerGUI._set_preview_lufs(self.app, self.app.playlist[1])
+        self.root.update_idletasks()
+        self.assertEqual(self.app.preview_lufs.cget("text"), "-23.0\nLUFS")
+        self.assertTrue(self.app.preview_lufs.winfo_ismapped())
+
+    @staticmethod
+    def _icon_pixel(image, x, y):
+        color = image.get(x, y)
+        if isinstance(color, str):
+            return color.lower()
+        parts = [int(part) for part in color[:3]]
+        return "#{:02x}{:02x}{:02x}".format(*parts)
+
     def test_playlist_row_shows_16x9_conversion_on_format_and_par(self):
         parent = tk.Frame(self.root)
         parent.pack(fill="both", expand=True)
@@ -412,6 +464,109 @@ class BoothChromeTests(unittest.TestCase):
         remaining = cinema_gui.VideoPlayerGUI._time_box(self.app, parent, "Rest", 1, primary=True)
         self.assertNotEqual(elapsed.cget("font"), remaining.cget("font"))
 
+    def test_stopped_program_keeps_only_the_transport(self):
+        group = tk.Frame(self.root)
+        group.pack()
+        progress = tk.Frame(group, width=40, height=20)
+        clocks = tk.Frame(group, width=40, height=20)
+        meter = tk.Frame(group, width=12, height=40)
+        transport = tk.Frame(group, width=40, height=20)
+        progress.grid(row=0, column=0)
+        clocks.grid(row=0, column=1)
+        meter.grid(row=0, column=2)
+        transport.grid(row=1, column=0)
+        self.app.program_progress = progress
+        self.app.program_clocks = clocks
+        self.app.program_meter = meter
+        self.app.program_state = "OFF"
+        cinema_gui.VideoPlayerGUI._apply_program_stop_chrome(self.app)
+        self.root.update_idletasks()
+        self.assertFalse(progress.winfo_ismapped())
+        self.assertFalse(clocks.winfo_ismapped())
+        self.assertFalse(meter.winfo_ismapped())
+        self.assertTrue(transport.winfo_ismapped())
+        self.app.program_state = "PROGRAM"
+        cinema_gui.VideoPlayerGUI._apply_program_stop_chrome(self.app)
+        self.root.update_idletasks()
+        self.assertTrue(progress.winfo_ismapped())
+        self.assertTrue(clocks.winfo_ismapped())
+        self.assertTrue(meter.winfo_ismapped())
+        self.app.program_state = "PLAYING"
+        cinema_gui.VideoPlayerGUI._apply_program_stop_chrome(self.app)
+        self.root.update_idletasks()
+        self.assertTrue(progress.winfo_ismapped())
+
+    def test_still_hides_program_and_preview_audio(self):
+        group = tk.Frame(self.root)
+        group.pack()
+        progress = tk.Frame(group)
+        progress.grid(row=0, column=0)
+        envelope = tk.Frame(progress)
+        volume = tk.Frame(progress)
+        bitrate = tk.Frame(progress)
+        meter = tk.Frame(group)
+        envelope.grid(row=1, column=0)
+        volume.grid(row=2, column=0)
+        bitrate.grid(row=2, column=1)
+        meter.grid(row=0, column=1)
+        self.app.program_progress = progress
+        self.app.program_clocks = tk.Frame(group)
+        self.app.program_clocks.grid(row=1, column=0)
+        self.app.program_envelope = envelope
+        self.app.program_volume_row = volume
+        self.app.program_audio_bitrate = bitrate
+        self.app.program_meter = meter
+        self.app.calibration_mode = None
+        still = _entry(path="/media/stills/card.png", is_image=True)
+        film = _entry(path="/media/films/one.mp4", is_image=False)
+        self.app.playlist = [still, film]
+        self.app.program_index = 0
+        self.app.program_state = "PLAYING"
+        cinema_gui.VideoPlayerGUI._apply_program_stop_chrome(self.app)
+        self.root.update_idletasks()
+        self.assertTrue(progress.winfo_ismapped())
+        self.assertFalse(envelope.winfo_ismapped())
+        self.assertFalse(volume.winfo_ismapped())
+        self.assertFalse(bitrate.winfo_ismapped())
+        self.assertFalse(meter.winfo_ismapped())
+        self.app.program_index = 1
+        cinema_gui.VideoPlayerGUI._apply_program_audio_chrome(self.app)
+        self.root.update_idletasks()
+        self.assertTrue(envelope.winfo_ismapped())
+        self.assertTrue(volume.winfo_ismapped())
+        self.assertTrue(bitrate.winfo_ismapped())
+        self.assertTrue(meter.winfo_ismapped())
+
+        column = tk.Frame(self.root)
+        column.pack()
+        controls = tk.Frame(column)
+        controls.grid(row=0, column=0)
+        footer = tk.Frame(column)
+        footer.grid(row=1, column=0)
+        clip = tk.Frame(footer)
+        clip.pack(side="left")
+        safety = tk.Frame(footer)
+        safety.pack(side="left")
+        played = tk.Frame(safety)
+        played.pack(side="left")
+        image_settings = tk.Frame(footer)
+        meter_col = tk.Frame(column)
+        meter_col.grid(row=0, column=1)
+        self.app.preview_controls = controls
+        self.app.preview_clip_settings = clip
+        self.app.preview_safety = safety
+        self.app.preview_played_box = played
+        self.app.preview_image_settings = image_settings
+        self.app.preview_meter_col = meter_col
+        cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, still)
+        self.root.update_idletasks()
+        self.assertFalse(meter_col.winfo_ismapped())
+        self.assertFalse(controls.winfo_ismapped())
+        cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, film)
+        self.root.update_idletasks()
+        self.assertTrue(meter_col.winfo_ismapped())
+        self.assertTrue(controls.winfo_ismapped())
+
     def test_transport_captions(self):
         row = tk.Frame(self.root)
         row.pack()
@@ -419,6 +574,31 @@ class BoothChromeTests(unittest.TestCase):
             self.app, row, "pause", lambda: None, "Pause", caption=True,
         )
         self.assertEqual(button.caption.cget("text"), "Pause")
+
+    def test_preview_has_no_playback_heading(self):
+        self.app.autoplay_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.loop_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.clip_settings_warning_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.played_var = tk.BooleanVar(master=self.root, value=False)
+        self.app.display_time = tk.StringVar(master=self.root, value="0")
+        self.app.still_dim = tk.BooleanVar(master=self.root, value=False)
+        self.app.still_dim_seconds = tk.StringVar(master=self.root, value="1")
+        self.app.preview_volume = tk.DoubleVar(master=self.root, value=10)
+        self.app.audio_var = tk.StringVar(master=self.root, value="--")
+        self.app.subtitle_var = tk.StringVar(master=self.root, value="--")
+        self.app.light_start_var = tk.StringVar(master=self.root, value="")
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=False)
+        parent = tk.Frame(self.root)
+        parent.pack(fill="both", expand=True)
+        cinema_gui.VideoPlayerGUI._build_preview(self.app, parent)
+        self.root.update_idletasks()
+        labels = [
+            child.cget("text")
+            for child in self.app.preview_clip_settings.master.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        self.assertNotIn("Ablauf", labels)
+        self.assertTrue(self.app.autoplay_check.winfo_ismapped())
 
     def test_resume_reaction_is_blue_to_arm_and_green_to_roll(self):
         self.assertEqual(cinema_gui.resume_reaction_name("OFF"), "program")
@@ -627,6 +807,8 @@ class BoothChromeTests(unittest.TestCase):
             self.assertIn("1 Medium", lines[1])
             self.assertIn("Importpfad", window._path_label.cget("text"))
             self.assertIn(root, window._path_label.cget("text"))
+            free = cinema_gui.VideoPlayerGUI._format_copy_size(shutil.disk_usage(root).free)
+            self.assertIn(f"{free} frei", window._path_label.cget("text"))
             window._listbox.selection_clear(0, "end")
             window._listbox.selection_set(0)
             self.assertEqual(window._delete_media.cget("text"), "Mediendateien löschen")
@@ -771,6 +953,24 @@ class BoothChromeTests(unittest.TestCase):
             self.assertEqual(self.app.playlist_path, saved)
             with open(saved, encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "saved")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_import_path_label_shows_free_space(self):
+        self.app.import_path = ""
+        empty = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
+        self.assertIn("nicht gesetzt", empty)
+        self.assertNotIn("frei", empty)
+        root = tempfile.mkdtemp()
+        try:
+            self.app.import_path = root
+            label = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
+            free = cinema_gui.VideoPlayerGUI._format_copy_size(shutil.disk_usage(root).free)
+            self.assertEqual(label, f"Importpfad  —  {root}  —  {free} frei")
+            self.app.import_path = os.path.join(root, "missing")
+            missing = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
+            self.assertIn("fehlt", missing)
+            self.assertNotIn("frei", missing)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -1113,7 +1313,43 @@ class BoothChromeTests(unittest.TestCase):
         self.assertNotIn("Pausenmedium", playlist_text)
         self.assertNotIn("Einstellungswarnung", playlist_text)
         self.assertNotIn("Lautstärke einstellen", playlist_text)
-        self.assertIn("4:3 auf 16:9 umrechnen", playlist_text)
+        self.assertNotIn("4:3 auf 16:9 umrechnen", playlist_text)
+
+    def test_beamer_menu_holds_output_and_aspect_switch(self):
+        self.app.root = self.root
+        self.app._close_menus = lambda: None
+        self.app.theme = "dark"
+        self.app.language = "de"
+        self.app.program_state = "OFF"
+        self.app.calibration_mode = None
+        self.app.window_fullscreen = tk.BooleanVar(master=self.root, value=False)
+        self.app.pad_16x9 = tk.BooleanVar(master=self.root, value=True)
+        self.app._menu = lambda _parent: cinema_gui.DropdownMenu(self.root, self.app)
+        self.app._menu_check_fg = lambda: "#ffffff"
+        self.app._fill_program_menu = lambda menu: None
+        self.app._fill_playlist_menu = lambda menu: None
+        self.app._fill_beamer_output_menu = lambda menu: filled.append(menu)
+        self.app._fill_calibration_kind_menu = lambda menu, kind: None
+        filled = []
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        cinema_gui.VideoPlayerGUI._fill_app_menu(self.app, menu)
+        system = menu._cascades[-2]
+        labels = [
+            child.cget("text")
+            for child in system.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        self.assertIn("Beamer  >", labels)
+        self.assertNotIn("Beamerausgang  >", labels)
+        beamer = system._cascades[-1]
+        beamer_labels = [
+            child.cget("text")
+            for child in beamer.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        self.assertEqual(beamer_labels[0], "Ausgang  >")
+        self.assertIn("4:3 auf 16:9 umrechnen", beamer_labels[1])
+        self.assertIs(filled[0], beamer._cascades[0])
 
     def test_pad_16x9_toggle_is_remembered(self):
         self.app.pad_16x9 = tk.BooleanVar(master=self.root, value=False)
@@ -2084,7 +2320,7 @@ class VolumeSetupTests(unittest.TestCase):
         self.app.program_state = "PROGRAM"
         status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
         self.assertTrue(status["volume_setup"])
-        self.assertEqual(status["state_label"], "Lautstärke einstellen")
+        self.assertEqual(status["state_label"], "Lautstärke")
         self.assertTrue(status["actions"]["save_volume"])
         self.assertFalse(status["actions"]["confirm_transport"])
         self.assertFalse(status["actions"]["stop"])
@@ -2097,6 +2333,30 @@ class VolumeSetupTests(unittest.TestCase):
         self.app.volume_setup = False
         status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
         self.assertNotIn("envelope", status.get("clip") or {})
+
+    def test_program_save_volume_stays_on_that_film(self):
+        other = _entry(path="/media/films/day/two.mp4", volume=80)
+        self.app.playlist.append(other)
+        self.app.program_index = 0
+        self.app.preview_live = False
+        self.app.preview_index = 1
+        self.app.program_state = "OFF"
+        self.app._volume_program_key = None
+        self.app.program_volume_label = None
+        self.app.program_volume_bar = None
+        self.app.preview_volume_label = None
+        self.app.preview_volume_bar = None
+        self.app.program_volume.set(55)
+        cinema_gui.VideoPlayerGUI.save_program_volume(self.app)
+        self.assertEqual(self.app.playlist[0].volume, 55)
+        self.assertEqual(other.volume, 80)
+        self.assertEqual(self.app.preview_volume.get(), 10)
+        self.assertEqual(self.sent, [])
+        cinema_gui.VideoPlayerGUI._load_program_volume(self.app, self.app.playlist[0])
+        self.assertEqual(self.app.program_volume.get(), 55)
+        cinema_gui.VideoPlayerGUI._load_program_volume(self.app, other, force=True)
+        self.assertEqual(self.app.program_volume.get(), 80)
+        self.assertEqual(self.app.playlist[0].volume, 55)
 
     def test_remote_save_volume_stays_available(self):
         self.app.volume_setup = False
@@ -2114,6 +2374,28 @@ class VolumeSetupTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "no_clip")
         self.assertTrue(result["actions"]["save_volume"])
+
+    def test_remote_hides_volume_for_a_still(self):
+        self.app.playlist = [_entry(path="/media/stills/card.png", is_image=True, volume=40)]
+        self.app.program_state = "PLAYING"
+        self.app.playlist[0].audio_envelope = [0.2, 0.9]
+        status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
+        self.assertTrue(status["clip"]["is_image"])
+        self.assertFalse(status["actions"]["volume"])
+        self.assertFalse(status["actions"]["save_volume"])
+        self.assertNotIn("envelope", status["clip"])
+        self.app.playlist = [_entry(is_image=False, volume=70)]
+        status = cinema_gui.VideoPlayerGUI.remote_status(self.app)
+        self.assertFalse(status["clip"]["is_image"])
+        self.assertTrue(status["actions"]["volume"])
+        self.assertTrue(status["actions"]["save_volume"])
+
+    def test_remote_ignores_start_during_the_first_second(self):
+        self.app._remote_ready_at = time.monotonic() + 30
+        self.app.program_state = "OFF"
+        status = cinema_gui.VideoPlayerGUI.remote_resume(self.app)
+        self.assertTrue(status["ok"])
+        self.assertEqual(self.app.program_state, "OFF")
 
     def test_save_button_stays_next_to_the_program_fader(self):
         parent = tk.Frame(self.root, bg=cinema_gui.COLOR_PANEL)
