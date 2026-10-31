@@ -7,7 +7,7 @@
   "autosave_on_program_change": true,
   "entries": [
     {
-      "path": "./media/testdata/videotestdata/h264-subtitle.mp4",
+      "path": "media/testdata/videotestdata/h264-subtitle.mp4",
       "filename": "h264-subtitle.mp4",
       "duration": 10.0,
       "container": "MP4",
@@ -52,7 +52,7 @@
       "force_settings_warning": false
     },
     {
-      "path": "./media/testdata/videotestdata/dv_pal_16x9.avi",
+      "path": "media/testdata/videotestdata/dv_pal_16x9.avi",
       "filename": "dv_pal_16x9.avi",
       "duration": 8.0,
       "container": "AVI",
@@ -92,7 +92,7 @@
       "force_settings_warning": false
     },
     {
-      "path": "./media/testdata/videotestdata/dv_pal_4x3.avi",
+      "path": "media/testdata/videotestdata/dv_pal_4x3.avi",
       "filename": "dv_pal_4x3.avi",
       "duration": 5.0,
       "container": "AVI",

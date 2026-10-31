@@ -73,6 +73,8 @@ from cinema_player import (
     normalize_media_directories,
     path_is_inside,
     place_playlist,
+    playlist_entries,
+    resolve_install_path,
     path_is_on_removable_volume,
     playlist_folder_name,
     playlist_location_label,
@@ -10020,7 +10022,7 @@ class VideoPlayerGUI:
         if not isinstance(data, dict):
             messagebox.showerror(title, t("calibration_playlist_error", name=name, error=""))
             return None
-        entries = [PlaylistEntry.from_dict(item) for item in data.get("entries", [])]
+        entries = playlist_entries(data.get("entries", []))
         if not entries:
             messagebox.showerror(title, t("calibration_playlist_empty", name=name))
             return None
@@ -10713,11 +10715,11 @@ class VideoPlayerGUI:
         if not isinstance(data, dict):
             messagebox.showerror(t("load_playlist"), os.path.basename(path))
             return
-        self.playlist = [PlaylistEntry.from_dict(item) for item in data.get("entries", [])]
+        self.playlist = playlist_entries(data.get("entries", []))
         missing = self._scan_playlist_media()
         self.projection_zoom.set(data.get("projection_zoom", False))
         self.autoplay_delay.set(str(data.get("autoplay_delay", 0)))
-        self.idle_media_path = data.get("idle_media_path", "")
+        self.idle_media_path = resolve_install_path(data.get("idle_media_path", ""))
         self.idle_media.set(
             os.path.basename(self.idle_media_path) if self.idle_media_path else t("idle_none")
         )

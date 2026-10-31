@@ -7,7 +7,7 @@
   "autosave_on_program_change": true,
   "entries": [
     {
-      "path": "./media/testdata/videotestdata/UHD_25fps.mp4",
+      "path": "media/testdata/videotestdata/UHD_25fps.mp4",
       "filename": "UHD_25fps.mp4",
       "duration": 10.0,
       "container": "MP4",
@@ -49,7 +49,7 @@
       "force_settings_warning": false
     },
     {
-      "path": "./media/testdata/videotestdata/UHD_30fps.mp4",
+      "path": "media/testdata/videotestdata/UHD_30fps.mp4",
       "filename": "UHD_30fps.mp4",
       "duration": 10.0,
       "container": "MP4",
@@ -91,7 +91,7 @@
       "force_settings_warning": false
     },
     {
-      "path": "./media/testdata/videotestdata/rec2020-16x9.mp4",
+      "path": "media/testdata/videotestdata/rec2020-16x9.mp4",
       "filename": "rec2020-16x9.mp4",
       "duration": 6.0,
       "container": "MP4",

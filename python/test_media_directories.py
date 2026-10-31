@@ -338,5 +338,80 @@ class RemovablePathTests(unittest.TestCase):
         self.assertFalse(player.path_is_on_removable_volume("", volumes))
 
 
+class InstallRelativePlaylistTests(unittest.TestCase):
+    def test_relative_paths_use_the_install_directory(self):
+        absolute = player.resolve_install_path("/data/films/clip.mp4")
+        self.assertEqual(absolute, "/data/films/clip.mp4")
+        self.assertEqual(player.resolve_install_path(""), "")
+        self.assertEqual(player.resolve_install_path("  "), "")
+        relative = player.resolve_install_path("media/testdata/videotestdata/UHD_25fps.mp4")
+        self.assertEqual(
+            relative,
+            os.path.join(player.ROOT_DIR, "media", "testdata", "videotestdata", "UHD_25fps.mp4"),
+        )
+
+    def test_shipped_playlists_resolve_away_from_the_working_directory(self):
+        previous = os.getcwd()
+        os.chdir(tempfile.gettempdir())
+        try:
+            folders = [
+                os.path.join(player.ROOT_DIR, "media", "testdata", "videotestdata"),
+                os.path.join(player.ROOT_DIR, "media", "testdata", "audiosyncdata"),
+            ]
+            seen = 0
+            for folder in folders:
+                for name in os.listdir(folder):
+                    if not name.endswith(".pls"):
+                        continue
+                    with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                        document = json.load(handle)
+                    entries = player.playlist_entries(document.get("entries"))
+                    self.assertTrue(entries, name)
+                    for entry in entries:
+                        self.assertTrue(os.path.isabs(entry.path), entry.path)
+                        self.assertTrue(os.path.isfile(entry.path), entry.path)
+                        self.assertTrue(entry.path.startswith(player.ROOT_DIR + os.sep), entry.path)
+                        seen += 1
+                    idle = player.resolve_install_path(document.get("idle_media_path") or "")
+                    if idle:
+                        self.assertTrue(os.path.isfile(idle), idle)
+                        self.assertTrue(idle.startswith(player.ROOT_DIR + os.sep), idle)
+            self.assertGreaterEqual(seen, 7)
+        finally:
+            os.chdir(previous)
+
+    def test_export_finds_an_install_relative_clip(self):
+        root = tempfile.mkdtemp()
+        previous = os.getcwd()
+        os.chdir(tempfile.gettempdir())
+        try:
+            clip = os.path.join(player.ROOT_DIR, "media", "testdata", "audiosyncdata", "rec2020-test.mp4")
+            source = os.path.join(root, "audiosync.pls")
+            with open(source, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "entries": [{
+                        "path": "media/testdata/audiosyncdata/rec2020-test.mp4",
+                        "filename": "rec2020-test.mp4",
+                    }],
+                    "idle_media_path": "media/idle/AFC Idle.mp4",
+                }, handle)
+            dest = os.path.join(root, "copy")
+            written = player.place_playlist(source, dest, "audiosync", True)
+            with open(written, encoding="utf-8") as handle:
+                copied = json.load(handle)
+            dest_clip = os.path.join(dest, "rec2020-test.mp4")
+            self.assertEqual(copied["entries"][0]["path"], dest_clip)
+            self.assertEqual(
+                copied["idle_media_path"],
+                os.path.join(dest, "AFC Idle.mp4"),
+            )
+            self.assertTrue(os.path.isfile(dest_clip))
+            self.assertTrue(os.path.isfile(os.path.join(dest, "AFC Idle.mp4")))
+            self.assertTrue(os.path.isfile(clip))
+        finally:
+            os.chdir(previous)
+            shutil.rmtree(root, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,6 +39,23 @@ PREVIEW_MARGIN = 20
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def resolve_install_path(path):
+    """Absolute path for media stored relative to the installation directory.
+
+    Absolute paths stay where they point. A relative path is taken from
+    ``ROOT_DIR``, so a playlist under ``media/testdata`` finds its clips after
+    a system install no matter which directory the process was started from.
+    """
+    if not isinstance(path, str):
+        return ""
+    raw = os.path.expanduser(path.strip())
+    if not raw:
+        return ""
+    if os.path.isabs(raw):
+        return os.path.abspath(raw)
+    return os.path.abspath(os.path.join(ROOT_DIR, raw))
+
+
 def read_app_version():
     """Program version lives in pyproject.toml so packaging and the GUI stay in sync."""
     path = os.path.join(ROOT_DIR, "pyproject.toml")
@@ -849,6 +866,20 @@ class PlaylistEntry:
         return cls(**{key: value for key, value in data.items() if key in names})
 
 
+def playlist_entries(items):
+    """Playlist entries with install-relative media paths made absolute."""
+    entries = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        entry = PlaylistEntry.from_dict(item)
+        resolved = resolve_install_path(entry.path)
+        if resolved:
+            entry.path = resolved
+        entries.append(entry)
+    return entries
+
+
 MEDIA_DIRECTORY_NAME_LIMIT = 80
 
 
@@ -1342,7 +1373,7 @@ def _rewrite_playlist_paths(document, mapping):
         if not isinstance(path, str) or not path.strip():
             return path
         try:
-            return mapping.get(os.path.abspath(path), path)
+            return mapping.get(resolve_install_path(path), path)
         except (OSError, ValueError):
             return path
 
@@ -1385,7 +1416,7 @@ def place_playlist(source_path, dest_folder, stem, with_media):
         reserved = {f"{stem}.pls".casefold(), f"{stem}.json".casefold()}
         for old in _playlist_media_paths(document):
             try:
-                old_abs = os.path.abspath(old)
+                old_abs = resolve_install_path(old)
             except (OSError, ValueError):
                 continue
             if old_abs in mapping or not os.path.isfile(old_abs):
