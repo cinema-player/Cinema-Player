@@ -1,7 +1,0 @@
-{
-  "delays": {
-    "1920x1080@24p": 0
-  },
-  "beamer_hdmi": "HDMI-0",
-  "audio_output": "pulse/alsa_output.pci-0000_2b_00.1.hdmi-stereo"
-}
