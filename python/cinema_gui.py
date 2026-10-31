@@ -72,7 +72,11 @@ from cinema_player import (
     merge_import_directories,
     normalize_media_directories,
     path_is_inside,
+    path_is_in_install,
     place_playlist,
+    playlist_entries,
+    playlist_for_install_file,
+    resolve_install_path,
     path_is_on_removable_volume,
     playlist_folder_name,
     playlist_location_label,
@@ -10140,7 +10144,7 @@ class VideoPlayerGUI:
         if not isinstance(data, dict):
             messagebox.showerror(title, t("calibration_playlist_error", name=name, error=""))
             return None
-        entries = [PlaylistEntry.from_dict(item) for item in data.get("entries", [])]
+        entries = playlist_entries(data.get("entries", []))
         if not entries:
             messagebox.showerror(title, t("calibration_playlist_empty", name=name))
             return None
@@ -10839,11 +10843,11 @@ class VideoPlayerGUI:
         if not isinstance(data, dict):
             messagebox.showerror(t("load_playlist"), os.path.basename(path))
             return
-        self.playlist = [PlaylistEntry.from_dict(item) for item in data.get("entries", [])]
+        self.playlist = playlist_entries(data.get("entries", []))
         missing = self._scan_playlist_media()
         self.projection_zoom.set(data.get("projection_zoom", False))
         self.autoplay_delay.set(str(data.get("autoplay_delay", 0)))
-        self.idle_media_path = data.get("idle_media_path", "")
+        self.idle_media_path = resolve_install_path(data.get("idle_media_path", ""))
         self.idle_media.set(
             os.path.basename(self.idle_media_path) if self.idle_media_path else t("idle_none")
         )
@@ -10947,8 +10951,9 @@ class VideoPlayerGUI:
 
     def _write_playlist(self, path):
         payload = self._playlist_payload()
+        written = playlist_for_install_file(payload) if path_is_in_install(path) else payload
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2)
+            json.dump(written, handle, indent=2)
         self._playlist_saved_token = json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
     def _pad_16x9_enabled(self):
