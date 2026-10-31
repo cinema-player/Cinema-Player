@@ -1,4 +1,4 @@
-cinema-player (0.3.6-1) stable; urgency=medium
+cinema-player (0.3.6-2) stable; urgency=medium
 
   * Package Cinema Player for a system install with apt.
 

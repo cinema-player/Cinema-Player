@@ -1,6 +1,6 @@
 Name:           cinema-player
 Version:        0.3.6
-Release:        1
+Release:        2
 Summary:        Cinema video player for a projector booth
 License:        Copyright (C) 2026 Thomas Winkler
 URL:            http://cinema-player.github.io
@@ -72,6 +72,9 @@ fi
 %{_datadir}/cinema-player
 
 %changelog
+* Sat Oct 31 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-2
+- Added calibration data
 * Mon Oct 26 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-1
 - Cleaning up of the user interface
 - Many small bugfixes
+
