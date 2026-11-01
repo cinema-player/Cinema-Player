@@ -411,13 +411,13 @@ class InstallRelativePlaylistTests(unittest.TestCase):
         previous = os.getcwd()
         os.chdir(tempfile.gettempdir())
         try:
-            clip = os.path.join(player.ROOT_DIR, "media", "testdata", "audiosyncdata", "rec2020-test.mp4")
+            clip = os.path.join(player.ROOT_DIR, "media", "testdata", "audiosyncdata", "HD_synctest_25fps.mp4")
             source = os.path.join(root, "audiosync.pls")
             with open(source, "w", encoding="utf-8") as handle:
                 json.dump({
                     "entries": [{
-                        "path": "media/testdata/audiosyncdata/rec2020-test.mp4",
-                        "filename": "rec2020-test.mp4",
+                        "path": "media/testdata/audiosyncdata/HD_synctest_25fps.mp4",
+                        "filename": "HD_synctest_25fps.mp4",
                     }],
                     "idle_media_path": "media/idle/AFC Idle.mp4",
                 }, handle)
@@ -425,7 +425,7 @@ class InstallRelativePlaylistTests(unittest.TestCase):
             written = player.place_playlist(source, dest, "audiosync", True)
             with open(written, encoding="utf-8") as handle:
                 copied = json.load(handle)
-            dest_clip = os.path.join(dest, "rec2020-test.mp4")
+            dest_clip = os.path.join(dest, "HD_synctest_25fps.mp4")
             self.assertEqual(copied["entries"][0]["path"], dest_clip)
             self.assertEqual(
                 copied["idle_media_path"],
@@ -437,6 +437,94 @@ class InstallRelativePlaylistTests(unittest.TestCase):
         finally:
             os.chdir(previous)
             shutil.rmtree(root, ignore_errors=True)
+
+
+class ImportRelativePlaylistTests(unittest.TestCase):
+    def test_files_inside_the_import_directory_are_stored_relative_to_it(self):
+        machine_a = tempfile.mkdtemp()
+        machine_b = tempfile.mkdtemp()
+        try:
+            import_a = os.path.join(machine_a, "Import")
+            folder = os.path.join(import_a, "Abend")
+            os.makedirs(folder)
+            clip = os.path.join(folder, "clip.mp4")
+            with open(clip, "wb") as handle:
+                handle.write(b"film")
+            outside = os.path.join(machine_a, "linked.mp4")
+            with open(outside, "wb") as handle:
+                handle.write(b"link")
+            playlist_path = os.path.join(folder, "Abend.pls")
+            stored = player.playlist_for_saved_file({
+                "idle_media_path": clip,
+                "entries": [
+                    {"path": clip, "filename": "clip.mp4"},
+                    {"path": outside, "filename": "linked.mp4"},
+                ],
+            }, playlist_path, import_a)
+            self.assertEqual(stored["entries"][0]["path"], "Abend/clip.mp4")
+            self.assertEqual(stored["idle_media_path"], "Abend/clip.mp4")
+            self.assertEqual(stored["entries"][1]["path"], os.path.abspath(outside))
+            self.assertFalse(os.path.isabs(stored["entries"][0]["path"]))
+
+            import_b = os.path.join(machine_b, "Medien")
+            shutil.copytree(import_a, import_b)
+            loaded_path = os.path.join(import_b, "Abend", "Abend.pls")
+            root = player.media_root_for_playlist(loaded_path, import_b, stored)
+            loaded = player.playlist_entries(stored["entries"], root)
+            moved_clip = os.path.join(import_b, "Abend", "clip.mp4")
+            self.assertEqual(loaded[0].path, moved_clip)
+            self.assertTrue(os.path.isfile(loaded[0].path))
+            self.assertEqual(loaded[1].path, os.path.abspath(outside))
+            idle = player.resolve_stored_media_path(stored["idle_media_path"], root=root)
+            self.assertEqual(idle, moved_clip)
+        finally:
+            shutil.rmtree(machine_a, ignore_errors=True)
+            shutil.rmtree(machine_b, ignore_errors=True)
+
+    def test_install_playlists_stay_relative_to_the_installation(self):
+        clip = os.path.join(player.ROOT_DIR, "media", "testdata", "audiosyncdata", "rec2020-test.mp4")
+        playlist_path = os.path.join(
+            player.ROOT_DIR, "media", "testdata", "audiosyncdata", "audiosync.pls",
+        )
+        stored = player.playlist_for_saved_file({
+            "entries": [{"path": clip, "filename": "rec2020-test.mp4"}],
+        }, playlist_path, "/tmp/other-import")
+        self.assertEqual(
+            stored["entries"][0]["path"],
+            "media/testdata/audiosyncdata/rec2020-test.mp4",
+        )
+
+    def test_imported_playlist_with_media_is_portable(self):
+        machine_a = tempfile.mkdtemp()
+        machine_b = tempfile.mkdtemp()
+        try:
+            import_a = os.path.join(machine_a, "Import")
+            folder = os.path.join(import_a, "Abend")
+            os.makedirs(folder)
+            clip = os.path.join(folder, "clip.mp4")
+            with open(clip, "wb") as handle:
+                handle.write(b"film")
+            source = os.path.join(folder, "Abend.pls")
+            with open(source, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "entries": [{"path": "Abend/clip.mp4", "filename": "clip.mp4"}],
+                    "idle_media_path": "Abend/clip.mp4",
+                }, handle)
+            import_b = os.path.join(machine_b, "Medien")
+            dest_folder = os.path.join(import_b, "Abend")
+            written = player.place_playlist(source, dest_folder, "Abend", True, relative_to=import_b)
+            with open(written, encoding="utf-8") as handle:
+                copied = json.load(handle)
+            self.assertEqual(copied["entries"][0]["path"], "Abend/clip.mp4")
+            self.assertEqual(copied["idle_media_path"], "Abend/clip.mp4")
+            self.assertTrue(os.path.isfile(os.path.join(dest_folder, "clip.mp4")))
+            root = player.media_root_for_playlist(written, import_b, copied)
+            loaded = player.playlist_entries(copied["entries"], root)
+            self.assertEqual(loaded[0].path, os.path.join(dest_folder, "clip.mp4"))
+            self.assertTrue(os.path.isfile(loaded[0].path))
+        finally:
+            shutil.rmtree(machine_a, ignore_errors=True)
+            shutil.rmtree(machine_b, ignore_errors=True)
 
 
 if __name__ == "__main__":

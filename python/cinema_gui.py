@@ -134,11 +134,11 @@ from cinema_player import (
     merge_import_directories,
     normalize_media_directories,
     path_is_inside,
-    path_is_in_install,
     place_playlist,
     playlist_entries,
-    playlist_for_install_file,
-    resolve_install_path,
+    playlist_for_saved_file,
+    media_root_for_playlist,
+    resolve_stored_media_path,
     path_is_on_removable_volume,
     playlist_folder_name,
     playlist_location_label,
@@ -11031,6 +11031,14 @@ class VideoPlayerGUI:
         self.root.wait_window(dialog)
         return result["choice"]
 
+    def _place_playlist(self, source, dest_folder, stem, with_media):
+        """Copy a playlist, storing import-directory media relative to that directory."""
+        relative_to = ""
+        import_path = getattr(self, "import_path", "") or ""
+        if import_path and path_is_inside(dest_folder, import_path):
+            relative_to = import_path
+        return place_playlist(source, dest_folder, stem, with_media, relative_to=relative_to)
+
     def _import_library_playlist(self, window):
         path = filedialog.askopenfilename(
             title=t("playlist_import_title"),
@@ -11053,7 +11061,7 @@ class VideoPlayerGUI:
         if with_media is None:
             return
         try:
-            written = place_playlist(path, folder, stem, with_media)
+            written = self._place_playlist(path, folder, stem, with_media)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             messagebox.showerror(
                 t("playlist_import_title"),
@@ -11082,7 +11090,7 @@ class VideoPlayerGUI:
             if not stem:
                 return
         try:
-            place_playlist(row["path"], dest, stem, with_media)
+            self._place_playlist(row["path"], dest, stem, with_media)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             messagebox.showerror(
                 t("playlist_export_title"),
@@ -11108,11 +11116,15 @@ class VideoPlayerGUI:
         if not isinstance(data, dict):
             messagebox.showerror(t("load_playlist"), os.path.basename(path))
             return
-        self.playlist = playlist_entries(data.get("entries", []))
+        media_root = media_root_for_playlist(path, getattr(self, "import_path", ""), data)
+        self.playlist = playlist_entries(data.get("entries", []), media_root)
         missing = self._scan_playlist_media()
         self.projection_zoom.set(data.get("projection_zoom", False))
         self.autoplay_delay.set(str(data.get("autoplay_delay", 0)))
-        self.idle_media_path = resolve_install_path(data.get("idle_media_path", ""))
+        self.idle_media_path = resolve_stored_media_path(
+            data.get("idle_media_path", "") or "",
+            root=media_root,
+        )
         self.idle_media.set(
             os.path.basename(self.idle_media_path) if self.idle_media_path else t("idle_none")
         )
@@ -11216,7 +11228,7 @@ class VideoPlayerGUI:
 
     def _write_playlist(self, path):
         payload = self._playlist_payload()
-        written = playlist_for_install_file(payload) if path_is_in_install(path) else payload
+        written = playlist_for_saved_file(payload, path, getattr(self, "import_path", ""))
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(written, handle, indent=2)
         self._playlist_saved_token = json.dumps(payload, sort_keys=True, ensure_ascii=False)
