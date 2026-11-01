@@ -18,6 +18,68 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+_dialog_owner = None
+
+
+def _front_dialog_parent():
+    """Popup that should own a standard Tk dialog, if one is already open."""
+    owner = _dialog_owner
+    if owner is None:
+        return None
+    try:
+        if not owner.root.winfo_exists():
+            return None
+    except (tk.TclError, AttributeError):
+        return None
+    try:
+        return owner._front_popup()
+    except (tk.TclError, AttributeError):
+        return None
+
+
+def _prefer_front_parent(parent):
+    """Open a standard dialog above the popup that is already on screen."""
+    front = _front_dialog_parent()
+    if front is None:
+        return parent
+    root = getattr(_dialog_owner, "root", None)
+    if parent is None or parent is root:
+        return front
+    return parent
+
+
+def _bind_dialog_parent(func):
+    def wrapped(*args, **kwargs):
+        parent = _prefer_front_parent(kwargs.get("parent"))
+        if parent is None:
+            kwargs.pop("parent", None)
+        else:
+            kwargs["parent"] = parent
+        return func(*args, **kwargs)
+
+    wrapped.__name__ = func.__name__
+    wrapped.__doc__ = func.__doc__
+    return wrapped
+
+
+for _dialog_name in (
+    "showinfo", "showwarning", "showerror", "askquestion",
+    "askokcancel", "askyesno", "askyesnocancel", "askretrycancel",
+):
+    if hasattr(messagebox, _dialog_name):
+        setattr(messagebox, _dialog_name, _bind_dialog_parent(getattr(messagebox, _dialog_name)))
+
+for _dialog_name in (
+    "askopenfilename", "askopenfilenames", "asksaveasfilename",
+    "askopenfile", "askopenfiles", "asksaveasfile", "askdirectory",
+):
+    if hasattr(filedialog, _dialog_name):
+        setattr(filedialog, _dialog_name, _bind_dialog_parent(getattr(filedialog, _dialog_name)))
+
+for _dialog_name in ("askstring", "askinteger", "askfloat"):
+    if hasattr(simpledialog, _dialog_name):
+        setattr(simpledialog, _dialog_name, _bind_dialog_parent(getattr(simpledialog, _dialog_name)))
+
 from language import LANGUAGES, t, set_language, current_language
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
 import qr_code
@@ -2204,7 +2266,10 @@ class _CopyCancelled(Exception):
 
 class VideoPlayerGUI:
     def __init__(self, root):
+        global _dialog_owner
         self.root = root
+        _dialog_owner = self
+        self._popup_stack = []
         self.root.title(f"Cinema Player {APP_VERSION}")
         self.icon_image = self._load_image(LOGO_ICON_FILE)
         if self.icon_image is not None:
@@ -3976,8 +4041,7 @@ class VideoPlayerGUI:
             try:
                 if window.winfo_exists():
                     window.deiconify()
-                    window.lift()
-                    window.focus_force()
+                    self._present_popup(window)
                     return
             except tk.TclError:
                 self.about_window = None
@@ -4230,8 +4294,7 @@ class VideoPlayerGUI:
             try:
                 if window.winfo_exists():
                     window.deiconify()
-                    window.lift()
-                    window.focus_force()
+                    self._present_popup(window)
                     self._fill_patch_form()
                     return
             except tk.TclError:
@@ -6142,8 +6205,7 @@ class VideoPlayerGUI:
         if self._edid_window_alive():
             self._fill_edid_window(report["output"], body)
             self.edid_window.deiconify()
-            self.edid_window.lift()
-            self.edid_window.focus_force()
+            self._present_popup(self.edid_window)
             return
         window = tk.Toplevel(self.root)
         window.title(t("edid_title", output=report["output"]))
@@ -7124,8 +7186,7 @@ class VideoPlayerGUI:
         }
         self._bind_popup_wheel(window, pane)
         self._open_popup(window, 480, 200)
-        window.grab_set()
-        window.lift()
+        self._grab_popup(window)
         window.update_idletasks()
         return window, widgets
 
@@ -7351,8 +7412,7 @@ class VideoPlayerGUI:
             try:
                 if window.winfo_exists():
                     window.deiconify()
-                    window.lift()
-                    window.focus_force()
+                    self._present_popup(window)
                     self._fill_remote_urls()
                     self._refresh_header_indicators()
                     return
@@ -8461,8 +8521,195 @@ class VideoPlayerGUI:
             canvas.yview_scroll(3, "units")
         return "break"
 
+    def _window_alive(self, window):
+        if window is None:
+            return False
+        try:
+            return bool(window.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def _popup_open(self, window):
+        if not self._window_alive(window):
+            return False
+        try:
+            return bool(window.winfo_viewable())
+        except tk.TclError:
+            return False
+
+    def _ensure_popup_stack(self):
+        global _dialog_owner
+        _dialog_owner = self
+        self._popup_stack = [
+            item for item in getattr(self, "_popup_stack", []) if self._window_alive(item)
+        ]
+
+    def _note_popup(self, window):
+        """Remember open popups so the next one can be placed above them."""
+        self._ensure_popup_stack()
+        if window in self._popup_stack:
+            self._popup_stack.remove(window)
+        self._popup_stack.append(window)
+        if getattr(window, "_popup_tracked", False):
+            return
+        window._popup_tracked = True
+
+        def forget(event, window=window):
+            if getattr(event, "widget", None) is not window:
+                return
+            self._forget_popup(window)
+
+        window.bind("<Destroy>", forget, add="+")
+
+    def _cancel_popup_jobs(self, window):
+        jobs = getattr(window, "_present_jobs", ())
+        window._present_jobs = ()
+        for job in jobs:
+            try:
+                window.after_cancel(job)
+            except tk.TclError:
+                pass
+
+    def _forget_popup(self, window):
+        self._cancel_popup_jobs(window)
+        self._popup_stack = [
+            item for item in getattr(self, "_popup_stack", [])
+            if item is not window and self._window_alive(item)
+        ]
+
+    def _front_popup(self, skip=None):
+        """Topmost open popup, ignoring one window that is being shown."""
+        self._ensure_popup_stack()
+        for item in reversed(self._popup_stack):
+            if item is skip or not self._popup_open(item):
+                continue
+            return item
+        return None
+
+    def _dialog_parent(self):
+        """Parent for a dialog opened while a popup is already visible."""
+        return self._front_popup() or self.root
+
+    def _focus_inside(self, window, widget):
+        while widget is not None:
+            if widget is window:
+                return True
+            try:
+                widget = widget.master
+            except tk.TclError:
+                return False
+        return False
+
+    def _present_popup(self, window):
+        """Put this window in front of popups that are already open."""
+        if not self._window_alive(window):
+            return
+        owner = self._front_popup(skip=window)
+        focused = None
+        try:
+            focused = window.focus_get()
+        except tk.TclError:
+            focused = None
+        inside = focused is not None and self._focus_inside(window, focused)
+        try:
+            window.lift()
+            if owner is not None:
+                window.lift(owner)
+            window.attributes("-topmost", True)
+            window.focus_force()
+            if inside:
+                focused.focus_set()
+        except tk.TclError:
+            return
+        if owner is not None:
+            self._cancel_popup_jobs(window)
+            return
+        token = getattr(window, "_present_token", 0) + 1
+        window._present_token = token
+        self._cancel_popup_jobs(window)
+
+        def settle(token=token, window=window):
+            if getattr(window, "_present_token", None) != token:
+                return
+            try:
+                if not window.winfo_exists():
+                    return
+                window.attributes("-topmost", False)
+                stack = [
+                    item for item in getattr(self, "_popup_stack", [])
+                    if self._window_alive(item)
+                ]
+                if stack and stack[-1] is not window:
+                    return
+                window.lift()
+            except tk.TclError:
+                pass
+
+        try:
+            window._present_jobs = (
+                window.after_idle(settle),
+                window.after(50, settle),
+            )
+        except tk.TclError:
+            window._present_jobs = ()
+
+    def _grab_popup(self, window):
+        """Take the modal grab and keep this popup above the one under it."""
+        self._note_popup(window)
+        self._present_popup(window)
+        try:
+            window.grab_set()
+        except tk.TclError:
+            return
+        window._grab_hooked = True
+        self._present_popup(window)
+        if getattr(window, "_grab_restore_bound", False):
+            return
+        window._grab_restore_bound = True
+
+        def restore(event, window=window):
+            if getattr(event, "widget", None) is not window:
+                return
+            self._forget_popup(window)
+            self._restore_popup_grab()
+
+        window.bind("<Destroy>", restore, add="+")
+
+    def _restore_popup_grab(self):
+        """Give the grab back to the previous modal popup."""
+        candidate = None
+        for item in reversed(getattr(self, "_popup_stack", [])):
+            if getattr(item, "_grab_hooked", False) and self._popup_open(item):
+                candidate = item
+                break
+        if candidate is None or self._front_popup() is not candidate:
+            return
+        try:
+            current = candidate.tk.call("grab", "current", candidate)
+        except tk.TclError:
+            current = ""
+        if current:
+            try:
+                grabber = candidate.nametowidget(str(current))
+            except (KeyError, tk.TclError):
+                grabber = None
+            if (
+                grabber is not None
+                and grabber is not candidate
+                and self._window_alive(grabber)
+            ):
+                return
+        try:
+            candidate.grab_set()
+            self._present_popup(candidate)
+        except tk.TclError:
+            pass
+
     def _open_popup(self, window, width, height):
-        """Open a popup tall enough for its contents, then scroll whatever still does not fit."""
+        """Open a popup tall enough for its contents, then scroll whatever still does not fit.
+
+        A popup opened while another popup is visible stays above that window.
+        """
         try:
             window.update_idletasks()
             height = max(int(height), int(window.winfo_reqheight()))
@@ -8470,7 +8717,19 @@ class VideoPlayerGUI:
         except (tk.TclError, TypeError, ValueError):
             pass
         width, height = self._lights_window_size(width, height)
+        owner = self._front_popup(skip=window)
+        try:
+            window.withdraw()
+            window.transient(owner if owner is not None else self.root)
+        except tk.TclError:
+            pass
         self._place_on_control_monitor(window, width, height)
+        self._note_popup(window)
+        try:
+            window.deiconify()
+        except tk.TclError:
+            pass
+        self._present_popup(window)
         self._fit_popup_scroll(window)
 
     def _track_lights_vscroll(self, bar, first, last):
@@ -8676,8 +8935,7 @@ class VideoPlayerGUI:
             try:
                 if window.winfo_exists():
                     window.deiconify()
-                    window.lift()
-                    window.focus_force()
+                    self._present_popup(window)
                     self._refresh_light_buttons()
                     self._refresh_header_indicators()
                     return
@@ -9176,8 +9434,7 @@ class VideoPlayerGUI:
         """Edit the saved media folders used when importing into the playlist."""
         if self._media_dirs_window_alive():
             self.media_dirs_window.deiconify()
-            self.media_dirs_window.lift()
-            self.media_dirs_window.focus_force()
+            self._present_popup(self.media_dirs_window)
             return
         window = tk.Toplevel(self.root)
         window.title(t("media_directories"))
@@ -9736,7 +9993,7 @@ class VideoPlayerGUI:
         self._bind_popup_wheel(window, body)
         self._open_popup(window, 680, 560)
         folder_list.focus_set()
-        window.grab_set()
+        self._grab_popup(window)
         self.root.wait_window(window)
         return result["choice"]
 
@@ -9803,7 +10060,7 @@ class VideoPlayerGUI:
         window.bind("<Escape>", lambda _event: cancel())
         window.protocol("WM_DELETE_WINDOW", cancel)
         self._open_popup(window, 520, 220)
-        window.grab_set()
+        self._grab_popup(window)
         self.root.wait_window(window)
         return result["action"]
 
@@ -9884,7 +10141,7 @@ class VideoPlayerGUI:
         window.bind("<Escape>", cancel)
         window.protocol("WM_DELETE_WINDOW", cancel)
         self._open_popup(window, 520, 200)
-        window.grab_set()
+        self._grab_popup(window)
         entry.focus_set()
         self.root.wait_window(window)
         return result["name"]
@@ -10413,8 +10670,7 @@ class VideoPlayerGUI:
                 if window.winfo_exists():
                     self._fill_audiosync_list(window)
                     window.deiconify()
-                    window.lift()
-                    window.focus_force()
+                    self._present_popup(window)
                     return
             except tk.TclError:
                 self.audiosync_list_window = None
@@ -10532,8 +10788,7 @@ class VideoPlayerGUI:
         """List playlists in the import path so one can be opened or created."""
         if self._playlist_library_alive():
             self.playlist_library_window.deiconify()
-            self.playlist_library_window.lift()
-            self.playlist_library_window.focus_force()
+            self._present_popup(self.playlist_library_window)
             return
         if not self._ensure_import_path():
             return
@@ -10628,7 +10883,7 @@ class VideoPlayerGUI:
         self._bind_popup_wheel(window, body)
         self._open_popup(window, 860, 480)
         listbox.focus_set()
-        window.grab_set()
+        self._grab_popup(window)
         self.root.wait_window(window)
 
     def _playlist_library_alive(self):
@@ -10762,7 +11017,7 @@ class VideoPlayerGUI:
         dialog.bind("<Escape>", lambda _event: choose(None))
         dialog.protocol("WM_DELETE_WINDOW", lambda: choose(None))
         self._open_popup(dialog, 520, 180)
-        dialog.grab_set()
+        self._grab_popup(dialog)
         self.root.wait_window(dialog)
         return result["choice"]
 
@@ -12767,7 +13022,7 @@ class VideoPlayerGUI:
         window.bind("<Escape>", lambda _event: choose("cancel"))
         window.protocol("WM_DELETE_WINDOW", lambda: choose("cancel"))
         self._open_popup(window, 480, 160)
-        window.grab_set()
+        self._grab_popup(window)
         self.root.wait_window(window)
         return result["choice"]
 

@@ -956,6 +956,85 @@ class BoothChromeTests(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_playlist_name_opens_in_front_of_the_library(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app.import_path = root
+        self.app.playlist = []
+        self.app.playlist_path = ""
+        self.app.playlist_library_window = None
+        self.app.settings = {}
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        original_wait = self.root.wait_window
+        self.root.wait_window = lambda window: None
+        self.app.show_playlist_library()
+        self.root.wait_window = original_wait
+        library = self.app.playlist_library_window
+        library.update()
+        self.assertIs(cinema_gui._prefer_front_parent(None), library)
+        self.assertIs(cinema_gui._prefer_front_parent(self.root), library)
+        self.assertIs(cinema_gui._prefer_front_parent(library), library)
+        opened = {}
+        errors = []
+
+        def install(stem):
+            opened["stem"] = stem
+            return True
+
+        self.app._install_new_playlist = install
+
+        def answer():
+            name = None
+            try:
+                name = next(
+                    child for child in self.root.winfo_children()
+                    if isinstance(child, tk.Toplevel) and child is not library
+                )
+                name.update()
+                opened["transient"] = str(self.root.tk.call("wm", "transient", name))
+                opened["above"] = self.root.tk.call("wm", "stackorder", name, "isabove", library)
+                opened["focus"] = str(name.focus_get())
+                self.assertEqual(opened["transient"], str(library))
+                self.assertTrue(int(opened["above"]), opened)
+                self.assertIs(cinema_gui._prefer_front_parent(None), name)
+                self.assertIs(cinema_gui._prefer_front_parent(self.root), name)
+                entries = [
+                    child for frame in name.winfo_children() if isinstance(frame, tk.Frame)
+                    for child in frame.winfo_children() if isinstance(child, tk.Entry)
+                ]
+                entry = entries[0]
+                self.assertIs(name.focus_get(), entry)
+                buttons = {
+                    child.cget("text"): child
+                    for frame in name.winfo_children() if isinstance(frame, tk.Frame)
+                    for child in frame.winfo_children() if isinstance(child, tk.Button)
+                }
+                entry.insert(0, "Abend")
+                buttons["OK"].invoke()
+            except Exception as exc:
+                errors.append(exc)
+                if name is not None:
+                    try:
+                        name.destroy()
+                    except tk.TclError:
+                        pass
+
+        self.root.after(100, answer)
+        created = self.app.new_playlist()
+        self.root.update()
+        if errors:
+            raise errors[0]
+        self.assertTrue(created)
+        self.assertEqual(opened["stem"], "Abend")
+        self.assertEqual(str(self.root.tk.call("grab", "current", library)), str(library))
+        above_main = int(self.root.tk.call("wm", "stackorder", library, "isabove", self.root))
+        self.assertTrue(above_main)
+        library.destroy()
+
     def test_import_path_label_shows_free_space(self):
         self.app.import_path = ""
         empty = cinema_gui.VideoPlayerGUI._import_path_label(self.app)
