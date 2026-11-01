@@ -39,12 +39,11 @@ PREVIEW_MARGIN = 20
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def resolve_install_path(path):
-    """Absolute path for media stored relative to the installation directory.
+def resolve_directory_path(path, root):
+    """Absolute path for media stored relative to ``root``.
 
-    Absolute paths stay where they point. A relative path is taken from
-    ``ROOT_DIR``, so a playlist under ``media/testdata`` finds its clips after
-    a system install no matter which directory the process was started from.
+    Absolute paths stay where they point. A relative path is joined onto
+    ``root``. An empty ``root`` uses the installation directory.
     """
     if not isinstance(path, str):
         return ""
@@ -53,19 +52,57 @@ def resolve_install_path(path):
         return ""
     if os.path.isabs(raw):
         return os.path.abspath(raw)
-    return os.path.abspath(os.path.join(ROOT_DIR, raw))
+    base = root or ROOT_DIR
+    return os.path.abspath(os.path.join(base, raw))
+
+
+def resolve_install_path(path):
+    """Absolute path for media stored relative to the installation directory.
+
+    Absolute paths stay where they point. A relative path is taken from
+    ``ROOT_DIR``, so a playlist under ``media/testdata`` finds its clips after
+    a system install no matter which directory the process was started from.
+    """
+    return resolve_directory_path(path, ROOT_DIR)
 
 
 def path_is_in_install(path):
     """True when ``path`` is the installation directory or a file inside it."""
+    return _path_is_under(path, ROOT_DIR)
+
+
+def _path_is_under(path, root):
+    """True when ``path`` is ``root`` or a file inside it."""
     if not isinstance(path, str) or not path.strip():
+        return False
+    if not isinstance(root, str) or not root.strip():
         return False
     try:
         absolute = os.path.abspath(path)
-        root = os.path.abspath(ROOT_DIR)
-        return os.path.commonpath([absolute, root]) == root
+        folder = os.path.abspath(root)
+        return os.path.commonpath([absolute, folder]) == folder
     except (OSError, ValueError):
         return False
+
+
+def relativize_directory_path(path, root):
+    """Path relative to ``root`` when the file lives there.
+
+    Anything outside ``root`` stays absolute. Relative inputs are resolved
+    against ``root`` first, so saving the same file again keeps the portable path.
+    """
+    if not isinstance(path, str):
+        return ""
+    if not isinstance(root, str) or not root.strip():
+        absolute = resolve_install_path(path)
+        return absolute
+    absolute = resolve_directory_path(path, root)
+    if not absolute or not _path_is_under(absolute, root):
+        return absolute
+    relative = os.path.relpath(absolute, os.path.abspath(root))
+    if relative in ("", "."):
+        return ""
+    return relative.replace("\\", "/")
 
 
 def relativize_install_path(path):
@@ -74,17 +111,11 @@ def relativize_install_path(path):
     Anything outside the installation stays absolute. Saving a playlist under
     ``media/testdata`` can therefore keep portable paths instead of a machine path.
     """
-    absolute = resolve_install_path(path)
-    if not absolute or not path_is_in_install(absolute):
-        return absolute
-    relative = os.path.relpath(absolute, os.path.abspath(ROOT_DIR))
-    if relative in ("", "."):
-        return ""
-    return relative.replace("\\", "/")
+    return relativize_directory_path(path, ROOT_DIR)
 
 
-def playlist_for_install_file(document):
-    """Playlist document with media paths stored relative to the installation."""
+def playlist_for_directory(document, root):
+    """Playlist document with media under ``root`` stored relative to it."""
     if not isinstance(document, dict):
         return document
     stored = dict(document)
@@ -95,13 +126,97 @@ def playlist_for_install_file(document):
             continue
         item = dict(entry)
         if item.get("path"):
-            item["path"] = relativize_install_path(item["path"])
+            item["path"] = relativize_directory_path(item["path"], root)
         entries.append(item)
     stored["entries"] = entries
     idle = document.get("idle_media_path")
     if isinstance(idle, str) and idle.strip():
-        stored["idle_media_path"] = relativize_install_path(idle)
+        stored["idle_media_path"] = relativize_directory_path(idle, root)
     return stored
+
+
+def playlist_for_install_file(document):
+    """Playlist document with media paths stored relative to the installation."""
+    return playlist_for_directory(document, ROOT_DIR)
+
+
+def playlist_for_saved_file(document, playlist_path, import_path=""):
+    """Paths to write for a playlist file.
+
+    A file inside the import directory is stored relative to that directory, so
+    the same playlist folder works when the import directory moves to another
+    computer. A playlist inside the installation keeps install-relative paths.
+    Every other file stays absolute.
+    """
+    if import_path and _path_is_under(playlist_path, import_path):
+        return playlist_for_directory(document, import_path)
+    if path_is_in_install(playlist_path):
+        return playlist_for_install_file(document)
+    return document
+
+
+def media_root_for_playlist(playlist_path, import_path="", document=None):
+    """Directory a playlist's relative media paths are resolved against.
+
+    The import directory wins when the playlist is stored there. A playlist
+    that also sits inside the installation (the import directory was placed in
+    the install tree) keeps install-relative paths when those files are the
+    ones on disk.
+    """
+    candidates = []
+    if import_path and _path_is_under(playlist_path, import_path):
+        candidates.append(os.path.abspath(import_path))
+    if playlist_path and path_is_in_install(playlist_path):
+        install = os.path.abspath(ROOT_DIR)
+        if install not in candidates:
+            candidates.append(install)
+    if not candidates:
+        if playlist_path:
+            parent = os.path.dirname(os.path.dirname(os.path.abspath(playlist_path)))
+            if parent:
+                return parent
+        return os.path.abspath(ROOT_DIR)
+    if len(candidates) == 1 or not isinstance(document, dict):
+        return candidates[0]
+    relative = [
+        raw for raw in _playlist_media_paths(document)
+        if isinstance(raw, str) and raw.strip() and not os.path.isabs(raw)
+    ]
+    for root in candidates:
+        for raw in relative:
+            if os.path.isfile(os.path.join(root, raw)):
+                return root
+    return candidates[0]
+
+
+def resolve_stored_media_path(path, playlist_path="", root=""):
+    """Absolute path for a media path stored in a playlist.
+
+    ``root`` forces the directory relative paths are taken from. Without it, a
+    relative path prefers the folder above the playlist when that file is
+    there, and otherwise the installation directory.
+    """
+    if not isinstance(path, str):
+        return ""
+    raw = os.path.expanduser(path.strip())
+    if not raw:
+        return ""
+    if os.path.isabs(raw):
+        return os.path.abspath(raw)
+    if root:
+        return resolve_directory_path(raw, root)
+    ordered = []
+    if playlist_path and not path_is_in_install(playlist_path):
+        folder = os.path.dirname(os.path.abspath(playlist_path))
+        parent = os.path.dirname(folder)
+        if parent:
+            ordered.append(parent)
+    ordered.append(os.path.abspath(ROOT_DIR))
+    for base in ordered:
+        candidate = os.path.abspath(os.path.join(base, raw))
+        if os.path.isfile(candidate):
+            return candidate
+    return os.path.abspath(os.path.join(ordered[0], raw))
 
 
 def read_app_version():
@@ -914,14 +1029,20 @@ class PlaylistEntry:
         return cls(**{key: value for key, value in data.items() if key in names})
 
 
-def playlist_entries(items):
-    """Playlist entries with install-relative media paths made absolute."""
+def playlist_entries(items, root=None):
+    """Playlist entries with relative media paths made absolute.
+
+    ``root`` is the directory relative paths are taken from. The installation
+    directory is used when ``root`` is omitted, which is how shipped playlists
+    under ``media/testdata`` are stored.
+    """
+    base = ROOT_DIR if root is None else root
     entries = []
     for item in items or []:
         if not isinstance(item, dict):
             continue
         entry = PlaylistEntry.from_dict(item)
-        resolved = resolve_install_path(entry.path)
+        resolved = resolve_directory_path(entry.path, base)
         if resolved:
             entry.path = resolved
         entries.append(entry)
@@ -1295,14 +1416,7 @@ def delete_import_directory(directory, import_path):
 
 
 def path_is_inside(path, directory):
-    if not path or not directory:
-        return False
-    try:
-        folder = os.path.abspath(directory)
-        target = os.path.abspath(path)
-        return os.path.commonpath([target, folder]) == folder
-    except (OSError, ValueError):
-        return False
+    return _path_is_under(path, directory)
 
 
 _PLAYLIST_PLACEHOLDER_STEMS = frozenset({"untitled", "unbekannt"})
@@ -1416,14 +1530,15 @@ def _playlist_media_paths(document):
     return paths
 
 
-def _rewrite_playlist_paths(document, mapping):
+def _rewrite_playlist_paths(document, mapping, playlist_path=""):
     def rewritten(path):
         if not isinstance(path, str) or not path.strip():
             return path
         try:
-            return mapping.get(resolve_install_path(path), path)
+            resolved = resolve_stored_media_path(path, playlist_path=playlist_path)
         except (OSError, ValueError):
             return path
+        return mapping.get(resolved, path)
 
     for entry in document.get("entries") or []:
         if not isinstance(entry, dict):
@@ -1447,12 +1562,14 @@ def _unique_copy_name(directory, filename, reserved):
     return candidate
 
 
-def place_playlist(source_path, dest_folder, stem, with_media):
+def place_playlist(source_path, dest_folder, stem, with_media, relative_to=""):
     """Write ``stem.pls`` into ``dest_folder``.
 
     With media, referenced files are copied beside the playlist and the
-    stored paths point at those copies. Without media, the paths stay as they
-    are. Returns the written playlist path.
+    stored paths point at those copies. ``relative_to`` stores copies that
+    land inside that directory as paths relative to it, which is how an import
+    directory stays portable. Without media, the paths stay as they are.
+    Returns the written playlist path.
     """
     with open(source_path, encoding="utf-8") as handle:
         document = json.load(handle)
@@ -1464,7 +1581,7 @@ def place_playlist(source_path, dest_folder, stem, with_media):
         reserved = {f"{stem}.pls".casefold(), f"{stem}.json".casefold()}
         for old in _playlist_media_paths(document):
             try:
-                old_abs = resolve_install_path(old)
+                old_abs = resolve_stored_media_path(old, playlist_path=source_path)
             except (OSError, ValueError):
                 continue
             if old_abs in mapping or not os.path.isfile(old_abs):
@@ -1478,7 +1595,12 @@ def place_playlist(source_path, dest_folder, stem, with_media):
             if os.path.abspath(dest) != old_abs:
                 shutil.copy2(old_abs, dest)
             mapping[old_abs] = dest
-        _rewrite_playlist_paths(document, mapping)
+        if relative_to:
+            mapping = {
+                key: relativize_directory_path(dest, relative_to)
+                for key, dest in mapping.items()
+            }
+        _rewrite_playlist_paths(document, mapping, playlist_path=source_path)
     dest_playlist = os.path.join(dest_folder, f"{stem}.pls")
     with open(dest_playlist, "w", encoding="utf-8") as handle:
         json.dump(document, handle, indent=2)
