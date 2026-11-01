@@ -8600,16 +8600,26 @@ class VideoPlayerGUI:
                 return False
         return False
 
+    def _focused_widget(self):
+        """Widget with keyboard focus.
+
+        A just-closed file dialog can still be Tk's focus name without a
+        Python widget. ``focus_get`` then raises ``KeyError``.
+        """
+        root = getattr(self, "root", None)
+        if root is None:
+            return None
+        try:
+            return root.focus_get()
+        except (tk.TclError, KeyError):
+            return None
+
     def _present_popup(self, window):
         """Put this window in front of popups that are already open."""
         if not self._window_alive(window):
             return
         owner = self._front_popup(skip=window)
-        focused = None
-        try:
-            focused = window.focus_get()
-        except tk.TclError:
-            focused = None
+        focused = self._focused_widget()
         inside = focused is not None and self._focus_inside(window, focused)
         try:
             window.lift()
@@ -12382,7 +12392,7 @@ class VideoPlayerGUI:
         self.refresh_transport()
 
     def _focus_is_text_input(self):
-        widget = self.root.focus_get()
+        widget = self._focused_widget()
         return isinstance(widget, (tk.Entry, tk.Text, ttk.Entry, ttk.Combobox))
 
     def _on_key_set_in(self, _event=None):

@@ -1242,6 +1242,30 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(written, before)
         self.assertFalse(os.path.exists(os.path.join(dest, "Abend", "still.jpg")))
 
+    def test_copy_progress_opens_when_the_file_dialog_still_has_focus(self):
+        self.app.root = self.root
+        self.app.icon_image = None
+        self.app._place_on_control_monitor = lambda window, width, height: window.geometry(
+            f"{width}x{height}+20+20"
+        )
+        path = ".__tk_filedialog"
+        if self.root.tk.call("winfo", "exists", path):
+            self.root.tk.call("destroy", path)
+        self.root.tk.call("toplevel", path)
+        entry = path + ".e"
+        self.root.tk.call("entry", entry)
+        self.root.tk.call("pack", entry)
+        self.root.tk.call("focus", entry)
+        self.root.update()
+        with self.assertRaises(KeyError):
+            self.root.focus_get()
+        window, widgets = cinema_gui.VideoPlayerGUI._open_copy_progress(self.app, 1)
+        window.update()
+        self.assertTrue(window.winfo_viewable())
+        self.assertFalse(widgets["cancel"]["cancel"])
+        cinema_gui.VideoPlayerGUI._close_copy_progress(self.app, window)
+        self.root.tk.call("destroy", path)
+
     def test_cancel_stops_the_copy_and_keeps_finished_files(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
