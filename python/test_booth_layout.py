@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Booth layout: playlist columns, show chrome, beamer short form, clocks."""
 
+import json
 import os
 import shutil
 import sys
@@ -1241,6 +1242,34 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(added, [internal_file])
         self.assertEqual(written, before)
         self.assertFalse(os.path.exists(os.path.join(dest, "Abend", "still.jpg")))
+
+    def test_saving_an_import_playlist_stores_paths_relative_to_the_import_directory(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        imports = os.path.join(root, "Import")
+        folder = os.path.join(imports, "Abend")
+        os.makedirs(folder)
+        clip = os.path.join(folder, "clip.mp4")
+        outside = os.path.join(root, "linked.mp4")
+        with open(clip, "wb") as handle:
+            handle.write(b"film")
+        with open(outside, "wb") as handle:
+            handle.write(b"link")
+        playlist = os.path.join(folder, "Abend.pls")
+        self.app.import_path = imports
+        self.app._playlist_payload = lambda: {
+            "idle_media_path": clip,
+            "entries": [
+                {"path": clip, "filename": "clip.mp4"},
+                {"path": outside, "filename": "linked.mp4"},
+            ],
+        }
+        cinema_gui.VideoPlayerGUI._write_playlist(self.app, playlist)
+        with open(playlist, encoding="utf-8") as handle:
+            stored = json.load(handle)
+        self.assertEqual(stored["entries"][0]["path"], "Abend/clip.mp4")
+        self.assertEqual(stored["idle_media_path"], "Abend/clip.mp4")
+        self.assertEqual(stored["entries"][1]["path"], os.path.abspath(outside))
 
     def test_copy_progress_opens_when_the_file_dialog_still_has_focus(self):
         self.app.root = self.root
