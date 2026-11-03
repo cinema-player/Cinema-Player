@@ -1602,6 +1602,42 @@ def save_settings(settings):
         json.dump(settings, handle, indent=2)
 
 
+# Playlist / preview split. The left column keeps a pixel width until the
+# operator drags the sash; the window does not rebalance the two panes.
+BOOTH_SPLIT_DEFAULT = 960
+BOOTH_SPLIT_MIN_LEFT = 720
+BOOTH_SPLIT_MIN_RIGHT = 400
+BOOTH_SASH_WIDTH = 22
+BOOTH_SPLIT_PAD = 24
+BOOTH_HANDLE_RADIUS = 10
+
+
+def clamp_booth_split_width(
+    width,
+    total,
+    min_left=BOOTH_SPLIT_MIN_LEFT,
+    min_right=BOOTH_SPLIT_MIN_RIGHT,
+    sash=BOOTH_SASH_WIDTH,
+):
+    """Keep the playlist pane inside the booth window."""
+    try:
+        total = int(total)
+    except (TypeError, ValueError):
+        total = 0
+    try:
+        width = int(round(float(width)))
+    except (TypeError, ValueError):
+        width = BOOTH_SPLIT_DEFAULT
+    if total <= sash:
+        return max(min_left, width)
+    max_left = total - sash - min_right
+    min_allowed = min_left
+    if max_left < min_allowed:
+        max_left = max(0, total - sash - 80)
+        min_allowed = min(min_allowed, max_left)
+    return max(min_allowed, min(max_left, width))
+
+
 # Playlist metadata columns. Widths are in characters so the header and the
 # rows share one alignment.
 PLAYLIST_META_COLUMNS = (
@@ -2535,22 +2571,12 @@ class VideoPlayerGUI:
         self._offer_playlist_library()
 
     def create_gui(self):
-        self.root.columnconfigure(0, weight=3)
-        self.root.columnconfigure(1, weight=2)
+        self.root.columnconfigure(0, weight=1)
+        self.root.columnconfigure(1, weight=0)
         self.root.rowconfigure(1, weight=1)
 
         self._build_logo()
-
-        left = tk.Frame(self.root, bg=COLOR_BG)
-        left.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 12))
-        left.columnconfigure(0, weight=1)
-        left.rowconfigure(4, weight=1)
-
-        right = tk.Frame(self.root, bg=COLOR_BG)
-        right.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(0, 12))
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(3, weight=1)
-
+        left, right = self._build_booth_split()
         self._build_program_status(left)
         self._build_show_strip(left)
         self._build_program_block(left)
@@ -2558,9 +2584,224 @@ class VideoPlayerGUI:
         self._build_beamer(right)
         self._build_preview(right)
 
+    def _build_booth_split(self):
+        """Fixed playlist width, growing preview, and a draggable sash between them."""
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+        body = tk.Frame(self.root, bg=COLOR_BG)
+        body.grid(row=1, column=0, sticky="nsew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=0, minsize=BOOTH_SASH_WIDTH)
+        body.columnconfigure(2, weight=1)
+        self.booth_body = body
+
+        left = tk.Frame(body, bg=COLOR_BG, width=BOOTH_SPLIT_DEFAULT)
+        left.grid(row=0, column=0, sticky="nsew", padx=(12, 0), pady=(0, 12))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(4, weight=1)
+        left.grid_propagate(False)
+        self.booth_left = left
+
+        sash = tk.Frame(
+            body, width=BOOTH_SASH_WIDTH, bg=COLOR_BG, cursor="sb_h_double_arrow",
+        )
+        sash.grid(row=0, column=1, sticky="ns", pady=(0, 12))
+        sash.grid_propagate(False)
+        self.booth_sash = sash
+        line = tk.Frame(sash, bg=COLOR_BORDER, width=2)
+        line.place(relx=0.5, rely=0, relheight=1, anchor="n", width=2)
+        self.booth_sash_line = line
+        handle_size = BOOTH_HANDLE_RADIUS * 2 + 4
+        handle = tk.Canvas(
+            sash,
+            width=handle_size,
+            height=handle_size,
+            highlightthickness=0,
+            bd=0,
+            bg=COLOR_BG,
+            cursor="sb_h_double_arrow",
+        )
+        handle.place(relx=0.5, rely=0.5, anchor="center")
+        self.booth_sash_handle = handle
+        self._booth_sash_hover = False
+        self._booth_sash_dragging = False
+        self._booth_sash_origin = 0
+        self._booth_sash_start = BOOTH_SPLIT_DEFAULT
+        handle.bind("<Configure>", lambda _event: self._paint_booth_sash())
+        for widget in (sash, line, handle):
+            widget.bind("<Enter>", self._on_booth_sash_enter)
+            widget.bind("<Leave>", self._on_booth_sash_leave)
+            widget.bind("<ButtonPress-1>", self._on_booth_sash_press)
+            widget.bind("<B1-Motion>", self._on_booth_sash_drag)
+            widget.bind("<ButtonRelease-1>", self._on_booth_sash_release)
+        self.booth_sash_tip = IconTooltip(handle, t("booth_split_tip"))
+        handle.tooltip = self.booth_sash_tip
+
+        right = tk.Frame(body, bg=COLOR_BG)
+        right.grid(row=0, column=2, sticky="nsew", padx=(0, 12), pady=(0, 12))
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(3, weight=1)
+        self.booth_right = right
+
+        if not hasattr(self, "_booth_split_desired"):
+            self._booth_split_desired = self._read_booth_split()
+        self._apply_booth_split()
+        body.bind("<Configure>", self._on_booth_body_configure)
+        return left, right
+
+    def _read_booth_split(self):
+        value = (getattr(self, "settings", None) or {}).get("booth_split", BOOTH_SPLIT_DEFAULT)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return BOOTH_SPLIT_DEFAULT
+
+    def _booth_split_total(self):
+        body = getattr(self, "booth_body", None)
+        if body is None:
+            return 0
+        try:
+            width = int(body.winfo_width())
+        except (tk.TclError, TypeError, ValueError):
+            return 0
+        if width <= 1:
+            return 0
+        return max(0, width - BOOTH_SPLIT_PAD)
+
+    def _apply_booth_split(self, width=None, persist=False):
+        if width is not None:
+            try:
+                self._booth_split_desired = int(round(float(width)))
+            except (TypeError, ValueError):
+                self._booth_split_desired = BOOTH_SPLIT_DEFAULT
+        desired = getattr(self, "_booth_split_desired", BOOTH_SPLIT_DEFAULT)
+        total = self._booth_split_total()
+        displayed = (
+            clamp_booth_split_width(desired, total)
+            if total > 1
+            else max(BOOTH_SPLIT_MIN_LEFT, desired)
+        )
+        self._booth_split_width = displayed
+        left = getattr(self, "booth_left", None)
+        body = getattr(self, "booth_body", None)
+        if left is not None:
+            if int(left.cget("width") or 0) != displayed:
+                left.configure(width=displayed)
+        if body is not None:
+            body.columnconfigure(0, minsize=displayed, weight=0)
+        if persist:
+            self._booth_split_desired = displayed
+            settings = getattr(self, "settings", None)
+            if isinstance(settings, dict):
+                settings["booth_split"] = displayed
+                try:
+                    save_settings(settings)
+                except OSError:
+                    pass
+        self._paint_booth_sash()
+        return displayed
+
+    def _on_booth_body_configure(self, event):
+        if event.widget is not getattr(self, "booth_body", None):
+            return
+        if getattr(self, "_booth_sash_dragging", False):
+            return
+        self._apply_booth_split()
+
+    def _on_booth_sash_enter(self, _event=None):
+        self._booth_sash_hover = True
+        self._paint_booth_sash()
+
+    def _on_booth_sash_leave(self, _event=None):
+        if getattr(self, "_booth_sash_dragging", False):
+            return
+        sash = getattr(self, "booth_sash", None)
+        if sash is not None:
+            try:
+                pointer_x = sash.winfo_pointerx()
+                pointer_y = sash.winfo_pointery()
+                left = sash.winfo_rootx()
+                top = sash.winfo_rooty()
+                if (
+                    left <= pointer_x < left + sash.winfo_width()
+                    and top <= pointer_y < top + sash.winfo_height()
+                ):
+                    return
+            except tk.TclError:
+                pass
+        self._booth_sash_hover = False
+        self._paint_booth_sash()
+
+    def _on_booth_sash_press(self, event):
+        self._booth_sash_dragging = True
+        self._booth_sash_hover = True
+        self._booth_sash_origin = event.x_root
+        self._booth_sash_start = getattr(self, "_booth_split_width", BOOTH_SPLIT_DEFAULT)
+        try:
+            self.booth_sash.grab_set()
+        except tk.TclError:
+            pass
+        self._paint_booth_sash()
+
+    def _on_booth_sash_drag(self, event):
+        if not getattr(self, "_booth_sash_dragging", False):
+            return
+        self._apply_booth_split(self._booth_sash_start + (event.x_root - self._booth_sash_origin))
+
+    def _on_booth_sash_release(self, _event=None):
+        if not getattr(self, "_booth_sash_dragging", False):
+            return
+        self._booth_sash_dragging = False
+        try:
+            self.booth_sash.grab_release()
+        except tk.TclError:
+            pass
+        self._apply_booth_split(getattr(self, "_booth_split_width", BOOTH_SPLIT_DEFAULT), persist=True)
+        self._booth_sash_hover = False
+        self._paint_booth_sash()
+
+    def _paint_booth_sash(self):
+        canvas = getattr(self, "booth_sash_handle", None)
+        bar = getattr(self, "booth_sash_line", None)
+        if canvas is None:
+            return
+        try:
+            if not int(canvas.winfo_exists()):
+                return
+        except tk.TclError:
+            return
+        canvas.delete("all")
+        try:
+            width = max(int(canvas.winfo_width()), 2)
+            height = max(int(canvas.winfo_height()), 2)
+        except tk.TclError:
+            return
+        active = bool(getattr(self, "_booth_sash_hover", False) or getattr(self, "_booth_sash_dragging", False))
+        line = ACCENT if active else COLOR_BORDER
+        fill = COLOR_BUTTON_ACTIVE if active else COLOR_BUTTON
+        if bar is not None:
+            try:
+                bar.configure(bg=line)
+            except tk.TclError:
+                pass
+        cx = width / 2
+        cy = height / 2
+        canvas.create_line(cx, 0, cx, height, fill=line, width=2)
+        radius = BOOTH_HANDLE_RADIUS
+        canvas.create_oval(
+            cx - radius, cy - radius, cx + radius, cy + radius,
+            fill=fill, outline=line, width=2,
+        )
+        for dy in (-4, 0, 4):
+            canvas.create_oval(
+                cx - 1.5, cy + dy - 1.5, cx + 1.5, cy + dy + 1.5,
+                fill=COLOR_TEXT, outline="",
+            )
+
     def _build_logo(self):
         header = tk.Frame(self.root, bg=COLOR_BG)
-        header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 6))
+        header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 6))
 
         tools = tk.Frame(header, bg=COLOR_BG)
         tools.pack(side="right")
