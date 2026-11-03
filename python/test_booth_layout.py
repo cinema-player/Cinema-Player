@@ -2211,6 +2211,85 @@ class ProgramClockTests(unittest.TestCase):
         self.assertTrue(cinema_gui.program_clock_drives_playhead(False, False, True, False))
 
 
+class BoothSplitTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.root.geometry("1600x900+20+20")
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.settings = {}
+
+    def tearDown(self):
+        try:
+            self.root.grab_release()
+        except tk.TclError:
+            pass
+        self.root.destroy()
+        set_language("en")
+
+    def _build(self):
+        cinema_gui.VideoPlayerGUI._build_booth_split(self.app)
+        self.root.update()
+        self.root.update_idletasks()
+
+    def test_clamp_keeps_both_panes_usable(self):
+        self.assertEqual(cinema_gui.clamp_booth_split_width(960, 1600), 960)
+        self.assertEqual(
+            cinema_gui.clamp_booth_split_width(200, 1600),
+            cinema_gui.BOOTH_SPLIT_MIN_LEFT,
+        )
+        self.assertEqual(
+            cinema_gui.clamp_booth_split_width(2000, 1600),
+            1600 - cinema_gui.BOOTH_SASH_WIDTH - cinema_gui.BOOTH_SPLIT_MIN_RIGHT,
+        )
+        self.assertEqual(
+            cinema_gui.clamp_booth_split_width("bogus", 1600),
+            cinema_gui.BOOTH_SPLIT_DEFAULT,
+        )
+
+    def test_sash_is_fixed_until_the_handle_moves(self):
+        self._build()
+        left = self.app.booth_left
+        right = self.app.booth_right
+        sash = self.app.booth_sash
+        start = left.winfo_width()
+        self.assertGreaterEqual(start, cinema_gui.BOOTH_SPLIT_MIN_LEFT)
+        self.assertEqual(sash.winfo_width(), cinema_gui.BOOTH_SASH_WIDTH)
+        handle = self.app.booth_sash_handle
+        self.assertGreater(len(handle.find_all()), 1)
+        self.assertEqual(handle.tooltip.text, "Trennlinie zwischen Playlist und Vorschau verschieben")
+
+        self.root.geometry("1800x900+20+20")
+        self.root.update()
+        self.root.update_idletasks()
+        self.assertLessEqual(abs(left.winfo_width() - start), 1)
+        self.assertGreater(right.winfo_width(), 1)
+
+        origin_x = sash.winfo_rootx() + sash.winfo_width() // 2
+        origin_y = sash.winfo_rooty() + max(sash.winfo_height() // 2, 1)
+        cinema_gui.VideoPlayerGUI._on_booth_sash_press(
+            self.app, type("E", (), {"x_root": origin_x, "y_root": origin_y})(),
+        )
+        cinema_gui.VideoPlayerGUI._on_booth_sash_drag(
+            self.app, type("E", (), {"x_root": origin_x + 80, "y_root": origin_y})(),
+        )
+        self.root.update_idletasks()
+        moved = left.winfo_width()
+        self.assertGreater(moved, start)
+        with patch.object(cinema_gui, "save_settings") as saved:
+            cinema_gui.VideoPlayerGUI._on_booth_sash_release(self.app)
+        self.root.update_idletasks()
+        self.assertEqual(left.winfo_width(), moved)
+        self.assertEqual(self.app.settings["booth_split"], moved)
+        saved.assert_called_once()
+
+    def test_saved_split_is_restored(self):
+        self.app.settings["booth_split"] = 820
+        self._build()
+        self.assertLessEqual(abs(self.app.booth_left.winfo_width() - 820), 1)
+
+
 class ProgressBarLayoutTests(unittest.TestCase):
     def setUp(self):
         self.root = tk.Tk()
