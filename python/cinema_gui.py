@@ -144,6 +144,8 @@ from cinema_player import (
     playlist_folder_name,
     playlist_location_label,
     playlist_location_short,
+    playlist_group_indexes,
+    matching_relink_paths,
     probe_audio,
     probe_media,
     compose_mpv_vf,
@@ -5720,7 +5722,7 @@ class VideoPlayerGUI:
         for index, entry in enumerate(self.playlist):
             group = self._playlist_group_label(entry)
             if group and group != last_group:
-                self._make_folder_header(group)
+                self._make_folder_header(group, index)
                 last_group = group
             elif not group:
                 last_group = None
@@ -5759,17 +5761,18 @@ class VideoPlayerGUI:
     def _playlist_group_label(self, entry):
         return playlist_location_short(getattr(entry, "path", ""), self.media_directories)
 
-    def _make_folder_header(self, text):
+    def _make_folder_header(self, text, start_index):
         bar = tk.Frame(self.playlist_inner, bg=COLOR_PANEL)
         bar.playlist_index = None
+        bar.group_start = start_index
         bar.pack(fill="x", padx=2, pady=(8, 0))
         tk.Label(
             bar, text=text, anchor="w", bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
         ).pack(side="left", padx=(8, 4))
         tk.Frame(bar, bg=COLOR_BORDER, height=1).pack(side="left", fill="x", expand=True, padx=(4, 8))
-        self._bind_playlist_wheel(bar)
-        for child in bar.winfo_children():
-            self._bind_playlist_wheel(child)
+        for widget in (bar, *bar.winfo_children()):
+            widget.bind("<Button-3>", lambda e, i=start_index: self.on_folder_menu(i, e))
+            self._bind_playlist_wheel(widget)
 
     def _meta_column(self, row, column, width, bg, fg):
         label = tk.Label(
@@ -6835,6 +6838,116 @@ class VideoPlayerGUI:
         self._post_dropdown(menu, event.x_root, event.y_root)
         self.row_menu = menu
 
+    def on_folder_menu(self, start_index, event):
+        """Right click on a folder heading: relink that group from a folder."""
+        indexes = playlist_group_indexes(self.playlist, start_index, self.media_directories)
+        if not indexes:
+            return
+        playing = self.program_state == "PLAYING"
+        only_busy = playing and len(indexes) == 1 and indexes[0] == self.program_index
+        menu = DropdownMenu(self.root, self)
+        menu.add_command(
+            label=t("relink_folder"),
+            command=lambda: self.relink_folder_group(start_index),
+            state="disabled" if only_busy else "normal",
+        )
+        self._post_dropdown(menu, event.x_root, event.y_root)
+        self.row_menu = menu
+
+    def relink_folder_group(self, start_index):
+        """Choose a folder and relink every clip in this group whose file is there."""
+        indexes = playlist_group_indexes(self.playlist, start_index, self.media_directories)
+        if not indexes:
+            return
+        playing = self.program_state == "PLAYING"
+        dialog_options = {"title": t("relink_folder")}
+        first = self.playlist[indexes[0]]
+        directory = os.path.dirname(getattr(first, "path", "") or "")
+        if directory and os.path.isdir(directory):
+            dialog_options["initialdir"] = directory
+        else:
+            start = self._preferred_import_dir()
+            if start:
+                dialog_options["initialdir"] = start
+        folder = filedialog.askdirectory(**dialog_options)
+        if not folder:
+            return
+        try:
+            folder = os.path.abspath(folder)
+        except (OSError, ValueError):
+            return
+        matches = matching_relink_paths(self.playlist, folder)
+        changed = []
+        found = False
+        for index in indexes:
+            if index not in matches:
+                continue
+            found = True
+            if playing and index == self.program_index:
+                continue
+            if not self._relink_index_to_path(index, matches[index]):
+                continue
+            changed.append(index)
+        if not found:
+            messagebox.showinfo(t("relink_folder"), t("relink_folder_none"))
+            return
+        if not changed:
+            return
+        self.remember_import_dir(folder)
+        if self.zoom_confirmed_index in changed:
+            self.zoom_confirmed_index = None
+        if self.preview_index in changed:
+            self.show_preview_clip(self.playlist[self.preview_index])
+        self.refresh_all()
+
+    def _relink_index_to_path(self, index, path):
+        """Point one playlist row at path and keep cue/volume settings."""
+        if not 0 <= index < len(self.playlist):
+            return False
+        entry = self.playlist[index]
+        try:
+            probed = probe_media(path)
+        except Exception as exc:
+            messagebox.showerror(t("import_error"), f"{os.path.basename(path)}\n{exc}")
+            return False
+        probed.autoplay = entry.autoplay
+        probed.loop = bool(entry.loop) and not probed.is_image
+        probed.played = entry.played
+        probed.volume = clamp_volume(entry.volume)
+        probed.display_time = entry.display_time
+        probed.light_start = entry.light_start
+        probed.light_end = entry.light_end
+        probed.force_settings_warning = bool(entry.force_settings_warning)
+        if probed.duration > 0:
+            if entry.in_point is not None and 0 <= entry.in_point < probed.duration:
+                probed.in_point = entry.in_point
+            if entry.out_point is not None and 0 < entry.out_point <= probed.duration:
+                probed.out_point = entry.out_point
+            if (
+                probed.in_point is not None
+                and probed.out_point is not None
+                and probed.in_point > probed.out_point
+            ):
+                probed.in_point, probed.out_point = probed.out_point, probed.in_point
+        if entry.audio_track in probed.audio_tracks:
+            probed.audio_track = entry.audio_track
+        if entry.subtitle_track in (probed.subtitle_tracks or ["--"]):
+            probed.subtitle_track = entry.subtitle_track
+        probed.missing = False
+        try:
+            if not self.output_manager.video_output:
+                self.output_manager.select_video_output()
+            video = self.output_manager.get_video_info(path) if not probed.is_image else None
+            if video:
+                _mode, matched = self.output_manager.find_best_mode(
+                    video, create=False, pad_16x9=self._pad_16x9_enabled(),
+                )
+                probed.refresh_ok = matched
+        except Exception:
+            probed.refresh_ok = False
+        self.playlist[index] = probed
+        return True
+
     def _move_program_cursor(self, index):
         if self.playlist:
             index = min(max(index, 0), len(self.playlist) - 1)
@@ -7022,52 +7135,13 @@ class VideoPlayerGUI:
         )
         if not path:
             return
-        try:
-            probed = probe_media(path)
-        except Exception as exc:
-            messagebox.showerror(t("import_error"), f"{os.path.basename(path)}\n{exc}")
+        if not self._relink_index_to_path(index, path):
             return
-        probed.autoplay = entry.autoplay
-        probed.loop = bool(entry.loop) and not probed.is_image
-        probed.played = entry.played
-        probed.volume = clamp_volume(entry.volume)
-        probed.display_time = entry.display_time
-        probed.light_start = entry.light_start
-        probed.light_end = entry.light_end
-        probed.force_settings_warning = bool(entry.force_settings_warning)
-        if probed.duration > 0:
-            if entry.in_point is not None and 0 <= entry.in_point < probed.duration:
-                probed.in_point = entry.in_point
-            if entry.out_point is not None and 0 < entry.out_point <= probed.duration:
-                probed.out_point = entry.out_point
-            if (
-                probed.in_point is not None
-                and probed.out_point is not None
-                and probed.in_point > probed.out_point
-            ):
-                probed.in_point, probed.out_point = probed.out_point, probed.in_point
-        if entry.audio_track in probed.audio_tracks:
-            probed.audio_track = entry.audio_track
-        if entry.subtitle_track in (probed.subtitle_tracks or ["--"]):
-            probed.subtitle_track = entry.subtitle_track
-        probed.missing = False
-        try:
-            if not self.output_manager.video_output:
-                self.output_manager.select_video_output()
-            video = self.output_manager.get_video_info(path) if not probed.is_image else None
-            if video:
-                mode, matched = self.output_manager.find_best_mode(
-                    video, create=False, pad_16x9=self._pad_16x9_enabled(),
-                )
-                probed.refresh_ok = matched
-        except Exception:
-            probed.refresh_ok = False
-        self.playlist[index] = probed
         self.remember_import_dir(path)
         if self.zoom_confirmed_index == index:
             self.zoom_confirmed_index = None
         if self.preview_index == index:
-            self.show_preview_clip(probed)
+            self.show_preview_clip(self.playlist[index])
         self.refresh_all()
 
     def _playlist_import_folder(self):

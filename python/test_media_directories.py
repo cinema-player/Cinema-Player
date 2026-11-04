@@ -110,6 +110,73 @@ class PlaylistLocationLabelTests(unittest.TestCase):
         self.assertEqual(player.playlist_location_short("", []), "")
 
 
+class PlaylistFolderRelinkTests(unittest.TestCase):
+    def test_group_indexes_are_the_consecutive_heading(self):
+        entries = [
+            player.PlaylistEntry(path="/media/films/day/one.mp4"),
+            player.PlaylistEntry(path="/media/films/day/two.mp4"),
+            player.PlaylistEntry(path="/media/stills/night/three.jpg"),
+            player.PlaylistEntry(path="/media/films/day/four.mp4"),
+        ]
+        self.assertEqual(player.playlist_group_indexes(entries, 0, []), [0, 1])
+        self.assertEqual(player.playlist_group_indexes(entries, 2, []), [2])
+        self.assertEqual(player.playlist_group_indexes(entries, 3, []), [3])
+        self.assertEqual(player.playlist_group_indexes(entries, 9, []), [])
+
+    def test_named_directory_keeps_the_group_together(self):
+        directories = [{"path": "/media/films", "name": "Filme"}]
+        entries = [
+            player.PlaylistEntry(path="/media/films/day/one.mp4"),
+            player.PlaylistEntry(path="/media/films/day/two.mp4"),
+            player.PlaylistEntry(path="/media/films/night/three.mp4"),
+        ]
+        self.assertEqual(player.playlist_group_indexes(entries, 0, directories), [0, 1])
+        self.assertEqual(player.playlist_group_indexes(entries, 2, directories), [2])
+
+    def test_finds_a_file_in_the_chosen_folder_or_below(self):
+        root = tempfile.mkdtemp()
+        try:
+            nested = os.path.join(root, "day")
+            os.makedirs(nested)
+            missing = os.path.join(root, "gone.mp4")
+            direct = os.path.join(root, "clip.mp4")
+            lower = os.path.join(nested, "Still.JPG")
+            with open(direct, "wb") as handle:
+                handle.write(b"film")
+            with open(lower, "wb") as handle:
+                handle.write(b"still")
+            self.assertEqual(player.find_media_in_folder("clip.mp4", root), direct)
+            self.assertEqual(player.find_media_in_folder("Still.JPG", root), lower)
+            self.assertEqual(player.find_media_in_folder("still.jpg", root), lower)
+            self.assertEqual(player.find_media_in_folder("gone.mp4", root), "")
+            self.assertEqual(player.find_media_in_folder("clip.mp4", missing), "")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_matching_paths_skip_files_already_in_the_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            old = os.path.join(root, "old")
+            new = os.path.join(root, "new")
+            os.makedirs(old)
+            os.makedirs(new)
+            kept = os.path.join(new, "kept.mp4")
+            moved = os.path.join(new, "moved.mp4")
+            with open(kept, "wb") as handle:
+                handle.write(b"kept")
+            with open(moved, "wb") as handle:
+                handle.write(b"moved")
+            entries = [
+                player.PlaylistEntry(path=os.path.join(old, "moved.mp4"), missing=True),
+                player.PlaylistEntry(path=kept),
+                player.PlaylistEntry(path=os.path.join(old, "absent.mp4"), missing=True),
+            ]
+            matches = player.matching_relink_paths(entries, new)
+            self.assertEqual(matches, {0: moved})
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+
 MOUNTS = "\n".join([
     "sysfs /sys sysfs rw 0 0",
     "/dev/nvme0n1p2 / ext4 rw 0 0",
@@ -224,6 +291,8 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertEqual(language.STRINGS["en"]["delete_entry_and_file"], "Delete entry and file")
         self.assertEqual(language.STRINGS["de"]["playlist_library"], "Playlist wählen")
         self.assertEqual(language.STRINGS["de"]["playlist_with_media"], "Mit Mediendateien")
+        self.assertEqual(language.STRINGS["de"]["relink_folder"], "Aus Ordner neu verknüpfen")
+        self.assertEqual(language.STRINGS["en"]["relink_folder"], "Relink from folder")
         self.assertEqual(language.STRINGS["de"]["still_dim"], "Dimmen")
         self.assertEqual(language.STRINGS["en"]["still_dim"], "Dim")
         self.assertEqual(language.STRINGS["de"]["still_dim_time"], "Dimmzeit:")

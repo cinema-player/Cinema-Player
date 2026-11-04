@@ -1724,6 +1724,80 @@ def playlist_location_short(file_path, directories):
     return label
 
 
+def playlist_group_indexes(playlist, start, directories):
+    """Consecutive playlist indexes that share the folder heading at start."""
+    if not playlist or not 0 <= start < len(playlist):
+        return []
+    label = playlist_location_short(getattr(playlist[start], "path", ""), directories)
+    if not label:
+        return []
+    indexes = []
+    for index in range(start, len(playlist)):
+        if playlist_location_short(getattr(playlist[index], "path", ""), directories) != label:
+            break
+        indexes.append(index)
+    return indexes
+
+
+def find_media_in_folder(filename, folder):
+    """Path of ``filename`` in ``folder`` or a subfolder, else ''.
+
+    The selected folder is tried first. A case-insensitive name is accepted
+    when the exact name is absent.
+    """
+    name = os.path.basename(filename or "")
+    if not name or not folder:
+        return ""
+    try:
+        if not os.path.isdir(folder):
+            return ""
+        folder = os.path.abspath(folder)
+    except (OSError, ValueError):
+        return ""
+    wanted = name.casefold()
+    found = []
+    try:
+        for root, _dirs, files in os.walk(folder):
+            for item in files:
+                if item != name and item.casefold() != wanted:
+                    continue
+                path = os.path.join(root, item)
+                if os.path.isfile(path):
+                    found.append((path.count(os.sep), item != name, path))
+    except OSError:
+        return ""
+    if not found:
+        return ""
+    found.sort()
+    return os.path.abspath(found[0][2])
+
+
+def matching_relink_paths(entries, folder):
+    """Map playlist index → new path for files found in ``folder``."""
+    matches = {}
+    if not folder:
+        return matches
+    try:
+        if not os.path.isdir(folder):
+            return matches
+        folder = os.path.abspath(folder)
+    except (OSError, ValueError):
+        return matches
+    for index, entry in enumerate(entries or []):
+        name = getattr(entry, "filename", "") or os.path.basename(getattr(entry, "path", "") or "")
+        found = find_media_in_folder(name, folder)
+        if not found:
+            continue
+        current = getattr(entry, "path", "") or ""
+        try:
+            if current and os.path.abspath(current) == found:
+                continue
+        except (OSError, ValueError):
+            pass
+        matches[index] = found
+    return matches
+
+
 def clamp_volume(value, default=100):
     """Keep playlist and fader values in the 0–100 range used by mpv."""
     try:
