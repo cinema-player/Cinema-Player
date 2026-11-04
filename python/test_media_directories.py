@@ -7,7 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.modules.setdefault("tkinter", MagicMock())
 sys.modules.setdefault("font_setup", MagicMock())
@@ -301,6 +301,37 @@ class PlaylistLibraryTests(unittest.TestCase):
             self.assertEqual(copied["entries"][0]["filename"], "clip.mp4")
             self.assertTrue(os.path.isfile(dest_clip))
             self.assertTrue(os.path.isfile(clip))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_library_lists_the_newest_playlist_first(self):
+        root = tempfile.mkdtemp()
+        try:
+            stamps = {
+                "Alt": 10,
+                "Mitte": 20,
+                "Zebra": 20,
+                "Alpha": 20,
+                "Neu": 30,
+                "Ohne": None,
+            }
+            for name in stamps:
+                folder = os.path.join(root, name)
+                os.makedirs(folder)
+                with open(os.path.join(folder, f"{name}.pls"), "w", encoding="utf-8") as handle:
+                    handle.write("{}")
+
+            def created(path):
+                return stamps[os.path.basename(path)]
+
+            with patch.object(player, "folder_created", side_effect=created):
+                rows = player.library_playlists(root)
+            self.assertEqual(
+                [row["name"] for row in rows],
+                ["Neu", "Alpha", "Mitte", "Zebra", "Alt", "Ohne"],
+            )
+            self.assertEqual(rows[0]["created"], 30)
+            self.assertIsNone(rows[-1]["created"])
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

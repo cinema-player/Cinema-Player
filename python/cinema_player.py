@@ -1486,8 +1486,19 @@ def playlist_file_in(folder):
     return ""
 
 
+def _library_playlist_sort_key(row):
+    """Newest folder first; a missing date follows, then the name A–Z."""
+    created = row.get("created")
+    stamp = created if isinstance(created, (int, float)) else 0
+    return (-stamp, (row.get("name") or "").casefold())
+
+
 def library_playlists(import_path):
-    """Playlists stored in same-named subfolders of the import path."""
+    """Playlists in same-named subfolders of the import path, newest first.
+
+    Order is the folder creation time, descending. A playlist without a
+    creation time follows the dated ones. Equal times stay alphabetical.
+    """
     if not import_path or not os.path.isdir(import_path):
         return []
     try:
@@ -1513,7 +1524,7 @@ def library_playlists(import_path):
             "media": media,
             "bytes": total,
         })
-    rows.sort(key=lambda row: row["name"].casefold())
+    rows.sort(key=_library_playlist_sort_key)
     return rows
 
 
