@@ -2979,6 +2979,83 @@ def canonicalize_connector(name):
     return text
 
 
+def output_names_match(left, right):
+    """True when two tools name the same connector, e.g. HDMI-2 and HDMI-A-2."""
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    return canonicalize_connector(left) == canonicalize_connector(right)
+
+
+def rectangles_overlap(first, second, minimum=40):
+    """True when two (width, height, x, y) rectangles share more than a sliver."""
+    if not first or not second:
+        return False
+    width, height, x, y = first
+    other_w, other_h, other_x, other_y = second
+    overlap_w = min(x + width, other_x + other_w) - max(x, other_x)
+    overlap_h = min(y + height, other_y + other_h) - max(y, other_y)
+    return overlap_w > minimum and overlap_h > minimum
+
+
+def parse_xrandr_layout(text):
+    """Connected outputs in X11/XWayland pixels: [(name, (w, h, x, y)), primary]."""
+    named = []
+    primary = None
+    for line in (text or "").splitlines():
+        match = re.match(
+            r"^(\S+)\s+connected(\s+primary)?\s+(\d+)x(\d+)\+(-?\d+)\+(-?\d+)",
+            line,
+        )
+        if not match:
+            continue
+        name = match.group(1)
+        rect = tuple(int(match.group(index)) for index in range(3, 7))
+        named.append((name, rect))
+        if match.group(2):
+            primary = name
+    return named, primary
+
+
+def match_named_geometry(output_name, geometries):
+    """Rectangle for output_name from an xrandr name → (w, h, x, y) map."""
+    if not output_name or not geometries:
+        return None
+    if output_name in geometries:
+        return geometries[output_name]
+    items = [
+        (canonicalize_connector(name), geometries[name])
+        for name in geometries
+    ]
+    matched = _match_drm_connector(output_name, items)
+    if not matched:
+        return None
+    return matched[1]
+
+
+def control_geometry(named, beamer=None, primary=None, prefer_x=None, prefer_y=None):
+    """Booth rectangle from (name, (w, h, x, y)) pairs, never the projector."""
+    named = [(name, rect) for name, rect in named if rect]
+    if not named:
+        return None
+    usable = [
+        (name, rect) for name, rect in named
+        if not output_names_match(name, beamer)
+    ]
+    if not usable:
+        return named[0][1]
+    if prefer_x is not None and prefer_y is not None:
+        for _name, rect in usable:
+            width, height, x, y = rect
+            if x <= prefer_x < x + width and y <= prefer_y < y + height:
+                return rect
+    for name, rect in usable:
+        if output_names_match(name, primary):
+            return rect
+    return usable[0][1]
+
+
 def _connector_index(name):
     match = re.search(r"-(\d+)$", name or "")
     return int(match.group(1)) if match else None
@@ -4104,11 +4181,62 @@ class VideoOutputManager:
                 return tuple(map(int, match.groups()))
         return None
 
+    def get_tk_output_layout(self):
+        """Outputs in the coordinate space Tk actually uses.
+
+        On Wayland with fractional scaling, gdctl positions are logical pixels
+        while an XWayland Tk window lives in a larger xrandr space. Mixing the
+        two makes the booth look as if it covered the projector.
+        """
+        try:
+            named, primary = parse_xrandr_layout(self.xrandr())
+        except Exception:
+            named, primary = [], None
+        if named:
+            return named, primary
+        named = []
+        try:
+            names = self.get_outputs()
+        except Exception:
+            return named, None
+        for name in names:
+            geometry = self.get_output_geometry(name)
+            if geometry:
+                named.append((name, geometry))
+        primary = None
+        if named:
+            try:
+                primary = self.get_primary_output()
+            except Exception:
+                primary = None
+        return named, primary
+
+    def get_tk_output_geometry(self, output_name):
+        """One output rectangle in Tk/XWayland pixels."""
+        named, _primary = self.get_tk_output_layout()
+        rect = match_named_geometry(output_name, dict(named))
+        if rect:
+            return rect
+        try:
+            return self.get_output_geometry(output_name)
+        except Exception:
+            return None
+
+    def get_tk_control_output_geometry(self, prefer_x=None, prefer_y=None):
+        """Booth rectangle in Tk pixels, never the projector."""
+        named, primary = self.get_tk_output_layout()
+        if not named:
+            return self.get_control_output_geometry(prefer_x=prefer_x, prefer_y=prefer_y)
+        return control_geometry(
+            named, self.video_output, primary, prefer_x, prefer_y,
+        )
+
     def get_control_output_geometry(self, prefer_x=None, prefer_y=None):
         """Control-monitor rectangle (width, height, x, y), never the projector.
 
         Tk -fullscreen covers the whole Xinerama desktop, including the beamer.
-        Callers must size the GUI to this rectangle instead.
+        Callers must size the GUI to this rectangle instead. Window placement
+        has to use get_tk_control_output_geometry(), which is in Tk's own pixels.
         """
         named = []
         for name in self.get_outputs():
@@ -4117,26 +4245,13 @@ class VideoOutputManager:
                 named.append((name, geometry))
         if not named:
             return None
-
-        beamer = self.video_output
-        usable = [(name, geometry) for name, geometry in named if name != beamer]
-        if not usable:
-            return named[0][1]
-
-        def contains(geometry, px, py):
-            width, height, x, y = geometry
-            return x <= px < x + width and y <= py < y + height
-
-        if prefer_x is not None and prefer_y is not None:
-            for name, geometry in usable:
-                if contains(geometry, prefer_x, prefer_y):
-                    return geometry
-
-        primary = self.get_primary_output()
-        for name, geometry in usable:
-            if name == primary:
-                return geometry
-        return usable[0][1]
+        return control_geometry(
+            named,
+            self.video_output,
+            self.get_primary_output(),
+            prefer_x,
+            prefer_y,
+        )
 
     def select_video_output(self, preferred=None):
         outputs = self.get_outputs()

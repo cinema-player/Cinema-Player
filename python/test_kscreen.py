@@ -191,5 +191,54 @@ class WaylandBackendSelectionTests(unittest.TestCase):
             self.assertEqual(player.session_desktop_hint(), "kde")
 
 
+# GNOME fractional scaling: gdctl is logical pixels, Tk/XWayland is xrandr pixels.
+XRANDR_SCALED = """\
+Screen 0: minimum 16 x 16, current 6912 x 2160, maximum 32767 x 32767
+eDP-1 connected primary 3072x1728+0+0 (normal left inverted right x axis y axis) 310mm x 170mm
+   3072x1728     59.97*+
+HDMI-2 connected 3840x2160+3072+0 (normal left inverted right x axis y axis) 350mm x 190mm
+   3840x2160     60.00*+
+"""
+
+
+class TkFullscreenGeometryTests(unittest.TestCase):
+    def test_logical_coords_look_like_overlap_xwayland_coords_do_not(self):
+        window = (1600, 900, 736, 430)
+        logical_beamer = (1920, 1080, 1536, 0)
+        xwayland_beamer = (3840, 2160, 3072, 0)
+        self.assertTrue(player.rectangles_overlap(window, logical_beamer))
+        self.assertFalse(player.rectangles_overlap(window, xwayland_beamer))
+        fullscreen = (3072, 1728, 0, 0)
+        self.assertFalse(player.rectangles_overlap(fullscreen, xwayland_beamer))
+
+    def test_parse_xrandr_layout_keeps_primary(self):
+        named, primary = player.parse_xrandr_layout(XRANDR_SCALED)
+        self.assertEqual(primary, "eDP-1")
+        self.assertEqual(named[0], ("eDP-1", (3072, 1728, 0, 0)))
+        self.assertEqual(named[1], ("HDMI-2", (3840, 2160, 3072, 0)))
+
+    def test_tk_geometry_uses_xwayland_pixels(self):
+        manager = player.VideoOutputManager("HDMI-2")
+        with mock.patch.object(manager, "xrandr", return_value=XRANDR_SCALED):
+            self.assertEqual(
+                manager.get_tk_control_output_geometry(prefer_x=1500, prefer_y=400),
+                (3072, 1728, 0, 0),
+            )
+            self.assertEqual(
+                manager.get_tk_output_geometry("HDMI-A-2"),
+                (3840, 2160, 3072, 0),
+            )
+
+    def test_control_geometry_skips_aliased_beamer(self):
+        named = [
+            ("eDP-1", (1920, 1080, 0, 0)),
+            ("HDMI-2", (1920, 1080, 1920, 0)),
+        ]
+        self.assertEqual(
+            player.control_geometry(named, beamer="HDMI-A-2", primary="eDP-1"),
+            (1920, 1080, 0, 0),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

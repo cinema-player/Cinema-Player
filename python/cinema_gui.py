@@ -151,6 +151,7 @@ from cinema_player import (
     compose_mpv_vf,
     mpv_picture_filter,
     sixteen_nine_hint_fields,
+    rectangles_overlap,
     same_aspect_ratio,
     session_display_name,
     session_is_wayland,
@@ -2511,6 +2512,7 @@ class VideoPlayerGUI:
         self._remote_action = False
         self._windowed_geometry = None
         self._fullscreen_applied = False
+        self._fullscreen_contain_after = None
         self.autoplay_delay = tk.StringVar(value="0")
         self.idle_media = tk.StringVar(value=t("idle_none"))
         self.idle_status = None
@@ -3032,7 +3034,7 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
         try:
-            return self.output_manager.get_control_output_geometry(
+            return self.output_manager.get_tk_control_output_geometry(
                 prefer_x=prefer_x, prefer_y=prefer_y,
             )
         except Exception:
@@ -3055,22 +3057,28 @@ class VideoPlayerGUI:
             pass
 
     def _window_overlaps_beamer(self):
+        """True when the Tk window really covers the projector.
+
+        Compare both rectangles in XWayland pixels. Logical Wayland positions
+        sit in a different space under fractional scaling, so a booth window
+        on the control monitor looks like it overlaps the beamer and fullscreen
+        is turned straight back off.
+        """
         beamer = self.output_manager.video_output
         if not beamer:
             return False
         try:
-            rect = self.output_manager.get_output_geometry(beamer)
+            rect = self.output_manager.get_tk_output_geometry(beamer)
             self.root.update_idletasks()
-            wx, wy = self.root.winfo_rootx(), self.root.winfo_rooty()
-            ww, wh = self.root.winfo_width(), self.root.winfo_height()
+            window = (
+                self.root.winfo_width(),
+                self.root.winfo_height(),
+                self.root.winfo_rootx(),
+                self.root.winfo_rooty(),
+            )
         except (tk.TclError, Exception):
             return False
-        if not rect:
-            return False
-        bw, bh, bx, by = rect
-        overlap_w = min(wx + ww, bx + bw) - max(wx, bx)
-        overlap_h = min(wy + wh, by + bh) - max(wy, by)
-        return overlap_w > 40 and overlap_h > 40
+        return rectangles_overlap(window, rect)
 
     def _fill_control_monitor(self, geometry):
         """Size the decorated window to the control screen without WM spanning."""
@@ -3088,6 +3096,7 @@ class VideoPlayerGUI:
         Do not use overrideredirect: it recreates the X11 window, drops keyboard
         focus, and leaves a stuck grab so transport buttons stop working.
         """
+        self._cancel_fullscreen_contain()
         self._release_window_grabs()
         try:
             self.root.overrideredirect(False)
@@ -3123,9 +3132,35 @@ class VideoPlayerGUI:
             self.root.update_idletasks()
         except tk.TclError:
             return
+        self._fullscreen_applied = True
+        # Mutter applies fullscreen after this call returns. A check in the
+        # same turn still sees the old window, so confirm once the size settles
+        # and only then pull the booth off the projector.
         if geometry and self._window_overlaps_beamer():
             self._fill_control_monitor(geometry)
-        self._fullscreen_applied = True
+            return
+        self._fullscreen_contain_after = self.root.after(
+            500, self._contain_fullscreen_off_beamer,
+        )
+
+    def _cancel_fullscreen_contain(self):
+        after_id = self._fullscreen_contain_after
+        self._fullscreen_contain_after = None
+        if after_id is None:
+            return
+        try:
+            self.root.after_cancel(after_id)
+        except tk.TclError:
+            pass
+
+    def _contain_fullscreen_off_beamer(self):
+        """Leave fullscreen only if the window really covers the projector."""
+        self._fullscreen_contain_after = None
+        if not self.window_fullscreen.get():
+            return
+        geometry = self._control_fullscreen_geometry()
+        if geometry and self._window_overlaps_beamer():
+            self._fill_control_monitor(geometry)
 
     def _on_window_fullscreen(self):
         self._close_menus()
