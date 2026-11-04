@@ -1366,6 +1366,30 @@ def _import_folder_usage(directory):
     return videos, total, media
 
 
+def delete_playlist_folder_file(path, playlist_folder):
+    """Delete one media file that sits directly in the playlist folder."""
+    if not path or not playlist_folder:
+        return False
+    try:
+        file_path = os.path.abspath(path)
+        folder = os.path.abspath(playlist_folder)
+    except (OSError, ValueError):
+        return False
+    if os.path.dirname(file_path) != folder:
+        return False
+    if _is_playlist_file(os.path.basename(file_path)):
+        return False
+    if os.path.isdir(file_path) and not os.path.islink(file_path):
+        return False
+    try:
+        os.remove(file_path)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def delete_import_media(directory):
     """Delete every file in a folder except playlists, then drop empty subfolders."""
     if not directory or not os.path.isdir(directory) or os.path.islink(directory):
