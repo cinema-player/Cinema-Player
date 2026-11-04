@@ -3058,6 +3058,28 @@ def find_drm_connector_entry(output_name, drm_dir=DRM_DIR):
     return matched[1]
 
 
+def drm_connector_status(output_name, drm_dir=DRM_DIR):
+    """Kernel hotplug status for one output: connected, disconnected, or ''.
+
+    '' means the status file is missing or does not name this connector.
+    Only an explicit disconnected reading means the cable is out.
+    """
+    items = []
+    for entry, folder in iter_drm_connector_dirs(drm_dir):
+        path = os.path.join(folder, "status")
+        try:
+            with open(path, encoding="utf-8") as handle:
+                status = handle.read().strip().lower()
+        except OSError:
+            continue
+        if status in {"connected", "disconnected"}:
+            items.append((canonicalize_connector(entry), status))
+    matched = _match_drm_connector(output_name, items)
+    if not matched:
+        return ""
+    return matched[1]
+
+
 def find_sysfs_edid(output_name, drm_dir=DRM_DIR):
     """Return (edid_bytes, sysfs_path) for a connector, or (None, None)."""
     candidates = []
@@ -3843,6 +3865,7 @@ class VideoOutputManager:
         self._wayland_backend = None
         self._color_info_cache = None
         self._gpu_cache = None
+        self._link_probe = None
         self.color_format = COLOR_FMT_RGB
         self._original_color_format = None
         self._audio_clock_scale = None
@@ -3955,6 +3978,7 @@ class VideoOutputManager:
         self._device_name_cache = None
         self._color_info_cache = None
         self._gpu_cache = None
+        self._link_probe = None
 
     def _clear_audio_cache(self):
         self._program_audio_device = None
@@ -4178,6 +4202,35 @@ class VideoOutputManager:
             self.video_output = None
             self.video_mode = None
             return None
+
+    def projector_link_status(self, drm_dir=None):
+        """Whether the selected projector cable is still attached.
+
+        Returns ``connected``, ``disconnected``, or ``''`` when it cannot be
+        told. Sysfs hotplug status wins. Without that, the desktop output list
+        is checked at most once a second. A failed probe stays unknown so a
+        show is not stopped because a display tool errored.
+        """
+        output = self.video_output or ""
+        if not output:
+            return ""
+        status = drm_connector_status(
+            output, DRM_DIR if drm_dir is None else drm_dir,
+        )
+        if status:
+            return status
+        now = time.monotonic()
+        cached = self._link_probe
+        if cached and cached[0] == output and now - cached[1] < 1.0:
+            return cached[2]
+        try:
+            names = list(self.get_outputs())
+        except Exception:
+            result = ""
+        else:
+            result = "connected" if output in names else "disconnected"
+        self._link_probe = (output, now, result)
+        return result
 
     def set_video_output(self, name):
         """Switch the projector connector and restore the previous display mode."""

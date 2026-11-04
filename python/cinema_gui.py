@@ -2528,6 +2528,7 @@ class VideoPlayerGUI:
         self.preview_volume = tk.DoubleVar(value=100)
         self.preview_muted = False
         self.beamer_output = tk.StringVar(value=self.output_manager.video_output or "")
+        self._beamer_link_down = False
         self.beamer_details_open = False
         self._volume_preview_key = None
         self._volume_program_key = None
@@ -5547,6 +5548,8 @@ class VideoPlayerGUI:
 
     def _beamer_ready(self):
         """True when a dedicated projector output can run the program."""
+        if getattr(self, "_beamer_link_down", False):
+            return False
         manager = getattr(self, "output_manager", None)
         if manager is None:
             return True
@@ -6529,13 +6532,26 @@ class VideoPlayerGUI:
         preferred = settings.get("video_output") or getattr(manager, "video_output", None)
         rescan = getattr(manager, "rescan_outputs", None)
         output = rescan(preferred) if callable(rescan) else None
+        if output:
+            link = getattr(manager, "projector_link_status", None)
+            try:
+                disconnected = callable(link) and link() == "disconnected"
+            except Exception:
+                disconnected = False
+            if disconnected:
+                manager.video_output = None
+                if hasattr(manager, "video_mode"):
+                    manager.video_mode = None
+                output = None
         self._beamer_caps_cache = None
         beamer_output = getattr(self, "beamer_output", None)
         if output:
+            self._beamer_link_down = False
             if beamer_output is not None:
                 beamer_output.set(output)
             self.ensure_main_output(auto=True)
         else:
+            self._beamer_link_down = True
             if beamer_output is not None:
                 beamer_output.set("")
             self._disable_program_without_beamer()
@@ -6573,6 +6589,65 @@ class VideoPlayerGUI:
             self.volume_setup = False
         self._stop_main_mpv()
 
+    def _stop_main_mpv_if_beamer_unplugged(self):
+        """Quit the projector mpv once its connector stays unplugged.
+
+        The GUI tick is 250 ms. Two disconnected readings in a row ignore a
+        single glitch while a mode change is applied.
+        """
+        manager = getattr(self, "output_manager", None)
+        if manager is None or not getattr(manager, "video_output", None):
+            self._beamer_unplug_hits = 0
+            return
+        link = getattr(manager, "projector_link_status", None)
+        if not callable(link):
+            return
+        try:
+            status = link()
+        except Exception:
+            self._beamer_unplug_hits = 0
+            return
+        if status != "disconnected":
+            self._beamer_unplug_hits = 0
+            return
+        hits = getattr(self, "_beamer_unplug_hits", 0) + 1
+        self._beamer_unplug_hits = hits
+        if hits < 2:
+            return
+        self._beamer_unplug_hits = 0
+        self._release_unplugged_beamer()
+
+    def _release_unplugged_beamer(self):
+        """Stop the show and close the projector player after the cable is pulled."""
+        manager = getattr(self, "output_manager", None)
+        if manager is not None:
+            invalidate = getattr(manager, "_invalidate_display_cache", None)
+            if callable(invalidate):
+                invalidate()
+            manager.video_output = None
+            if hasattr(manager, "video_mode"):
+                manager.video_mode = None
+            clear_audio = getattr(manager, "_clear_audio_cache", None)
+            if callable(clear_audio):
+                clear_audio()
+        self._beamer_link_down = True
+        beamer_output = getattr(self, "beamer_output", None)
+        if beamer_output is not None:
+            try:
+                beamer_output.set("")
+            except tk.TclError:
+                pass
+        was_on = getattr(self, "program_state", "OFF") != "OFF"
+        self._disable_program_without_beamer()
+        if was_on and getattr(self, "lights_control", None) is not None:
+            try:
+                self._apply_lights("bright")
+            except Exception as exc:
+                print(f"Licht nach Beamer-Trennung: {exc}")
+        refresh = getattr(self, "refresh_all", None)
+        if callable(refresh):
+            refresh()
+
     def apply_beamer_output(self, output=None):
         if output is None:
             output = self.beamer_output.get().strip()
@@ -6593,6 +6668,7 @@ class VideoPlayerGUI:
             self.refresh_beamer_outputs()
             return
         self.settings["video_output"] = output
+        self._beamer_link_down = False
         self._beamer_caps_cache = None
         try:
             save_settings(self.settings)
@@ -13524,6 +13600,7 @@ class VideoPlayerGUI:
 
     def update_gui(self):
         try:
+            self._stop_main_mpv_if_beamer_unplugged()
             self._drain_light_errors()
             if self.still_started is not None and self.program_state == "PLAYING":
                 self.position = min(self.duration, time.monotonic() - self.still_started)
