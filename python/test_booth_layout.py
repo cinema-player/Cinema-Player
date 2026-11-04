@@ -158,6 +158,30 @@ class PlaylistMarkTests(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_folder_menu_offers_relink_from_folder(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.root = root
+            app.media_directories = []
+            app.playlist = [
+                _entry(path="/media/films/day/one.mp4"),
+                _entry(path="/media/films/day/two.mp4"),
+            ]
+            app.program_state = "OFF"
+            app.program_index = 0
+            posted = {}
+            app._post_dropdown = lambda menu, x, y: posted.update(menu=menu)
+            event = type("E", (), {"x_root": 0, "y_root": 0})()
+            cinema_gui.VideoPlayerGUI.on_folder_menu(app, 0, event)
+            labels = [
+                child.cget("text") if isinstance(child, tk.Label) else "---"
+                for child in posted["menu"].winfo_children()
+            ]
+            self.assertEqual(labels, ["Aus Ordner neu verknüpfen"])
+        finally:
+            root.destroy()
+
     def test_playlist_color_stacks_status_above_the_space(self):
         entry = _entry(colorspace="Rec.709", color_range="", hdr_status="SDR")
         self.assertEqual(cinema_gui.playlist_color_text(entry), "Native SDR\nRec.709")
@@ -322,6 +346,97 @@ class BoothChromeTests(unittest.TestCase):
             texts,
             ["Dauer", "fps", "Format", "PAR", "Farbe", "Laut", "LUFS", "Hinweise"],
         )
+        self.assertTrue(headers[0].bind("<Button-3>"))
+        self.assertEqual(headers[0].group_start, 0)
+        self.assertEqual(headers[1].group_start, 2)
+
+    def test_folder_heading_relinks_files_found_in_the_chosen_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            old = os.path.join(root, "old")
+            new = os.path.join(root, "new")
+            os.makedirs(old)
+            os.makedirs(new)
+            moved = os.path.join(new, "one.mp4")
+            other = os.path.join(new, "two.mp4")
+            with open(moved, "wb") as handle:
+                handle.write(b"one")
+            with open(other, "wb") as handle:
+                handle.write(b"two")
+            first = _entry(path=os.path.join(old, "one.mp4"), missing=True, autoplay=True, volume=80)
+            second = _entry(path=os.path.join(old, "two.mp4"), missing=True, volume=60)
+            later = _entry(path=os.path.join(root, "night", "three.mp4"), missing=True)
+            self.app.playlist = [first, second, later]
+            self.app.settings = {}
+            self.app.last_import_dir = ""
+            self.app.zoom_confirmed_index = None
+            self.app.preview_index = 0
+            self.app.preview_live = False
+            self.app.show_preview_clip = lambda _entry: self.calls.append("preview")
+            self.app.refresh_all = lambda: self.calls.append("refresh")
+            self.app.remember_import_dir = lambda path: self.calls.append(path)
+            self.calls = []
+
+            def probe(path):
+                entry = _entry(path=path)
+                entry.missing = False
+                return entry
+
+            with (
+                patch("cinema_gui.filedialog.askdirectory", return_value=new),
+                patch("cinema_gui.probe_media", side_effect=probe),
+            ):
+                cinema_gui.VideoPlayerGUI.relink_folder_group(self.app, 0)
+            self.assertEqual(self.app.playlist[0].path, moved)
+            self.assertEqual(self.app.playlist[1].path, other)
+            self.assertTrue(self.app.playlist[2].path.endswith("three.mp4"))
+            self.assertTrue(self.app.playlist[0].autoplay)
+            self.assertEqual(self.app.playlist[0].volume, 80)
+            self.assertFalse(self.app.playlist[0].missing)
+            self.assertIn("refresh", self.calls)
+            self.assertIn("preview", self.calls)
+            self.assertIn(new, self.calls)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_folder_heading_skips_the_playing_clip_and_reports_a_miss(self):
+        root = tempfile.mkdtemp()
+        try:
+            new = os.path.join(root, "new")
+            os.makedirs(new)
+            found = os.path.join(new, "one.mp4")
+            with open(found, "wb") as handle:
+                handle.write(b"one")
+            playing = _entry(path=os.path.join(root, "old", "one.mp4"), missing=True)
+            missing = _entry(path=os.path.join(root, "old", "two.mp4"), missing=True)
+            self.app.playlist = [playing, missing]
+            self.app.program_state = "PLAYING"
+            self.app.program_index = 0
+            self.app.settings = {}
+            self.app.last_import_dir = ""
+            self.app.zoom_confirmed_index = None
+            self.app.refresh_all = lambda: self.calls.append("refresh")
+            self.app.remember_import_dir = lambda path: self.calls.append(path)
+            self.app.show_preview_clip = lambda _entry: None
+            self.calls = []
+            noted = {}
+
+            def probe(path):
+                return _entry(path=path)
+
+            with (
+                patch("cinema_gui.filedialog.askdirectory", return_value=new),
+                patch("cinema_gui.probe_media", side_effect=probe),
+                patch("cinema_gui.messagebox.showinfo", side_effect=lambda *a, **k: noted.update(args=a)),
+            ):
+                cinema_gui.VideoPlayerGUI.relink_folder_group(self.app, 0)
+                cinema_gui.VideoPlayerGUI.relink_folder_group(self.app, 1)
+            self.assertEqual(self.app.playlist[0].path, playing.path)
+            self.assertTrue(self.app.playlist[1].missing)
+            self.assertEqual(noted["args"][1], "In diesem Ordner wurden keine passenden Dateien gefunden.")
+            self.assertNotIn("refresh", self.calls)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
     def test_playlist_marks_stills_with_a_small_icon(self):
         parent = tk.Frame(self.root)
