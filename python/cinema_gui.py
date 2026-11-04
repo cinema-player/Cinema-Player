@@ -2552,7 +2552,8 @@ class VideoPlayerGUI:
         explicit_output = bool(self.settings.get("video_output") or VIDEO_OUTPUT)
         # Cover the projector before any mode switch so GNOME desktop icons
         # never appear on the beamer during startup.
-        self.ensure_main_output(auto=not explicit_output)
+        if self._beamer_ready():
+            self.ensure_main_output(auto=not explicit_output)
         self.root.after(500, self._warn_if_no_beamer_output)
         self.update_gui()
         self._tick_meters()
@@ -2566,8 +2567,7 @@ class VideoPlayerGUI:
         self._remember_saved_playlist()
 
     def _warn_if_no_beamer_output(self):
-        if not self.output_manager.has_dedicated_beamer():
-            messagebox.showwarning(t("beamer_no_output_title"), t("beamer_no_output"))
+        self._apply_beamer_presence()
         self._offer_playlist_library()
 
     def create_gui(self):
@@ -2583,6 +2583,7 @@ class VideoPlayerGUI:
         self._build_playlist_block(left)
         self._build_beamer(right)
         self._build_preview(right)
+        self._apply_beamer_presence()
 
     def _build_booth_split(self):
         """Fixed playlist width, growing preview, and a draggable sash between them."""
@@ -3326,6 +3327,20 @@ class VideoPlayerGUI:
         body = tk.Frame(group, bg=COLOR_PANEL)
         body.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=6)
         body.columnconfigure(0, weight=1)
+        self.program_body = body
+        self.program_missing = tk.Label(
+            group,
+            text=t("beamer_disconnected"),
+            font=FONT_STATUS,
+            bg=COLOR_PANEL,
+            fg=COLOR_MUTED,
+            wraplength=520,
+            justify="center",
+            padx=16,
+            pady=24,
+        )
+        self.program_missing.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=8, pady=16)
+        self.program_missing.grid_remove()
 
         progress = tk.Frame(body, bg=COLOR_PANEL)
         progress.grid(row=0, column=0, sticky="ew")
@@ -3826,13 +3841,16 @@ class VideoPlayerGUI:
         rolling = playing and not self.main_pause
         clip_rolling = rolling and not self.still_waiting and not self._program_loop_active()
         armed = self.program_state == "PROGRAM"
-        self._set_transport_active(self.btn_stop, False, enabled=self.program_state != "OFF")
-        self._set_transport_active(self.btn_pause, paused, "preview", enabled=playing)
-        self._set_transport_active(self.btn_still, frozen, "program", enabled=playing)
+        ready = self._beamer_ready()
+        self._set_transport_active(
+            self.btn_stop, False, enabled=ready and self.program_state != "OFF",
+        )
+        self._set_transport_active(self.btn_pause, paused, "preview", enabled=ready and playing)
+        self._set_transport_active(self.btn_still, frozen, "program", enabled=ready and playing)
         if self._resume_reaction_held():
             self._paint_resume_plate(self._resume_reaction)
             self._set_transport_active(
-                self.btn_play, True, self._resume_reaction, enabled=True,
+                self.btn_play, True, self._resume_reaction, enabled=ready,
             )
         else:
             self._resume_reaction = None
@@ -3841,7 +3859,7 @@ class VideoPlayerGUI:
                 self.btn_play,
                 (rolling or armed) and not clip_rolling,
                 "playing" if rolling else "program",
-                enabled=not clip_rolling,
+                enabled=ready and not clip_rolling,
             )
         self._paint_resume_caption()
 
@@ -4485,7 +4503,11 @@ class VideoPlayerGUI:
         extras.add_command(
             label=t("beamer_test"),
             command=self.show_beamer_test,
-            state="normal" if self.program_state == "OFF" and not self.calibration_mode else "disabled",
+            state="normal" if (
+                self._beamer_ready()
+                and self.program_state == "OFF"
+                and not self.calibration_mode
+            ) else "disabled",
         )
         video = self._menu(extras)
         self._fill_calibration_kind_menu(video, "video")
@@ -4846,7 +4868,7 @@ class VideoPlayerGUI:
         menu.add_command(
             label=t("volume_setup"),
             command=self.start_volume_setup,
-            state="disabled" if self.program_state == "PLAYING" else "normal",
+            state="disabled" if self.program_state == "PLAYING" or not self._beamer_ready() else "normal",
         )
 
     def _fill_playlist_menu(self, menu):
@@ -4974,6 +4996,10 @@ class VideoPlayerGUI:
         tk.Label(
             header, text=t("beamer_status"), font=FONT_UI_BOLD, bg=COLOR_PANEL, fg=COLOR_TEXT,
         ).pack(side="left")
+        self.beamer_rescan = tk.Button(
+            header, text=t("beamer_rescan"), font=FONT_SMALL, command=self.rescan_beamer,
+        )
+        self.beamer_rescan.pack(side="left", padx=(12, 0))
         self.beamer_ok = tk.Label(
             header, text="--", font=FONT_STATUS, bg=COLOR_BADGE_IDLE, fg=COLOR_WHITE, width=10, pady=3,
         )
@@ -5114,12 +5140,16 @@ class VideoPlayerGUI:
         return "break"
 
     def _apply_beamer_fold(self):
+        if not self._beamer_ready():
+            self._hide_beamer_status()
+            return
         open_details = bool(getattr(self, "beamer_details_open", False))
         summary = getattr(self, "beamer_summary", None)
         details = getattr(self, "beamer_details", None)
         fold = getattr(self, "beamer_fold", None)
         if summary is None or details is None or fold is None:
             return
+        self._show_beamer_status_chrome()
         summary.pack_forget()
         details.pack_forget()
         if open_details:
@@ -5490,6 +5520,7 @@ class VideoPlayerGUI:
         self._apply_volume_setup_chrome()
         self._apply_program_stop_chrome()
         self._apply_booth_chrome()
+        self._apply_beamer_presence()
 
     def _refresh_next_clip(self):
         label = getattr(self, "next_clip", None)
@@ -5511,8 +5542,74 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
+    def _beamer_ready(self):
+        """True when a dedicated projector output can run the program."""
+        manager = getattr(self, "output_manager", None)
+        if manager is None:
+            return True
+        check = getattr(manager, "has_dedicated_beamer", None)
+        if callable(check):
+            try:
+                return bool(check())
+            except Exception:
+                return False
+        return bool(getattr(manager, "video_output", None))
+
+    def _apply_program_presence(self):
+        """Swap program controls for the missing-projector notice."""
+        ready = self._beamer_ready()
+        self._set_grid_visible(getattr(self, "program_body", None), ready)
+        self._set_grid_visible(getattr(self, "program_missing", None), not ready)
+        if not ready:
+            self._set_grid_visible(getattr(self, "program_meter", None), False)
+
+    def _hide_beamer_status(self):
+        for name in ("beamer_ok", "beamer_summary", "beamer_details", "beamer_fold"):
+            widget = getattr(self, name, None)
+            if widget is None:
+                continue
+            try:
+                widget.pack_forget()
+            except tk.TclError:
+                pass
+
+    def _show_beamer_status_chrome(self):
+        ok = getattr(self, "beamer_ok", None)
+        fold = getattr(self, "beamer_fold", None)
+        if ok is not None:
+            try:
+                if not ok.winfo_manager():
+                    ok.pack(side="right")
+            except tk.TclError:
+                pass
+        if fold is not None:
+            try:
+                if not fold.winfo_manager():
+                    fold.pack(fill="x")
+            except tk.TclError:
+                pass
+
+    def _apply_beamer_presence(self):
+        """Disable program output and the beamer readout when none is connected."""
+        self._apply_program_presence()
+        if not self._beamer_ready():
+            self._hide_beamer_status()
+            return
+        fold = getattr(self, "beamer_fold", None)
+        try:
+            hidden = fold is not None and not fold.winfo_manager()
+        except tk.TclError:
+            hidden = True
+        if hidden and fold is not None:
+            self._show_beamer_status_chrome()
+            self._apply_beamer_fold()
+
     def _apply_program_stop_chrome(self):
         """A stopped show keeps the transport buttons and hides the rest of the block."""
+        if not self._beamer_ready():
+            self._apply_program_presence()
+            return
+        self._apply_program_presence()
         visible = getattr(self, "program_state", "OFF") != "OFF"
         self._set_grid_visible(getattr(self, "program_progress", None), visible)
         self._set_grid_visible(getattr(self, "program_clocks", None), visible)
@@ -6062,6 +6159,10 @@ class VideoPlayerGUI:
         self._update_preview_bar()
 
     def refresh_beamer(self):
+        if not self._beamer_ready():
+            self._clear_beamer_readout()
+            self._apply_beamer_presence()
+            return
         mode = self.output_manager.video_mode or self.output_manager.get_current_mode(
             self.output_manager.video_output or ""
         )
@@ -6072,21 +6173,8 @@ class VideoPlayerGUI:
                 pass
             mode = mode or self.output_manager.get_current_mode(self.output_manager.video_output or "")
         if not mode:
-            self.beamer_ok.config(text="--", bg=COLOR_BADGE_IDLE)
-            self.beamer_aspect.config(text="--", fg=COLOR_TEXT)
-            self.beamer_clip_aspect.config(text="")
-            self._set_beamer_summary("--", "--", "--")
-            self._refresh_beamer_decode()
-            self._refresh_beamer_device_name()
-            self._refresh_beamer_gpu()
-            self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
-            self.beamer_resolutions.set_choices(
-                t("beamer_resolutions", resolutions=""), [],
-            )
-            self.beamer_colorspaces.set_choices(
-                t("beamer_colorspaces", spaces=""), [],
-            )
-            self.refresh_beamer_outputs()
+            self._clear_beamer_readout()
+            self._apply_beamer_presence()
             return
         rates, resolutions, colorspaces = self._beamer_capability_lists()
         clip = self.current_entry()
@@ -6216,6 +6304,33 @@ class VideoPlayerGUI:
         )
         self._refresh_beamer_device_name()
         self._refresh_beamer_gpu()
+        self.refresh_beamer_outputs()
+        self._apply_beamer_presence()
+
+    def _clear_beamer_readout(self):
+        ok = getattr(self, "beamer_ok", None)
+        if ok is not None:
+            ok.config(text="--", bg=COLOR_BADGE_IDLE)
+        aspect = getattr(self, "beamer_aspect", None)
+        if aspect is not None:
+            aspect.config(text="--", fg=COLOR_TEXT)
+        clip_aspect = getattr(self, "beamer_clip_aspect", None)
+        if clip_aspect is not None:
+            clip_aspect.config(text="")
+        self._set_beamer_summary("--", "--", "--")
+        self._refresh_beamer_decode()
+        self._refresh_beamer_device_name()
+        self._refresh_beamer_gpu()
+        if getattr(self, "beamer_rates", None) is not None:
+            self.beamer_rates.set_choices(t("beamer_rates", rates=""), [])
+        if getattr(self, "beamer_resolutions", None) is not None:
+            self.beamer_resolutions.set_choices(
+                t("beamer_resolutions", resolutions=""), [],
+            )
+        if getattr(self, "beamer_colorspaces", None) is not None:
+            self.beamer_colorspaces.set_choices(
+                t("beamer_colorspaces", spaces=""), [],
+            )
         self.refresh_beamer_outputs()
 
     def _program_decode_active(self):
@@ -6391,9 +6506,68 @@ class VideoPlayerGUI:
 
     def refresh_beamer_outputs(self):
         """Keep the selected output name in sync with the connected display."""
-        current = self.output_manager.video_output or ""
-        if current and self.beamer_output.get() != current:
-            self.beamer_output.set(current)
+        manager = getattr(self, "output_manager", None)
+        beamer_output = getattr(self, "beamer_output", None)
+        if manager is None or beamer_output is None:
+            return
+        current = getattr(manager, "video_output", None) or ""
+        if current and beamer_output.get() != current:
+            beamer_output.set(current)
+        elif not current and beamer_output.get():
+            beamer_output.set("")
+
+    def rescan_beamer(self):
+        """Re-read connected displays and enable the program when a projector appears."""
+        manager = getattr(self, "output_manager", None)
+        if manager is None:
+            return
+        settings = getattr(self, "settings", None) or {}
+        preferred = settings.get("video_output") or getattr(manager, "video_output", None)
+        rescan = getattr(manager, "rescan_outputs", None)
+        output = rescan(preferred) if callable(rescan) else None
+        self._beamer_caps_cache = None
+        beamer_output = getattr(self, "beamer_output", None)
+        if output:
+            if beamer_output is not None:
+                beamer_output.set(output)
+            self.ensure_main_output(auto=True)
+        else:
+            if beamer_output is not None:
+                beamer_output.set("")
+            self._disable_program_without_beamer()
+        self.refresh_all()
+
+    def _stop_main_mpv(self):
+        """Close the program mpv instance without opening a new window."""
+        mpv = getattr(self, "main_mpv", None)
+        if mpv is None:
+            return
+        if getattr(mpv, "process", None):
+            try:
+                mpv.quit()
+            except Exception:
+                pass
+            path = getattr(self, "mpv_path", None)
+            self.main_mpv = MPVController("main", path)
+            callback = getattr(self, "main_mpv_event", None)
+            if callback is not None:
+                self.main_mpv.add_callback(callback)
+
+    def _disable_program_without_beamer(self):
+        """Stop program flow and the projector mpv when no display is attached."""
+        if getattr(self, "autoplay_after_id", None):
+            try:
+                self.root.after_cancel(self.autoplay_after_id)
+            except (tk.TclError, AttributeError):
+                pass
+            self.autoplay_after_id = None
+        cancel = getattr(self, "_cancel_light_after", None)
+        if callable(cancel):
+            cancel("lights_play_after")
+        self.program_state = "OFF"
+        if hasattr(self, "volume_setup"):
+            self.volume_setup = False
+        self._stop_main_mpv()
 
     def apply_beamer_output(self, output=None):
         if output is None:
@@ -10572,6 +10746,8 @@ class VideoPlayerGUI:
 
     def start_volume_setup(self):
         """Arm the current playlist so house volume can be set."""
+        if not self._beamer_ready():
+            return False
         if self.program_state == "PLAYING":
             return False
         if not self.playlist:
@@ -11772,6 +11948,8 @@ class VideoPlayerGUI:
         """Open the output window early so the projector shows black, not the desktop."""
         if self.main_mpv.process:
             return True
+        if not self._beamer_ready():
+            return False
         try:
             output = self.output_manager.select_video_output()
             if auto and output == self.output_manager.get_primary_output():
@@ -11857,7 +12035,7 @@ class VideoPlayerGUI:
 
     def show_beamer_test(self):
         """Show the Cinema Player logo on the projector until the operator dismisses it."""
-        if self.program_state != "OFF":
+        if not self._beamer_ready() or self.program_state != "OFF":
             return
         if not os.path.isfile(BEAMER_TEST_FILE):
             messagebox.showerror(t("beamer_test"), t("beamer_test_missing"))
@@ -12023,6 +12201,8 @@ class VideoPlayerGUI:
             pass
 
     def start_or_resume(self):
+        if not self._beamer_ready():
+            return
         if not self.playlist:
             if self._remote_action:
                 return
@@ -12065,7 +12245,7 @@ class VideoPlayerGUI:
         self.start_current_clip()
 
     def start_current_clip(self):
-        if not self.playlist:
+        if not self._beamer_ready() or not self.playlist:
             return
         self.autoplay_after_id = None
         self._cancel_light_after("lights_play_after")

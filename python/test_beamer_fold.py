@@ -46,6 +46,9 @@ class _Output:
     def get_current_mode(self, _name):
         return self.video_mode
 
+    def has_dedicated_beamer(self):
+        return True
+
     def select_video_output(self):
         return None
 
