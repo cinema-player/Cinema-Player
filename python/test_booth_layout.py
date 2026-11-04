@@ -152,6 +152,7 @@ class PlaylistMarkTests(unittest.TestCase):
                     "In den Playlistordner kopieren",
                     "---",
                     "Eintrag löschen",
+                    "Eintrag und Datei löschen",
                 ],
             )
         finally:
@@ -900,6 +901,118 @@ class BoothChromeTests(unittest.TestCase):
             cinema_gui.VideoPlayerGUI.copy_entry_to_playlist_folder(self.app, 0)
             self.assertEqual(self.app.playlist[0].path, source)
             self.assertFalse(os.path.exists(os.path.join(imports, "Abend", "clip.mp4")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def _row_menu_item(self, path, import_path, playlist_name="Abend.pls"):
+        self.app.root = self.root
+        self.app.playlist = [_entry(path=path)]
+        self.app.program_state = "OFF"
+        self.app.program_index = 0
+        self.app.import_path = import_path
+        self.app.playlist_path = ""
+        self.app.on_row_click = lambda _index: None
+        self.app._current_playlist_name = lambda: playlist_name
+        posted = {}
+        self.app._post_dropdown = lambda menu, x, y: posted.update(menu=menu)
+        event = type("E", (), {"x_root": 0, "y_root": 0})()
+        cinema_gui.VideoPlayerGUI.on_row_menu(self.app, 0, event)
+        for child in posted["menu"].winfo_children():
+            if isinstance(child, tk.Label) and child.cget("text") == "Eintrag und Datei löschen":
+                return child
+        self.fail("missing menu item Eintrag und Datei löschen")
+
+    def test_delete_entry_and_file_is_only_active_in_the_playlist_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            imports = os.path.join(root, "imports")
+            evening = os.path.join(imports, "Abend")
+            os.makedirs(evening)
+            outside = os.path.join(root, "clip.mp4")
+            inside = os.path.join(evening, "clip.mp4")
+            with open(outside, "wb") as handle:
+                handle.write(b"outside")
+            with open(inside, "wb") as handle:
+                handle.write(b"inside")
+            disabled = self._row_menu_item(outside, imports)
+            self.assertEqual(disabled.cget("cursor"), "arrow")
+            enabled = self._row_menu_item(inside, imports)
+            self.assertEqual(enabled.cget("cursor"), "hand2")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_delete_entry_and_file_removes_the_video(self):
+        root = tempfile.mkdtemp()
+        try:
+            imports = os.path.join(root, "imports")
+            evening = os.path.join(imports, "Abend")
+            os.makedirs(evening)
+            clip = os.path.join(evening, "clip.mp4")
+            with open(clip, "wb") as handle:
+                handle.write(b"film-data")
+            self.app.import_path = imports
+            self.app.playlist_path = ""
+            self.app.program_state = "OFF"
+            self.app.program_index = 0
+            self.app.preview_index = None
+            self.app.playlist = [_entry(path=clip)]
+            self.app._current_playlist_name = lambda: "Abend.pls"
+            self.app.apply_beamer_mode_for_pointer = lambda: None
+            self.app.refresh_all = lambda: None
+            with patch("cinema_gui.messagebox.askyesno", return_value=True):
+                cinema_gui.VideoPlayerGUI.delete_entry_and_file(self.app, 0)
+            self.assertFalse(os.path.exists(clip))
+            self.assertEqual(self.app.playlist, [])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_delete_entry_and_file_leaves_files_outside_the_playlist_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            imports = os.path.join(root, "imports")
+            os.makedirs(os.path.join(imports, "Abend"))
+            clip = os.path.join(root, "clip.mp4")
+            with open(clip, "wb") as handle:
+                handle.write(b"film-data")
+            self.app.import_path = imports
+            self.app.playlist_path = ""
+            self.app.program_state = "OFF"
+            self.app.program_index = 0
+            self.app.preview_index = None
+            self.app.playlist = [_entry(path=clip)]
+            self.app._current_playlist_name = lambda: "Abend.pls"
+            self.app.apply_beamer_mode_for_pointer = lambda: None
+            self.app.refresh_all = lambda: None
+            with patch("cinema_gui.messagebox.askyesno", return_value=True) as ask:
+                cinema_gui.VideoPlayerGUI.delete_entry_and_file(self.app, 0)
+            ask.assert_not_called()
+            self.assertTrue(os.path.isfile(clip))
+            self.assertEqual(self.app.playlist[0].path, clip)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_cancel_keeps_the_entry_and_file(self):
+        root = tempfile.mkdtemp()
+        try:
+            imports = os.path.join(root, "imports")
+            evening = os.path.join(imports, "Abend")
+            os.makedirs(evening)
+            clip = os.path.join(evening, "clip.mp4")
+            with open(clip, "wb") as handle:
+                handle.write(b"film-data")
+            self.app.import_path = imports
+            self.app.playlist_path = ""
+            self.app.program_state = "OFF"
+            self.app.program_index = 0
+            self.app.preview_index = None
+            self.app.playlist = [_entry(path=clip)]
+            self.app._current_playlist_name = lambda: "Abend.pls"
+            self.app.apply_beamer_mode_for_pointer = lambda: None
+            self.app.refresh_all = lambda: None
+            with patch("cinema_gui.messagebox.askyesno", return_value=False):
+                cinema_gui.VideoPlayerGUI.delete_entry_and_file(self.app, 0)
+            self.assertTrue(os.path.isfile(clip))
+            self.assertEqual(self.app.playlist[0].path, clip)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

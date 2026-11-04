@@ -129,6 +129,7 @@ from cinema_player import (
     parse_mpv_count,
     delete_import_directory,
     delete_import_media,
+    delete_playlist_folder_file,
     library_playlists,
     list_removable_volumes,
     merge_import_directories,
@@ -6826,6 +6827,11 @@ class VideoPlayerGUI:
             label=t("delete_entry"), command=lambda: self.delete_entry(index),
             state="disabled" if busy else "normal",
         )
+        menu.add_command(
+            label=t("delete_entry_and_file"),
+            command=lambda: self.delete_entry_and_file(index),
+            state="disabled" if busy or not in_folder else "normal",
+        )
         self._post_dropdown(menu, event.x_root, event.y_root)
         self.row_menu = menu
 
@@ -7087,16 +7093,25 @@ class VideoPlayerGUI:
             return ""
         return folder
 
-    def _entry_is_in_playlist_folder(self, entry):
-        if not self._import_path_ready() or entry is None:
-            return False
+    def _playlist_folder_path(self):
+        """Playlist folder under the import path, without creating it."""
+        if not self._import_path_ready():
+            return ""
         stem = playlist_folder_name(self._current_playlist_name())
         if not stem and getattr(self, "playlist_path", ""):
             stem = playlist_folder_name(os.path.basename(self.playlist_path))
         if not stem:
+            return ""
+        try:
+            return os.path.abspath(os.path.join(self.import_path, stem))
+        except (OSError, ValueError):
+            return ""
+
+    def _entry_is_in_playlist_folder(self, entry):
+        folder = self._playlist_folder_path()
+        if not folder or entry is None:
             return False
         try:
-            folder = os.path.abspath(os.path.join(self.import_path, stem))
             return os.path.dirname(os.path.abspath(entry.path)) == folder
         except (OSError, ValueError):
             return False
@@ -7152,6 +7167,31 @@ class VideoPlayerGUI:
         if self.preview_index == index and not self.preview_live:
             self.show_preview_clip(entry)
         self.refresh_all()
+
+    def delete_entry_and_file(self, index):
+        """Remove the playlist row and the video file in the playlist folder."""
+        if not 0 <= index < len(self.playlist):
+            return
+        if self.program_state == "PLAYING" and index == self.program_index:
+            return
+        entry = self.playlist[index]
+        folder = self._playlist_folder_path()
+        if not folder or not self._entry_is_in_playlist_folder(entry):
+            return
+        name = entry.filename or os.path.basename(entry.path or "")
+        if not messagebox.askyesno(
+            t("delete_entry_and_file_title"),
+            t("delete_entry_and_file_message", name=name),
+        ):
+            return
+        path = entry.path or ""
+        if path and not delete_playlist_folder_file(path, folder):
+            messagebox.showerror(
+                t("delete_entry_and_file"),
+                t("delete_entry_and_file_failed", path=path),
+            )
+            return
+        self.delete_entry(index)
 
     def delete_entry(self, index):
         if not 0 <= index < len(self.playlist):

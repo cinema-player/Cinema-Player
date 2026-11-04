@@ -220,6 +220,8 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertEqual(language.STRINGS["en"]["edit_imports"], "Edit imports")
         self.assertEqual(language.STRINGS["de"]["edit_imports_delete_media"], "Mediendateien löschen")
         self.assertEqual(language.STRINGS["en"]["edit_imports_delete_media"], "Delete media files")
+        self.assertEqual(language.STRINGS["de"]["delete_entry_and_file"], "Eintrag und Datei löschen")
+        self.assertEqual(language.STRINGS["en"]["delete_entry_and_file"], "Delete entry and file")
         self.assertEqual(language.STRINGS["de"]["playlist_library"], "Playlist wählen")
         self.assertEqual(language.STRINGS["de"]["playlist_with_media"], "Mit Mediendateien")
         self.assertEqual(language.STRINGS["de"]["still_dim"], "Dimmen")
@@ -262,6 +264,40 @@ class ImportFolderEditTests(unittest.TestCase):
             self.assertTrue(player.delete_import_directory(evening, root))
             self.assertFalse(os.path.exists(evening))
             self.assertTrue(os.path.isfile(os.path.join(root, "loose.mp4")))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_deletes_only_a_file_in_the_playlist_folder(self):
+        root = tempfile.mkdtemp()
+        try:
+            folder = os.path.join(root, "Abend")
+            nested = os.path.join(folder, "nested")
+            os.makedirs(nested)
+            clip = os.path.join(folder, "clip.mp4")
+            other = os.path.join(root, "other.mp4")
+            playlist = os.path.join(folder, "Abend.pls")
+            nested_clip = os.path.join(nested, "deep.mp4")
+            for path, data in (
+                (clip, b"film"),
+                (other, b"keep"),
+                (playlist, b"[]"),
+                (nested_clip, b"deep"),
+            ):
+                with open(path, "wb") as handle:
+                    handle.write(data)
+            self.assertTrue(player.delete_playlist_folder_file(clip, folder))
+            self.assertFalse(os.path.exists(clip))
+            self.assertFalse(player.delete_playlist_folder_file(other, folder))
+            self.assertTrue(os.path.isfile(other))
+            self.assertFalse(player.delete_playlist_folder_file(playlist, folder))
+            self.assertTrue(os.path.isfile(playlist))
+            self.assertFalse(player.delete_playlist_folder_file(nested_clip, folder))
+            self.assertTrue(os.path.isfile(nested_clip))
+            self.assertFalse(player.delete_playlist_folder_file(nested, folder))
+            self.assertTrue(os.path.isdir(nested))
+            self.assertTrue(
+                player.delete_playlist_folder_file(os.path.join(folder, "gone.mp4"), folder)
+            )
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
