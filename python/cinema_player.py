@@ -4040,6 +4040,36 @@ class VideoOutputManager:
         except Exception:
             return False
 
+    def rescan_outputs(self, preferred=None):
+        """Drop cached display state and look for a dedicated projector again."""
+        self._wayland_backend = None
+        self._invalidate_display_cache()
+        try:
+            outputs = list(self.get_outputs())
+        except Exception:
+            outputs = []
+        if len(outputs) < 2:
+            self.video_output = None
+            self.video_mode = None
+            self._clear_audio_cache()
+            return None
+        try:
+            primary = self.get_primary_output()
+        except Exception:
+            primary = None
+        pick = preferred if preferred in outputs else None
+        if pick is None and self.video_output in outputs and self.video_output != primary:
+            pick = self.video_output
+        try:
+            if pick:
+                return self.select_video_output(pick)
+            self.video_output = None
+            return self.select_video_output()
+        except Exception:
+            self.video_output = None
+            self.video_mode = None
+            return None
+
     def set_video_output(self, name):
         """Switch the projector connector and restore the previous display mode."""
         outputs = self.get_outputs()
