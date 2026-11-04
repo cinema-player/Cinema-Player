@@ -1,6 +1,6 @@
 Name:           cinema-player
 Version:        0.3.6
-Release:        2
+Release:        4
 Summary:        Cinema video player for a projector booth
 License:        Copyright (C) 2026 Thomas Winkler
 URL:            http://cinema-player.github.io
@@ -72,6 +72,10 @@ fi
 %{_datadir}/cinema-player
 
 %changelog
+* Wed, 04 Nov 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-4
+- Fixed layout with manual control of the vertical splitting line. Disabled mpv and beamer control when no beamer is connected.
+* Mon Oct 02 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-3
+- Relative paths in playlists to make transfer of playlists possible
 * Sat Oct 31 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-2
 - Added calibration data
 * Mon Oct 26 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-1
