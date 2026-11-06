@@ -235,6 +235,7 @@ ICONS_DIR = os.path.join(ROOT_DIR, "assets", "icons")
 TESTDATA_DIR = os.path.join(ROOT_DIR, "media", "testdata", "videotestdata")
 AUDIOSYNC_DIR = os.path.join(ROOT_DIR, "media", "testdata", "audiosyncdata")
 IDLE_DIR = os.path.join(ROOT_DIR, "media", "idle")
+BREAK_DIR = os.path.join(ROOT_DIR, "media", "break")
 TRANSPORT_ICON_PX = 52
 DRAG_THRESHOLD = 12
 AUDIO_DELAY_MIN_MS = -50
@@ -242,25 +243,36 @@ AUDIO_DELAY_MAX_MS = 50
 AUDIO_DELAY_STEP_MS = 1
 
 
-def default_idle_media_path():
-    """Return the first video or image in the project's idle folder, if any."""
-    if not os.path.isdir(IDLE_DIR):
+def first_folder_media(directory):
+    """Return the first video or image in ``directory``, if any."""
+    if not directory or not os.path.isdir(directory):
         return ""
     try:
-        names = os.listdir(IDLE_DIR)
+        names = os.listdir(directory)
     except OSError:
         return ""
     paths = [
-        os.path.join(IDLE_DIR, name)
+        os.path.join(directory, name)
         for name in sorted(names)
         if os.path.splitext(name)[1].lower() in VIDEO_EXTS | IMAGE_EXTS
     ]
     return paths[0] if paths else ""
 
+
+def default_idle_media_path():
+    """Return the first video or image in the project's idle folder, if any."""
+    return first_folder_media(IDLE_DIR)
+
+
+def default_break_media_path():
+    """Return the first video or image in the project's break folder, if any."""
+    return first_folder_media(BREAK_DIR)
+
 # Status colours keep their meaning in every design.
 COLOR_OFF = "#c62828"
 COLOR_PROGRAM = "#1565c0"
 COLOR_PLAYING = "#2e9d3a"
+COLOR_PAUSE = "#ef6c00"
 # How long a Weiter press stays lit if playback itself returns quickly.
 RESUME_REACTION_SECONDS = 0.45
 
@@ -2382,7 +2394,12 @@ class VideoPlayerGUI:
         self.main_pause = False
         self.blackout = False
         self.idle_media_path = ""
+        self.break_media_path = ""
         self.idle_showing = False
+        self.break_showing = False
+        self._pause_return_state = "OFF"
+        self.idle_light_scene = dmx.SCENE_BRIGHT
+        self.break_light_scene = dmx.SCENE_BRIGHT
         self.hdmi_audio_keepalive = False
         self._program_playback_started = False
         self._program_load_id = 0
@@ -2454,6 +2471,9 @@ class VideoPlayerGUI:
         self.use_default_idle_media = tk.BooleanVar(
             value=bool(self.settings.get("use_default_idle_media", False))
         )
+        self.use_default_break_media = tk.BooleanVar(
+            value=bool(self.settings.get("use_default_break_media", False))
+        )
         self.remote_api_enabled = tk.BooleanVar(
             value=bool(self.settings.get("remote_api_enabled", True))
         )
@@ -2481,6 +2501,8 @@ class VideoPlayerGUI:
             self.lights_sequences,
         ) = dmx.load_lights_config(lights_cfg)
         self.lights_control = tk.BooleanVar(value=lights_on)
+        self.idle_light_scene = self._stored_ambient_scene(self.settings.get("idle_light_scene"))
+        self.break_light_scene = self._stored_ambient_scene(self.settings.get("break_light_scene"))
         self.settings_lights_check = None
         self.lights_current = ""
         self._sequence_run = None
@@ -2515,6 +2537,7 @@ class VideoPlayerGUI:
         self._fullscreen_contain_after = None
         self.autoplay_delay = tk.StringVar(value="0")
         self.idle_media = tk.StringVar(value=t("idle_none"))
+        self.break_media = tk.StringVar(value=t("idle_none"))
         self.idle_status = None
         self.settings_warning_status = None
         self.autoplay_var = tk.BooleanVar(value=False)
@@ -2567,6 +2590,8 @@ class VideoPlayerGUI:
         self._restore_last_playlist()
         if self.use_default_idle_media.get():
             self._apply_default_idle_media(show_error=False)
+        if self.use_default_break_media.get():
+            self._apply_default_break_media(show_error=False)
         self._start_remote_api()
         self._sync_lights_control()
         self._apply_lights("bright", force=True)
@@ -3881,10 +3906,20 @@ class VideoPlayerGUI:
         clip_rolling = rolling and not self.still_waiting and not self._program_loop_active()
         armed = self.program_state == "PROGRAM"
         ready = self._beamer_ready()
+        pause_mode = (
+            self.program_state in ("OFF", "PROGRAM", "PAUSE")
+            and not getattr(self, "calibration_mode", None)
+            and not getattr(self, "volume_setup", False)
+        )
         self._set_transport_active(
             self.btn_stop, False, enabled=ready and self.program_state != "OFF",
         )
-        self._set_transport_active(self.btn_pause, paused, "preview", enabled=ready and playing)
+        self._set_transport_active(
+            self.btn_pause,
+            paused or self.program_state == "PAUSE",
+            "preview",
+            enabled=ready and (playing or pause_mode),
+        )
         self._set_transport_active(self.btn_still, frozen, "program", enabled=ready and playing)
         if self._resume_reaction_held():
             self._paint_resume_plate(self._resume_reaction)
@@ -4875,27 +4910,20 @@ class VideoPlayerGUI:
         ]
 
     def _fill_program_menu(self, menu):
-        """Idle media sits above the default; volume setup is last."""
-        pause = self._menu(menu)
-        if self.idle_media_path:
-            pause.add_command(
-                label=os.path.basename(self.idle_media_path),
-                command=self.choose_idle_media,
-            )
-            pause.add_command(label=t("idle_none"), command=self.clear_idle_media)
-        else:
-            pause.add_command(label=t("idle_media_choose"), command=self.choose_idle_media)
-        pause.add_separator()
-        pause.add_entry(
-            label=t("autoplay_delay"),
-            variable=self.autoplay_delay,
-            suffix=t("seconds_short"),
-        )
-        menu.add_cascade(label=t("idle_media_menu"), menu=pause)
+        """Idle media, then break media. Volume setup stays last."""
+        self._fill_ambient_menu(menu, "idle")
         menu.add_checkbutton(
             label=t("default_idle_media"),
             variable=self.use_default_idle_media,
             command=self._on_use_default_idle_media,
+        )
+        self._fill_ambient_menu(menu, "break")
+        if not hasattr(self, "use_default_break_media"):
+            self.use_default_break_media = tk.BooleanVar(master=self.root, value=False)
+        menu.add_checkbutton(
+            label=t("default_break_media"),
+            variable=self.use_default_break_media,
+            command=self._on_use_default_break_media,
         )
         menu.add_separator()
         menu.add_checkbutton(
@@ -5442,10 +5470,23 @@ class VideoPlayerGUI:
         self.subtitle_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_entry_settings())
         self._build_light_dimmer(tracks)
 
+    def _program_state_key(self):
+        return {
+            "OFF": "state_off",
+            "PROGRAM": "state_program",
+            "PLAYING": "state_playing",
+            "PAUSE": "state_pause",
+        }.get(self.program_state, "state_off")
+
     def state_color(self):
         if self.calibration_mode or getattr(self, "volume_setup", False):
             return COLOR_CALIBRATION
-        return {"OFF": COLOR_OFF, "PROGRAM": COLOR_PROGRAM, "PLAYING": COLOR_PLAYING}[self.program_state]
+        return {
+            "OFF": COLOR_OFF,
+            "PROGRAM": COLOR_PROGRAM,
+            "PLAYING": COLOR_PLAYING,
+            "PAUSE": COLOR_PAUSE,
+        }.get(self.program_state, COLOR_OFF)
 
     def selected_entry(self):
         if self.preview_index is not None and 0 <= self.preview_index < len(self.playlist):
@@ -5500,14 +5541,24 @@ class VideoPlayerGUI:
         else:
             state_key = self._calibration_state_key()
         if not state_key:
-            state_key = {"OFF": "state_off", "PROGRAM": "state_program", "PLAYING": "state_playing"}[self.program_state]
+            state_key = self._program_state_key()
         self.state_label.config(text=t(state_key), bg=self.state_color())
         stopped = self.program_state == "OFF"
-        entry = None if stopped else self.current_entry()
+        on_break = self.program_state == "PAUSE"
+        entry = None if stopped or on_break else self.current_entry()
         end_clock = self._program_end_clock()
         if stopped:
             self.now_playing.config(text=t("no_program"), bg=COLOR_READOUT, fg=COLOR_TEXT)
             self.program_times.config(text=program_times_text("-", "--:--", self.playlist, end_clock))
+        elif on_break:
+            name = os.path.basename(self.break_media_path) if getattr(self, "break_media_path", "") else t("state_pause")
+            self.now_playing.config(text=name or t("state_pause"), bg=self.state_color(), fg=COLOR_WHITE)
+            file_duration = self.duration or 0 if getattr(self, "break_showing", False) else 0
+            times = clip_times(
+                "PLAYING" if getattr(self, "break_showing", False) else "OFF",
+                file_duration, self.position, None, None,
+            )
+            self.program_times.config(text=program_times_text("-", times["total"], self.playlist, end_clock))
         else:
             name = entry.filename if entry else t("no_program")
             self.now_playing.config(text=name, bg=self.state_color(), fg=COLOR_WHITE)
@@ -5522,7 +5573,10 @@ class VideoPlayerGUI:
                 text=program_times_text(index, times["total"], self.playlist, end_clock),
             )
         self._refresh_next_clip()
-        if stopped:
+        show_start = stopped or (
+            on_break and getattr(self, "_pause_return_state", "OFF") != "PROGRAM"
+        )
+        if show_start:
             self.btn_play.icon_name = "start_program"
             self.btn_play.config(text=t("start"))
             self.btn_play.tooltip.text = t("start")
@@ -9899,11 +9953,7 @@ class VideoPlayerGUI:
         else:
             state_key = self._calibration_state_key()
         if not state_key:
-            state_key = {
-                "OFF": "state_off",
-                "PROGRAM": "state_program",
-                "PLAYING": "state_playing",
-            }[self.program_state]
+            state_key = self._program_state_key()
         playlist = []
         for index, item in enumerate(self.playlist):
             playlist.append({
@@ -9967,7 +10017,11 @@ class VideoPlayerGUI:
             "times": times,
             "actions": {
                 "resume": bool(self.playlist) and not clip_rolling,
-                "pause": self.program_state == "PLAYING",
+                "pause": self.program_state == "PLAYING" or (
+                    self.program_state in ("OFF", "PROGRAM", "PAUSE")
+                    and not self.calibration_mode
+                    and not volume_setup
+                ),
                 "still": self.program_state == "PLAYING",
                 "stop": self.program_state == "PLAYING",
                 "confirm_transport": not volume_setup,
@@ -9995,9 +10049,20 @@ class VideoPlayerGUI:
             self._remote_action = False
 
     def remote_pause(self):
-        if not self._apply_pause():
+        self._remote_action = True
+        try:
+            if self.program_state == "PLAYING":
+                if not self._apply_pause():
+                    return self._remote_result(False, "not_playing")
+                return self._remote_result(True)
+            if self.program_state == "PAUSE":
+                self._leave_pause_mode()
+                return self._remote_result(True)
+            if self._enter_pause_mode():
+                return self._remote_result(True)
             return self._remote_result(False, "not_playing")
-        return self._remote_result(True)
+        finally:
+            self._remote_action = False
 
     def remote_still(self):
         if not self._apply_still():
@@ -11770,11 +11835,24 @@ class VideoPlayerGUI:
         self.idle_media.set(
             os.path.basename(self.idle_media_path) if self.idle_media_path else t("idle_none")
         )
+        self.break_media_path = resolve_stored_media_path(
+            data.get("break_media_path", "") or "",
+            root=media_root,
+        )
+        if getattr(self, "break_media", None) is not None:
+            self.break_media.set(
+                os.path.basename(self.break_media_path) if self.break_media_path else t("idle_none")
+            )
         if self.use_default_idle_media.get():
             default_path = default_idle_media_path()
             if default_path:
                 self.idle_media_path = default_path
                 self.idle_media.set(os.path.basename(default_path))
+        if getattr(self, "use_default_break_media", None) is not None and self.use_default_break_media.get():
+            default_break = default_break_media_path()
+            if default_break:
+                self.break_media_path = default_break
+                self.break_media.set(os.path.basename(default_break))
         self._refresh_idle_status()
         if "autosave_on_program_change" in data:
             self.autosave_on_program_change.set(bool(data["autosave_on_program_change"]))
@@ -11848,6 +11926,8 @@ class VideoPlayerGUI:
             "autoplay_delay": float(self.autoplay_delay.get() or 0),
             "idle_media": self.idle_media.get(),
             "idle_media_path": self.idle_media_path,
+            "break_media": self.break_media.get() if getattr(self, "break_media", None) is not None else "",
+            "break_media_path": getattr(self, "break_media_path", "") or "",
             "program_index": self.program_index,
             "autosave_on_program_change": bool(self.autosave_on_program_change.get()),
             "entries": [entry.__dict__ for entry in self.playlist],
@@ -11945,20 +12025,133 @@ class VideoPlayerGUI:
         except OSError as exc:
             print(f"Playlist-Autosave: {exc}")
 
-    def choose_idle_media(self):
-        dialog_options = {}
+    def _ambient_spec(self, kind):
+        if kind == "break":
+            return {
+                "path": "break_media_path",
+                "label": "break_media",
+                "folder": BREAK_DIR,
+                "default_path": default_break_media_path,
+                "flag": "use_default_break_media",
+                "settings_key": "use_default_break_media",
+                "missing": "default_break_media_missing",
+                "empty": "default_break_media_empty",
+                "title": "default_break_media",
+                "dialog": "break_screen_media",
+                "light": "break_light_scene",
+                "light_setting": "break_light_scene",
+            }
+        return {
+            "path": "idle_media_path",
+            "label": "idle_media",
+            "folder": IDLE_DIR,
+            "default_path": default_idle_media_path,
+            "flag": "use_default_idle_media",
+            "settings_key": "use_default_idle_media",
+            "missing": "default_idle_media_missing",
+            "empty": "default_idle_media_empty",
+            "title": "default_idle_media",
+            "dialog": "idle_screen_media",
+            "light": "idle_light_scene",
+            "light_setting": "idle_light_scene",
+        }
+
+    def _fill_ambient_menu(self, menu, kind):
+        spec = self._ambient_spec(kind)
+        submenu = self._menu(menu)
+        path = getattr(self, spec["path"], "") or ""
+        if path:
+            submenu.add_command(
+                label=os.path.basename(path),
+                command=lambda: self.choose_ambient_media(kind),
+            )
+            submenu.add_command(label=t("idle_none"), command=lambda: self.clear_ambient_media(kind))
+        else:
+            submenu.add_command(
+                label=t("idle_media_choose"),
+                command=lambda: self.choose_ambient_media(kind),
+            )
+        if kind == "idle":
+            submenu.add_separator()
+            submenu.add_entry(
+                label=t("autoplay_delay"),
+                variable=self.autoplay_delay,
+                suffix=t("seconds_short"),
+            )
+        submenu.add_separator()
+        lights = self._menu(submenu)
+        self._fill_light_scene_menu(lights, kind)
+        submenu.add_cascade(label=t("ambient_light_scene"), menu=lights)
+        title = t("idle_media_menu") if kind == "idle" else t("break_media_menu")
+        menu.add_cascade(label=title, menu=submenu)
+
+    def _fill_light_scene_menu(self, menu, kind):
+        current = self._ambient_light_preset(kind)
+        scenes = list(getattr(self, "lights_scenes", None) or [])
+        if not scenes:
+            scenes = [dmx.Scene(dmx.SCENE_BRIGHT, "")]
+        for scene in scenes:
+            label = self._scene_label(scene)
+            if scene.id == current:
+                label = f"✔  {label}"
+            menu.add_command(
+                label=label,
+                command=lambda scene_id=scene.id, ambient=kind: self._set_ambient_light(ambient, scene_id),
+            )
+
+    def _stored_ambient_scene(self, value):
+        """Scene id for idle or break lighting. Missing values stay on bright."""
+        key = dmx.scene_key(value or "hell", getattr(self, "lights_scenes", None)) or dmx.SCENE_BRIGHT
+        scenes = getattr(self, "lights_scenes", None) or []
+        if scenes and dmx.find_scene(scenes, key) is None and key not in (dmx.SCENE_DARK, dmx.SCENE_BRIGHT, "medium"):
+            return dmx.SCENE_BRIGHT
+        return key
+
+    def _ambient_light_preset(self, kind):
+        spec = self._ambient_spec(kind)
+        return self._stored_ambient_scene(getattr(self, spec["light"], "") or "hell")
+
+    def _apply_ambient_lights(self, kind, preset=None):
+        if getattr(self, "lights_control", None) is None:
+            return
+        scene = preset if preset is not None else self._ambient_light_preset(kind)
+        self._apply_lights(scene, force=True)
+
+    def _set_ambient_light(self, kind, scene_id):
+        spec = self._ambient_spec(kind)
+        scene_id = self._stored_ambient_scene(scene_id or "hell")
+        setattr(self, spec["light"], scene_id)
+        self.settings[spec["light_setting"]] = scene_id
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass
+        if kind == "idle" and getattr(self, "idle_showing", False):
+            self._apply_ambient_lights("idle")
+        elif kind == "break" and self.program_state == "PAUSE":
+            self._apply_ambient_lights("break")
+
+    def choose_ambient_media(self, kind):
+        spec = self._ambient_spec(kind)
+        dialog_options = {"title": t(spec["dialog"])}
         if self.last_import_dir:
             dialog_options["initialdir"] = self.last_import_dir
-        path = filedialog.askopenfilename(title=t("idle_screen_media"), **dialog_options)
+        path = filedialog.askopenfilename(**dialog_options)
         if not path:
             return
         self.remember_import_dir(path)
-        self._save_use_default_idle_media(False)
-        self._set_idle_media(path)
+        self._save_ambient_default(kind, False)
+        self._set_ambient_media(kind, path)
+
+    def clear_ambient_media(self, kind):
+        self._save_ambient_default(kind, False)
+        self._set_ambient_media(kind, "")
+
+    def choose_idle_media(self):
+        self.choose_ambient_media("idle")
 
     def clear_idle_media(self):
-        self._save_use_default_idle_media(False)
-        self._set_idle_media("")
+        self.clear_ambient_media("idle")
 
     def _refresh_idle_status(self):
         label = getattr(self, "idle_status", None)
@@ -12003,18 +12196,29 @@ class VideoPlayerGUI:
         self._sync_show_strip()
 
     def _on_use_default_idle_media(self):
-        enabled = bool(self.use_default_idle_media.get())
+        self._on_use_default_ambient("idle")
+
+    def _on_use_default_break_media(self):
+        self._on_use_default_ambient("break")
+
+    def _on_use_default_ambient(self, kind):
+        spec = self._ambient_spec(kind)
+        enabled = bool(getattr(self, spec["flag"]).get())
         if enabled:
-            if not self._apply_default_idle_media(show_error=True):
-                self._save_use_default_idle_media(False)
+            if not self._apply_default_ambient(kind, show_error=True):
+                self._save_ambient_default(kind, False)
                 return
         else:
-            self._set_idle_media("")
-        self._save_use_default_idle_media(enabled)
+            self._set_ambient_media(kind, "")
+        self._save_ambient_default(kind, enabled)
 
     def _save_use_default_idle_media(self, enabled):
-        self.use_default_idle_media.set(bool(enabled))
-        self.settings["use_default_idle_media"] = bool(enabled)
+        self._save_ambient_default("idle", enabled)
+
+    def _save_ambient_default(self, kind, enabled):
+        spec = self._ambient_spec(kind)
+        getattr(self, spec["flag"]).set(bool(enabled))
+        self.settings[spec["settings_key"]] = bool(enabled)
         try:
             save_settings(self.settings)
         except OSError:
@@ -12022,24 +12226,44 @@ class VideoPlayerGUI:
 
     def _apply_default_idle_media(self, show_error=False):
         """Use the first video or image in the project's idle folder."""
-        path = default_idle_media_path()
+        return self._apply_default_ambient("idle", show_error=show_error)
+
+    def _apply_default_break_media(self, show_error=False):
+        """Use the first video or image in the project's break folder."""
+        return self._apply_default_ambient("break", show_error=show_error)
+
+    def _apply_default_ambient(self, kind, show_error=False):
+        spec = self._ambient_spec(kind)
+        path = spec["default_path"]()
         if not path:
             if show_error:
                 message = (
-                    t("default_idle_media_missing")
-                    if not os.path.isdir(IDLE_DIR)
-                    else t("default_idle_media_empty")
+                    t(spec["missing"])
+                    if not os.path.isdir(spec["folder"])
+                    else t(spec["empty"])
                 )
-                messagebox.showerror(t("default_idle_media"), message)
+                messagebox.showerror(t(spec["title"]), message)
             return False
-        self._set_idle_media(path)
+        self._set_ambient_media(kind, path)
         return True
 
     def _set_idle_media(self, path):
-        self.idle_media_path = path or ""
-        self.idle_media.set(os.path.basename(path) if path else t("idle_none"))
-        self._refresh_idle_status()
-        if self.program_state != "PLAYING":
+        self._set_ambient_media("idle", path)
+
+    def _set_ambient_media(self, kind, path):
+        spec = self._ambient_spec(kind)
+        path = path or ""
+        setattr(self, spec["path"], path)
+        label = getattr(self, spec["label"], None)
+        if label is not None:
+            label.set(os.path.basename(path) if path else t("idle_none"))
+        if kind == "idle":
+            self._refresh_idle_status()
+        if kind == "break" and self.program_state == "PAUSE":
+            self._show_break_media()
+            self.refresh_all()
+            return
+        if kind == "idle" and self.program_state not in ("PLAYING", "PAUSE"):
             self.blank_output()
 
     def apply_entry_settings(self):
@@ -12229,6 +12453,7 @@ class VideoPlayerGUI:
         self.main_pause = False
         self.blackout = True
         self.idle_showing = False
+        self.break_showing = False
         self.duration = 0.0
         self.position = 0.0
         self._reset_program_meter()
@@ -12255,8 +12480,11 @@ class VideoPlayerGUI:
         self.main_mpv.load_file(path, play=True, loop=True)
         self.blackout = False
         self.idle_showing = True
+        self.break_showing = False
         self.duration = 0.0
         self.position = 0.0
+        self._apply_ambient_lights("idle")
+        self._refresh_idle_status()
 
     def show_beamer_test(self):
         """Show the Cinema Player logo on the projector until the operator dismisses it."""
@@ -12425,9 +12653,82 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
+    def break_media_file(self):
+        path = getattr(self, "break_media_path", "") or ""
+        return path if path and os.path.exists(path) else ""
+
+    def _show_break_media(self):
+        """Loop the break medium on the projector and use the pause light scene."""
+        if self.idle_after_id:
+            self.root.after_cancel(self.idle_after_id)
+            self.idle_after_id = None
+        if not self.main_mpv.process:
+            return False
+        path = self.break_media_file()
+        self.idle_showing = False
+        self._apply_ambient_lights("break")
+        if not path:
+            if not self.main_mpv.load_audio_keepalive():
+                self.main_mpv.stop()
+            self.break_showing = False
+            self.blackout = True
+            self.duration = 0.0
+            self.position = 0.0
+            return True
+        self.main_mpv.set_ab_loop(None, None)
+        self._cancel_program_volume_glide()
+        self._remember_program_output(100)
+        self.main_mpv.set_volume(100)
+        self.main_mpv.load_file(path, play=True, loop=True)
+        self.blackout = False
+        self.break_showing = True
+        self.main_pause = False
+        self.duration = 0.0
+        self.position = 0.0
+        return True
+
+    def _enter_pause_mode(self):
+        """Pause while no film is rolling: play the break medium and its light scene."""
+        if self.program_state not in ("OFF", "PROGRAM"):
+            return False
+        if not self._beamer_ready():
+            return False
+        if getattr(self, "calibration_mode", None) or getattr(self, "volume_setup", False):
+            return False
+        if getattr(self, "beamer_test_active", False):
+            return False
+        if not self.ensure_main_output(auto=False):
+            if not getattr(self, "_remote_action", False):
+                messagebox.showerror(t("playback"), t("output_failed"))
+            return False
+        self._pause_return_state = self.program_state
+        self.program_state = "PAUSE"
+        self._show_break_media()
+        self._apply_ambient_lights("break")
+        self.refresh_all()
+        return True
+
+    def _leave_pause_mode(self):
+        """Leave pause and return to the program state that was on screen before."""
+        if self.program_state != "PAUSE":
+            return False
+        back = getattr(self, "_pause_return_state", "OFF")
+        if back not in ("OFF", "PROGRAM"):
+            back = "OFF"
+        self._pause_return_state = "OFF"
+        self.break_showing = False
+        self.program_state = back
+        self.blank_output(show_idle=back == "PROGRAM")
+        if not (back == "PROGRAM" and self.idle_media_file()):
+            self._apply_ambient_lights("idle", preset=dmx.SCENE_BRIGHT)
+        self.refresh_all()
+        return True
+
     def start_or_resume(self):
         if not self._beamer_ready():
             return
+        if self.program_state == "PAUSE":
+            self._leave_pause_mode()
         if not self.playlist:
             if self._remote_action:
                 return
@@ -12852,7 +13153,11 @@ class VideoPlayerGUI:
         controller.command("set_property", "sid", sid)
 
     def confirm_pause(self):
+        if self.program_state == "PAUSE":
+            self._leave_pause_mode()
+            return
         if self.program_state != "PLAYING":
+            self._enter_pause_mode()
             return
         if getattr(self, "volume_setup", False):
             self._apply_pause()
@@ -13121,7 +13426,7 @@ class VideoPlayerGUI:
             self.main_time.config(text=t("time_value", value=blank))
             return
         entry = self.current_entry()
-        if self.idle_showing:
+        if self.idle_showing or getattr(self, "break_showing", False) or self.program_state == "PAUSE":
             # The background is not a program clip: no In/Out marks, no highlight.
             duration = self.duration
             in_point = out_point = None
@@ -13137,7 +13442,8 @@ class VideoPlayerGUI:
             in_point=in_point,
             out_point=out_point,
         )
-        self._set_program_envelope(None if self.idle_showing else entry, duration, self.position)
+        background = self.idle_showing or getattr(self, "break_showing", False) or self.program_state == "PAUSE"
+        self._set_program_envelope(None if background else entry, duration, self.position)
         self.main_in.config(text=t("in_value", value=format_clock(in_point)))
         self.main_out.config(text=t("out_value", value=format_clock(out_point)))
         self.main_time.config(text=t("time_value", value=format_clock(self.position)))
@@ -13239,7 +13545,7 @@ class VideoPlayerGUI:
             return False
         if getattr(self, "lights_play_after", None):
             return False
-        if self.beamer_test_active or self.idle_showing or self.still_active():
+        if self.beamer_test_active or self.idle_showing or getattr(self, "break_showing", False) or self.still_active():
             return False
         if self._program_loop_active() or self.program_state != "PLAYING":
             return False
@@ -13271,6 +13577,9 @@ class VideoPlayerGUI:
             self.hdmi_audio_keepalive = False
             self.program_frame_drops = 0
             self.program_decoder_drops = 0
+            if self.program_state == "PAUSE" or getattr(self, "break_showing", False):
+                self.main_pause = False
+                return
             entry = self.current_entry()
             if entry and mpv.has_file(entry.path):
                 self._program_loaded_id = self._program_load_id
@@ -13289,7 +13598,7 @@ class VideoPlayerGUI:
             return
         if event == "playback-restart":
             keepalive = bool(self.hdmi_audio_keepalive or mpv.is_audio_keepalive())
-            if keepalive or self.idle_showing:
+            if keepalive or self.idle_showing or getattr(self, "break_showing", False):
                 return
             entry = self.current_entry()
             if program_playback_restart_starts_clip(
@@ -13318,6 +13627,9 @@ class VideoPlayerGUI:
             except (TypeError, ValueError):
                 return
             if not math.isfinite(position):
+                return
+            if getattr(self, "break_showing", False) or self.program_state == "PAUSE":
+                self.position = position
                 return
             if self.program_state != "PLAYING" and not self.idle_showing:
                 return
@@ -13357,7 +13669,7 @@ class VideoPlayerGUI:
                 duration = float(value)
             except (TypeError, ValueError):
                 return
-            if math.isfinite(duration) and duration > 0 and self.idle_showing:
+            if math.isfinite(duration) and duration > 0 and (self.idle_showing or getattr(self, "break_showing", False)):
                 self.duration = duration
         elif name == "pause" and value is not None:
             self.main_pause = bool(value)

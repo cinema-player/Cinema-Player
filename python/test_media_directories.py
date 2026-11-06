@@ -279,6 +279,11 @@ class MergeImportDirectoriesTests(unittest.TestCase):
         self.assertIn("Plugged-in", language.STRINGS["en"]["media_directories_drives"])
         self.assertIn("Wechseldatenträger", language.STRINGS["de"]["media_directories_drives"])
         self.assertEqual(language.STRINGS["de"]["import_path_mark"], "Importpfad")
+        self.assertEqual(language.STRINGS["de"]["idle_media_menu"], "Leerlaufmedium")
+        self.assertEqual(language.STRINGS["de"]["default_idle_media"], "Standard-Leerlaufmedium verwenden")
+        self.assertEqual(language.STRINGS["de"]["break_media_menu"], "Pausenmedium")
+        self.assertEqual(language.STRINGS["de"]["ambient_light_scene"], "Lichtszene")
+        self.assertEqual(language.STRINGS["de"]["state_pause"], "PAUSE")
         self.assertEqual(language.STRINGS["de"]["playlist_untitled"], "unbekannt.pls")
         self.assertEqual(language.STRINGS["en"]["playlist_untitled"], "untitled.pls")
         self.assertEqual(language.STRINGS["de"]["copy_files_cancel"], "Abbrechen")
@@ -584,14 +589,18 @@ class ImportRelativePlaylistTests(unittest.TestCase):
             folder = os.path.join(import_a, "Abend")
             os.makedirs(folder)
             clip = os.path.join(folder, "clip.mp4")
+            pause = os.path.join(folder, "pause.mp4")
             with open(clip, "wb") as handle:
                 handle.write(b"film")
+            with open(pause, "wb") as handle:
+                handle.write(b"pause")
             outside = os.path.join(machine_a, "linked.mp4")
             with open(outside, "wb") as handle:
                 handle.write(b"link")
             playlist_path = os.path.join(folder, "Abend.pls")
             stored = player.playlist_for_saved_file({
                 "idle_media_path": clip,
+                "break_media_path": pause,
                 "entries": [
                     {"path": clip, "filename": "clip.mp4"},
                     {"path": outside, "filename": "linked.mp4"},
@@ -599,6 +608,7 @@ class ImportRelativePlaylistTests(unittest.TestCase):
             }, playlist_path, import_a)
             self.assertEqual(stored["entries"][0]["path"], "Abend/clip.mp4")
             self.assertEqual(stored["idle_media_path"], "Abend/clip.mp4")
+            self.assertEqual(stored["break_media_path"], "Abend/pause.mp4")
             self.assertEqual(stored["entries"][1]["path"], os.path.abspath(outside))
             self.assertFalse(os.path.isabs(stored["entries"][0]["path"]))
 
