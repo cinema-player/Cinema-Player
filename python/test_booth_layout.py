@@ -1655,13 +1655,18 @@ class BoothChromeTests(unittest.TestCase):
             labels,
             [
                 "Leerlaufmedium  >",
-                "Standard-Leerlaufmedium verwenden",
                 "Pausenmedium  >",
-                "Standard-Pausenmedium verwenden",
                 "Einstellungswarnung",
                 "Lautstärke einstellen",
             ],
         )
+        idle_menu, break_menu = program._cascades
+        idle_text = " ".join(child.cget("text") for child in idle_menu.winfo_children() if isinstance(child, tk.Label))
+        break_text = " ".join(child.cget("text") for child in break_menu.winfo_children() if isinstance(child, tk.Label))
+        self.assertIn("Standard-Leerlaufmedium verwenden", idle_text)
+        self.assertIn("Standard-Pausenmedium verwenden", break_text)
+        self.assertNotIn("Standard-Pausenmedium verwenden", idle_text)
+        self.assertNotIn("Standard-Leerlaufmedium verwenden", break_text)
         children = program.winfo_children()
         self.assertIsInstance(children[-2], tk.Frame)
         self.assertEqual(children[-1].cget("text"), "Lautstärke einstellen")

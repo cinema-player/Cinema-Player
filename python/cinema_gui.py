@@ -4912,19 +4912,7 @@ class VideoPlayerGUI:
     def _fill_program_menu(self, menu):
         """Idle media, then break media. Volume setup stays last."""
         self._fill_ambient_menu(menu, "idle")
-        menu.add_checkbutton(
-            label=t("default_idle_media"),
-            variable=self.use_default_idle_media,
-            command=self._on_use_default_idle_media,
-        )
         self._fill_ambient_menu(menu, "break")
-        if not hasattr(self, "use_default_break_media"):
-            self.use_default_break_media = tk.BooleanVar(master=self.root, value=False)
-        menu.add_checkbutton(
-            label=t("default_break_media"),
-            variable=self.use_default_break_media,
-            command=self._on_use_default_break_media,
-        )
         menu.add_separator()
         menu.add_checkbutton(
             label=t("projection_zoom"),
@@ -12082,6 +12070,14 @@ class VideoPlayerGUI:
         lights = self._menu(submenu)
         self._fill_light_scene_menu(lights, kind)
         submenu.add_cascade(label=t("ambient_light_scene"), menu=lights)
+        submenu.add_separator()
+        flag = spec["flag"]
+        variable = getattr(self, flag, None)
+        if variable is None:
+            variable = tk.BooleanVar(master=self.root, value=False)
+            setattr(self, flag, variable)
+        command = self._on_use_default_idle_media if kind == "idle" else self._on_use_default_break_media
+        submenu.add_checkbutton(label=t(spec["title"]), variable=variable, command=command)
         title = t("idle_media_menu") if kind == "idle" else t("break_media_menu")
         menu.add_cascade(label=title, menu=submenu)
 
