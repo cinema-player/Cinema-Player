@@ -76,7 +76,8 @@ The playlist menu offers:
 - **Settings warning** — when the projector’s zoom is changed between 16:9 and 21:9 to fill a wide screen, enable this. A popup then informs the projectionist when zoom, resolution, pixel aspect, or colorspace needs attention. Playback starts once the change has been confirmed. 16:9 images in 21:9 zoom are scaled to fit the vertical resolution. Affected clips show a red value with a short word beside it (**Rate**, **Zoom**, **PAR**) or **Color** in the notes column. A forced warning still shows red **setting!**. With this on, Preview → **Settings warning** forces that confirmation on a clip even when the format does not change.
 - Autosave the playlist when the program pointer changes
 - Load the last playlist at start
-- **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. Settings → **Use default Idle Media** still loads the file from `media/idle` at startup.
+- **Idle media** — choose the idle file and the black pause (seconds of black before the next autoplay clip and before idle media appears). **None** clears the file. **Use default Idle Media** loads the file from `media/idle`. A dimmer scene for that picture defaults to bright.
+- **Break media** — the same kind of choice for a break. **Use default Break Media** loads the file from `media/break`. Its dimmer scene also defaults to bright. The **Pause** button enters **PAUSE** when no film is rolling: the break medium plays and that scene is used. Pause again, or **Start** / **Resume**, leaves the mode. Pause during playback still blacks out the running film.
 - Analyze loudness (ffmpeg EBU R128 and audio envelope; only while **OFF**)
 
 ### Global Settings

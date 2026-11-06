@@ -283,30 +283,39 @@
       <figcaption data-lang="de"><span class="badge program">PROGRAMM</span> — scharf geschaltet.</figcaption>
     </figure>
     <p data-lang="en">The program is now armed. Functions that could disturb the show are disabled. Until a clip starts, or idle media is chosen, the screen stays dark.</p>
-    <p data-lang="de">Das Programm ist nun scharf geschaltet. Funktionen, die den Ablauf stören können, sind deaktiviert. Solange kein Film gestartet wird oder ein Pausenmedium ausgewählt ist, bleibt die Leinwand dunkel.</p>
+    <p data-lang="de">Das Programm ist nun scharf geschaltet. Funktionen, die den Ablauf stören können, sind deaktiviert. Solange kein Film gestartet wird oder ein Leerlaufmedium ausgewählt ist, bleibt die Leinwand dunkel.</p>
     <p data-lang="en">The program pointer in the playlist sits on the clip that plays next. <strong>Resume</strong> <img class="inline" src="images/guide/icon-resume.png" alt=""> starts that clip.</p>
     <p data-lang="de">Der Programmzeiger in der Playlist steht auf dem Film, der als nächstes gespielt wird. Der <strong>WEITER</strong>-Knopf <img class="inline" src="images/guide/icon-resume.png" alt=""> startet diesen Film.</p>
     <p data-lang="en">When the clip ends, the pointer jumps to the next entry. The picture stays black, or idle media is shown.</p>
-    <p data-lang="de">Nach Ablauf des Films springt der Programmzeiger auf den nächsten Eintrag. Das Bild bleibt schwarz oder es wird das Pausenmedium angezeigt.</p>
+    <p data-lang="de">Nach Ablauf des Films springt der Programmzeiger auf den nächsten Eintrag. Das Bild bleibt schwarz oder es wird das Leerlaufmedium angezeigt.</p>
     <p data-lang="en">Played entries are grey.</p>
     <p data-lang="de">Die gespielten Einträge sind grau.</p>
 
     <h3>
       <span data-lang="en">Idle media</span>
-      <span data-lang="de">Pausenmedium</span>
+      <span data-lang="de">Leerlaufmedium</span>
     </h3>
-    <p data-lang="en">If idle media is chosen, it is shown on the screen while no film is playing.</p>
-    <p data-lang="de">Ist ein Pausenmedium gewählt, wird es auf der Leinwand angezeigt, solange kein Film läuft.</p>
+    <p data-lang="en">If idle media is chosen, it is shown on the screen while the program is armed and no film is playing. Its dimmer scene is used then. The scene defaults to bright.</p>
+    <p data-lang="de">Ist ein Leerlaufmedium gewählt, wird es auf der Leinwand angezeigt, solange das Programm scharf ist und kein Film läuft. Dabei gilt die Leerlauf-Lichtszene. Voreingestellt ist hell.</p>
     <p data-lang="en">Idle media is a film or still shown instead of black. Films loop.</p>
-    <p data-lang="de">Ein Pausenmedium ist ein Film oder Standbild, das statt des Schwarzbildes gezeigt wird. Filme werden dabei in einer Endlosschleife gespielt.</p>
+    <p data-lang="de">Ein Leerlaufmedium ist ein Film oder Standbild, das statt des Schwarzbildes gezeigt wird. Filme werden dabei in einer Endlosschleife gespielt.</p>
     <p data-lang="en"><strong>Resume</strong> starts the next clip and ends the idle picture.</p>
-    <p data-lang="de">Wird der nächste Film mit <strong>WEITER</strong> gestartet, beendet dies die Anzeige des Pausenmediums.</p>
-    <p data-lang="en">Choose the file under <em>Settings → Program → Idle media</em>. There you can also set seconds of black between idle media and the start of a clip, and between the end of a clip and idle media again.</p>
-    <p data-lang="de">Das Pausenmedium kann in den Einstellungen unter <em>Einstellungen → Programm → Pausenmedium</em> ausgewählt werden. Dort kann auch eine Zeit gewählt werden, in der zwischen dem Pausenmedium und dem Filmbeginn beziehungsweise dem Filmende und der erneuten Anzeige des Pausenmediums ein schwarzes Bild gezeigt wird.</p>
+    <p data-lang="de">Wird der nächste Film mit <strong>WEITER</strong> gestartet, beendet dies die Anzeige des Leerlaufmediums.</p>
+    <p data-lang="en">Choose the file under <em>Settings → Program → Idle media</em>. There you can also set seconds of black between idle media and the start of a clip, and between the end of a clip and idle media again, and pick the dimmer scene.</p>
+    <p data-lang="de">Das Leerlaufmedium kann in den Einstellungen unter <em>Einstellungen → Programm → Leerlaufmedium</em> ausgewählt werden. Dort kann auch eine Zeit gewählt werden, in der zwischen dem Leerlaufmedium und dem Filmbeginn beziehungsweise dem Filmende und der erneuten Anzeige des Leerlaufmediums ein schwarzes Bild gezeigt wird, sowie die Lichtszene.</p>
     <p data-lang="en">If a file is set, its name appears on the same line as the next playlist entry.</p>
     <p data-lang="de">Ist ein Medium ausgewählt, steht der Name auf derselben Zeile wie der nächste Playlist-Eintrag.</p>
     <p data-lang="en"><strong>Default.</strong> Settings can turn on <strong>Use default Idle Media</strong>. Then the file in the <code>media/idle</code> folder is used.</p>
-    <p data-lang="de"><strong>Standard.</strong> In den Einstellungen kann das <strong>Standard-Pausenmedium</strong> eingeschaltet werden. In dem Fall wird die Datei, die im Verzeichnis <code>media/idle</code> abgelegt ist, als Pausenmedium verwendet.</p>
+    <p data-lang="de"><strong>Standard.</strong> In den Einstellungen kann das <strong>Standard-Leerlaufmedium</strong> eingeschaltet werden. In dem Fall wird die Datei, die im Verzeichnis <code>media/idle</code> abgelegt ist, als Leerlaufmedium verwendet.</p>
+
+    <h3>
+      <span data-lang="en">Break media and Pause</span>
+      <span data-lang="de">Pausenmedium und Pause</span>
+    </h3>
+    <p data-lang="en"><strong>Pause</strong> while no film is rolling enters the <span class="badge">PAUSE</span> mode. The break medium plays in a loop and the break dimmer scene is used. Both default to bright. Pause again leaves the mode. <strong>Start</strong> or <strong>Resume</strong> leaves it and continues the show. Pause while a film is on air still blacks out that film.</p>
+    <p data-lang="de">Die <strong>Pause</strong>-Taste öffnet den Modus <span class="badge">PAUSE</span>, solange kein Film läuft. Das Pausenmedium läuft in einer Schleife, und es gilt die Pausen-Lichtszene. Beides ist voreingestellt hell. Ein weiteres Drücken der Pause-Taste verlässt den Modus. <strong>Start</strong> oder <strong>Weiter</strong> verlassen ihn und führen den Ablauf fort. Läuft ein Film, schaltet Pause die Ausgabe weiterhin schwarz.</p>
+    <p data-lang="en">Choose the file under <em>Settings → Program → Break media</em>, the same way as idle media. <strong>Use default Break Media</strong> uses the file in <code>media/break</code>. The dimmer scene sits in that menu.</p>
+    <p data-lang="de">Die Datei liegt unter <em>Einstellungen → Programm → Pausenmedium</em>, auf dieselbe Weise wie das Leerlaufmedium. <strong>Standard-Pausenmedium verwenden</strong> nimmt die Datei aus <code>media/break</code>. Die Lichtszene steht in diesem Menü.</p>
 
     <h3>
       <span data-lang="en">Stop and playback</span>
@@ -594,8 +603,8 @@
     <figure class="snip">
       <img src="images/guide/menu-program.png" alt="Program submenu">
     </figure>
-    <p data-lang="en"><strong>Idle media</strong> is the first item. Under it, <strong>Use default Idle Media</strong> always uses the file in the <code>media/idle</code> folder. <strong>Settings warning</strong> sits below a line. <strong>Set volume</strong> is last and is disabled only while a clip is rolling. It starts the program if needed and lights the status purple, as in calibration. The current playlist stays. Clips run with the normal transport, and the program progress bar and audio envelope can be scrubbed at any time, not only in Still. Stop, Pause and Still do not ask for confirmation. <strong>Save volume</strong> stays next to the program volume slider and writes that level into the playlist entry, the same way as in the preview. The phone always shows <strong>Save volume</strong> under its slider. In this mode it can also scrub on the bar or envelope. Stop on the phone ends the clip on air and does not leave the mode.</p>
-    <p data-lang="de"><strong>Pausenmedium</strong> steht an erster Stelle. Darunter schaltet <strong>Standard-Pausenmedium verwenden</strong> die Datei aus dem Verzeichnis <code>media/idle</code> ein. <strong>Einstellungswarnung</strong> steht unter einer Linie. <strong>Lautstärke einstellen</strong> steht ganz unten und ist nur gesperrt, solange ein Film läuft. Der Punkt startet das Programm, falls nötig, und leuchtet den Status lila aus, wie bei der Kalibrierung. Die aktuelle Playlist bleibt. Die Filme laufen mit der normalen Ablaufsteuerung, und Fortschrittsbalken und Audio-Hüllkurve im Programm lassen sich jederzeit verschieben, nicht nur im Still. Stop, Pause und Still fragen nicht nach einer Bestätigung. <strong>Lautstärke speichern</strong> steht immer neben dem Lautstärkeregler im Programm und schreibt den Pegel in den Playlist-Eintrag, genau wie in der Vorschau. Auf der Fernsteuerung steht <strong>Lautstärke speichern</strong> immer unter dem Regler. In diesem Modus lassen sich dort auch Balken und Hüllkurve verschieben. Stop auf dem Telefon beendet den laufenden Clip und verlässt den Modus nicht.</p>
+    <p data-lang="en"><strong>Idle media</strong> is the first item. Under it, <strong>Use default Idle Media</strong> always uses the file in the <code>media/idle</code> folder. <strong>Break media</strong> follows, with <strong>Use default Break Media</strong> for <code>media/break</code>. Each menu holds a dimmer scene; both default to bright. <strong>Settings warning</strong> sits below a line. <strong>Set volume</strong> is last and is disabled only while a clip is rolling. It starts the program if needed and lights the status purple, as in calibration. The current playlist stays. Clips run with the normal transport, and the program progress bar and audio envelope can be scrubbed at any time, not only in Still. Stop, Pause and Still do not ask for confirmation. <strong>Save volume</strong> stays next to the program volume slider and writes that level into the playlist entry, the same way as in the preview. The phone always shows <strong>Save volume</strong> under its slider. In this mode it can also scrub on the bar or envelope. Stop on the phone ends the clip on air and does not leave the mode.</p>
+    <p data-lang="de"><strong>Leerlaufmedium</strong> steht an erster Stelle. Darunter schaltet <strong>Standard-Leerlaufmedium verwenden</strong> die Datei aus dem Verzeichnis <code>media/idle</code> ein. Danach folgt <strong>Pausenmedium</strong> mit <strong>Standard-Pausenmedium verwenden</strong> für <code>media/break</code>. In beiden Menüs gibt es eine Lichtszene, voreingestellt hell. <strong>Einstellungswarnung</strong> steht unter einer Linie. <strong>Lautstärke einstellen</strong> steht ganz unten und ist nur gesperrt, solange ein Film läuft. Der Punkt startet das Programm, falls nötig, und leuchtet den Status lila aus, wie bei der Kalibrierung. Die aktuelle Playlist bleibt. Die Filme laufen mit der normalen Ablaufsteuerung, und Fortschrittsbalken und Audio-Hüllkurve im Programm lassen sich jederzeit verschieben, nicht nur im Still. Stop, Pause und Still fragen nicht nach einer Bestätigung. <strong>Lautstärke speichern</strong> steht immer neben dem Lautstärkeregler im Programm und schreibt den Pegel in den Playlist-Eintrag, genau wie in der Vorschau. Auf der Fernsteuerung steht <strong>Lautstärke speichern</strong> immer unter dem Regler. In diesem Modus lassen sich dort auch Balken und Hüllkurve verschieben. Stop auf dem Telefon beendet den laufenden Clip und verlässt den Modus nicht.</p>
 
     <h3>
       <span data-lang="en">Playlist</span>
