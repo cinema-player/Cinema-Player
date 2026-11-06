@@ -18,7 +18,7 @@ The header shows the Cinema Player logo, the program version beside the mpv vers
 
 **Left**
 
-- A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, the playlist position, and the next clip (including a zoom or format warning when one is waiting).
+- A status bar with the program state (**OFF** / **PROGRAM** / **PLAYING**), the current clip name, and the playlist position.
 - House lights (**Dark** / **Medium** / **Bright**) and the clip **Dimmer**, with the idle-media name and the settings-warning hint beside them.
 - The program block: progress bar with live video bitrate (hidden until a clip is rolling), volume with live audio bitrate, In/Out times, labelled transport buttons, the four clocks (**Remaining** and **End** larger than **Total** and **Elapsed**), and a VU meter.
 - Playlist tools (name, import/new/load/save). Import and the other file buttons fold away while the show is **PROGRAM** or **PLAYING**. Calibration keeps them.

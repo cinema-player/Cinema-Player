@@ -280,14 +280,6 @@ class PlaylistMarkTests(unittest.TestCase):
         finally:
             root.destroy()
 
-    def test_next_clip_names_the_following_title_and_zoom(self):
-        first = _entry(path="/media/films/a.mp4")
-        second = _entry(path="/media/films/wide.mp4", aspect="21:9", aspect_warning=True)
-        label = cinema_gui.next_program_label([first, second], 0, "PLAYING", True)
-        self.assertEqual(label, "als Nächstes: wide.mp4 · Zoom 21:9")
-        self.assertEqual(cinema_gui.next_program_label([first], 0, "OFF", True), "")
-
-
 class BoothChromeTests(unittest.TestCase):
     def setUp(self):
         set_language("de")
@@ -812,27 +804,19 @@ class BoothChromeTests(unittest.TestCase):
         self.app.idle_showing = False
         self.app.break_showing = False
         cinema_gui.VideoPlayerGUI._build_program_status(self.app, parent)
-        cinema_gui.VideoPlayerGUI._refresh_next_clip(self.app)
         cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
         self.root.update()
+        self.assertFalse(hasattr(self.app, "next_clip"))
         self.assertEqual(self.app.idle_status.cget("text"), "Leerlaufmedium: pause.mp4")
         self.assertEqual(self.app.break_status.cget("text"), "Pausenmedium: interval.mp4")
-        self.assertEqual(self.app.next_clip.grid_info()["row"], self.app.media_status.grid_info()["row"])
         self.assertLess(self.app.idle_status.winfo_rootx(), self.app.break_status.winfo_rootx())
-        self.assertLess(
-            abs(self.app.media_status.winfo_rooty() - self.app.next_clip.winfo_rooty()),
-            8,
-        )
+        self.assertGreater(self.app.media_status.winfo_rooty(), self.app.now_playing.winfo_rooty())
         self.assertLessEqual(
             abs(
                 (self.app.now_playing.winfo_rootx() + self.app.now_playing.winfo_width())
                 - self.app.program_times.winfo_rootx()
             ),
             2,
-        )
-        self.assertLessEqual(
-            self.app.next_clip.winfo_rootx() + self.app.next_clip.winfo_width(),
-            self.app.media_status.winfo_rootx() + 1,
         )
         self.assertEqual(self.app.break_status.cget("bg"), cinema_gui.COLOR_BG)
         self.app.break_showing = True
