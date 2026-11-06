@@ -808,17 +808,27 @@ class BoothChromeTests(unittest.TestCase):
         self.app.program_state = "PROGRAM"
         self.app.program_index = 0
         self.app.idle_media_path = "/media/idle/pause.mp4"
+        self.app.break_media_path = "/media/break/interval.mp4"
         self.app.idle_showing = False
+        self.app.break_showing = False
         cinema_gui.VideoPlayerGUI._build_program_status(self.app, parent)
         cinema_gui.VideoPlayerGUI._refresh_next_clip(self.app)
         cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
         self.root.update()
-        self.assertEqual(self.app.idle_status.cget("text"), "pause.mp4")
-        self.assertEqual(self.app.next_clip.grid_info()["row"], self.app.idle_status.grid_info()["row"])
+        self.assertEqual(self.app.idle_status.cget("text"), "Leerlaufmedium: pause.mp4")
+        self.assertEqual(self.app.break_status.cget("text"), "Pausenmedium: interval.mp4")
+        self.assertEqual(self.app.next_clip.grid_info()["row"], self.app.media_status.grid_info()["row"])
+        self.assertLess(self.app.idle_status.winfo_rootx(), self.app.break_status.winfo_rootx())
         self.assertLess(
-            abs(self.app.idle_status.winfo_rooty() - self.app.next_clip.winfo_rooty()),
+            abs(self.app.media_status.winfo_rooty() - self.app.next_clip.winfo_rooty()),
             8,
         )
+        self.assertEqual(self.app.break_status.cget("bg"), cinema_gui.COLOR_BG)
+        self.app.break_showing = True
+        cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
+        self.assertEqual(self.app.break_status.cget("bg"), cinema_gui.COLOR_PAUSE)
+        self.assertEqual(self.app.break_status.cget("fg"), cinema_gui.COLOR_WHITE)
+        self.assertEqual(self.app.idle_status.cget("bg"), cinema_gui.COLOR_BG)
 
     def test_media_folder_window_keeps_its_buttons_on_screen(self):
         self.app.root = self.root

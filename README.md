@@ -85,7 +85,7 @@ The playlist menu offers:
 These settings control the behavior of the playlist.
 
 - **Dark / Medium / Bright** – Manual house-light presets under the status bar, next to the clip dimmer. They are disabled until **House lights** is on in Settings → System settings → Light control (or on the phone).
-- **Idle media name** – If an idle file is set, its name is shown on that same strip. It turns green while that media is on the projector. Choose or clear the file, and the black pause, in Settings → Playlist. When **Settings warning** is on, red **Settings warning on** appears beside it.
+- **Idle and break media** – If a file is set, its label and name sit on that same strip, idle media beside break media. Idle media turns green while it is on the projector. Break media turns the pause colour while it is on the projector. Choose or clear the files in Settings → Program. When **Settings warning** is on, red **Settings warning on** appears beside them.
 
 ### Playback Controls
 
