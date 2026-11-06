@@ -1986,6 +1986,41 @@ def still_icon_photo(color):
     return photo
 
 
+# Lightning bolt, the same mark as the insert-action button, drawn small.
+_ACTION_ICON_ROWS = (
+    "       #        ",
+    "      ##        ",
+    "      ##        ",
+    "     ###        ",
+    "    ###         ",
+    "   ####         ",
+    "  #####         ",
+    " ###########    ",
+    "###########     ",
+    "     #####      ",
+    "    #####       ",
+    "    ###         ",
+    "    ##          ",
+    "   ##           ",
+    "   ##           ",
+)
+_ACTION_ICON_CACHE = {}
+
+
+def action_icon_photo(color):
+    """Small lightning mark for an action row. Cached per colour."""
+    photo = _ACTION_ICON_CACHE.get(color)
+    if photo is not None:
+        try:
+            photo.width()
+            return photo
+        except tk.TclError:
+            photo = None
+    photo = _bitmap_photo(_ACTION_ICON_ROWS, color)
+    _ACTION_ICON_CACHE[color] = photo
+    return photo
+
+
 class ImportFolderList(tk.Frame):
     """Chooser rows for saved folders and plugged-in drives.
 
@@ -5938,6 +5973,9 @@ class VideoPlayerGUI:
             photo = still_icon_photo(fg)
             still_icon.config(image=photo, bg=bg)
             still_icon.image = photo
+            still_tip = getattr(still_icon, "tooltip", None)
+            if still_tip is not None:
+                still_tip.text = t("still")
             if not still_icon.winfo_manager():
                 still_icon.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 6))
         else:
@@ -6009,10 +6047,14 @@ class VideoPlayerGUI:
         widgets["cursor"].config(text=" ", bg=bg, fg=fg)
         widgets["name"].config(bg=bg)
         still_icon = widgets["still_icon"]
-        still_icon.config(image="")
-        still_icon.image = None
-        if still_icon.winfo_manager():
-            still_icon.grid_remove()
+        photo = action_icon_photo(fg)
+        still_icon.config(image=photo, bg=bg)
+        still_icon.image = photo
+        still_tip = getattr(still_icon, "tooltip", None)
+        if still_tip is not None:
+            still_tip.text = t("action_entry")
+        if not still_icon.winfo_manager():
+            still_icon.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 6))
         for key in ("duration", "volume", "loudness", "fps", "aspect", "par", "colorspace", "notes"):
             widgets[key].config(text="", bg=bg, fg=fg)
 
@@ -13499,6 +13541,7 @@ class VideoPlayerGUI:
         if entry:
             entry.played = True
         autoplay = bool(entry and entry.autoplay)
+        hold_lights = self._lights_hold_for_next(self.program_index)
         self.program_state = "PROGRAM"
         self._clear_action_flags()
         has_next = self._skip_to_playable(inclusive=False, run_actions=True)
@@ -13510,7 +13553,7 @@ class VideoPlayerGUI:
         self.blank_output(show_idle=not (autoplay and has_next))
         if not self.lights_end_sent and not self._action_set_light:
             self._apply_lights(
-                dmx.resolve_end_preset("", autoplay and has_next, self.lights_scenes)
+                dmx.resolve_end_preset("", hold_lights, self.lights_scenes)
             )
         self.lights_end_sent = False
         self.refresh_all()
@@ -14119,6 +14162,32 @@ class VideoPlayerGUI:
                 return True
         return False
 
+    def _action_follows(self, index):
+        """True when an action runs before the next clip."""
+        if not self.playlist:
+            return False
+        for item in self.playlist[index + 1:]:
+            if entry_is_action(item):
+                return True
+            if not getattr(item, "missing", False) and media_file_available(item):
+                return False
+        return False
+
+    def _lights_hold_for_next(self, index):
+        """Keep the house lights down when the show continues past this clip.
+
+        Autoplay into another clip, and an action before the next clip, leave
+        the lights where they are instead of fading up to bright.
+        """
+        if not self.playlist or not 0 <= index < len(self.playlist):
+            return False
+        entry = self.playlist[index]
+        if entry_is_action(entry):
+            return False
+        if getattr(entry, "autoplay", False) and self._has_playable_after(index):
+            return True
+        return self._action_follows(index)
+
     def _maybe_lights_before_end(self):
         if self.lights_end_sent or getattr(self, "lights_play_after", None):
             return
@@ -14150,12 +14219,10 @@ class VideoPlayerGUI:
             return
         if remaining > lead:
             return
-        autoplay_continues = bool(
-            entry and entry.autoplay and self._has_playable_after(self.program_index)
-        )
+        hold_lights = self._lights_hold_for_next(self.program_index)
         self.lights_end_sent = True
-        preset = dmx.resolve_end_preset("", autoplay_continues, self.lights_scenes)
-        if autoplay_continues and preset == "dark":
+        preset = dmx.resolve_end_preset("", hold_lights, self.lights_scenes)
+        if hold_lights and preset == "dark":
             return
         self._apply_lights(preset)
 

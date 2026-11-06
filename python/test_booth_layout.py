@@ -3529,6 +3529,7 @@ class PlaylistActionTests(unittest.TestCase):
     def test_action_row_shows_the_cue_and_hides_the_pointer(self):
         self.app.playlist_canvas = tk.Canvas(self.root, width=900, height=200)
         self.app.playlist_inner = tk.Frame(self.root)
+        self.app.playlist_inner.pack(fill="both", expand=True)
         self.app.media_directories = []
         self.app.row_widgets = []
         light = PlaylistEntry(path="", filename="Hell", action="light", action_target="hell")
@@ -3541,6 +3542,70 @@ class PlaylistActionTests(unittest.TestCase):
         self.assertIn("Lichtszene", row["filename"].cget("text"))
         self.assertEqual(row["detail"].cget("text"), "Aktion")
         self.assertEqual(row["duration"].cget("text"), "")
+        icon = row["still_icon"]
+        self.assertTrue(icon.winfo_ismapped())
+        self.assertLess(icon.winfo_rootx(), row["filename"].winfo_rootx())
+        self.assertEqual(icon.tooltip.text, "Aktion")
+        self.assertLessEqual(icon.image.width(), 18)
+
+        def pixel(image, x, y):
+            color = image.get(x, y)
+            if isinstance(color, str):
+                return color.lower()
+            parts = [int(part) for part in color[:3]]
+            return "#{:02x}{:02x}{:02x}".format(*parts)
+
+        self.assertEqual(pixel(icon.image, 7, 0), cinema_gui.COLOR_TEXT.lower())
+        light.played = True
+        self.app.program_index = 1
+        cinema_gui.VideoPlayerGUI._paint_row(self.app, 0, light)
+        self.root.update_idletasks()
+        self.assertEqual(pixel(icon.image, 7, 0), cinema_gui.COLOR_PLAYED.lower())
+
+    def test_film_end_stays_dark_when_an_action_follows(self):
+        film = _entry(path="/media/a.mp4", duration=10)
+        action = PlaylistEntry(path="", filename="Mittel", action="light", action_target="medium")
+        nxt = _entry(path="/media/b.mp4", duration=8)
+        self.app.playlist = [film, action, nxt]
+        self.app.program_index = 0
+        self.app.program_state = "PLAYING"
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=True)
+        self.app.lights_end_lead_ms = 3000
+        self.app.lights_end_sent = False
+        self.app.lights_play_after = None
+        self.app.calibration_mode = False
+        self.app.idle_showing = False
+        self.app.main_pause = False
+        self.app.still_waiting = False
+        self.app.still_started = None
+        self.app.duration = 10
+        self.app.position = 8
+        self.app._still_fading_out = False
+        self.app._still_fade_out_done = False
+        self.app.blank_output = lambda show_idle=False: None
+        self.app.confirm_projection_zoom = lambda prompt=True: True
+        applied = []
+        self.app._apply_lights = lambda preset, force=False: applied.append(preset)
+
+        cinema_gui.VideoPlayerGUI._maybe_lights_before_end(self.app)
+        self.assertEqual(applied, [])
+        self.assertTrue(self.app.lights_end_sent)
+
+        cinema_gui.VideoPlayerGUI.on_clip_finished(self.app)
+        self.assertEqual(applied, ["medium"])
+        self.assertEqual(self.app.program_index, 2)
+        gone = _entry(path="/media/gone.mp4", duration=4, missing=True)
+        self.app.playlist = [film, gone, action]
+        self.assertTrue(cinema_gui.VideoPlayerGUI._lights_hold_for_next(self.app, 0))
+
+        self.app.playlist = [film, nxt]
+        self.app.program_index = 0
+        self.app.program_state = "PLAYING"
+        self.app.position = 8
+        self.app.lights_end_sent = False
+        applied.clear()
+        cinema_gui.VideoPlayerGUI._maybe_lights_before_end(self.app)
+        self.assertEqual(applied, ["bright"])
 
     def test_program_clock_ignores_action_rows(self):
         pause = PlaylistEntry(
