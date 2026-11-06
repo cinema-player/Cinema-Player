@@ -3341,11 +3341,16 @@ class VideoPlayerGUI:
         )
         self.next_clip.grid(row=1, column=1, sticky="ew", pady=(4, 0))
         self.next_clip.grid_remove()
+        media = tk.Frame(bar, bg=COLOR_BG)
+        media.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
+        media.grid_remove()
+        self.media_status = media
         self.idle_status = tk.Label(
-            bar, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="e",
+            media, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="e",
         )
-        self.idle_status.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
-        self.idle_status.grid_remove()
+        self.break_status = tk.Label(
+            media, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="e",
+        )
 
     def _build_show_strip(self, parent):
         """House lights and the clip dimmer, clear of the playlist file tools."""
@@ -12150,27 +12155,60 @@ class VideoPlayerGUI:
         self.clear_ambient_media("idle")
 
     def _refresh_idle_status(self):
-        label = getattr(self, "idle_status", None)
-        if label is None:
+        """Show the chosen idle and break files beside the next clip."""
+        host = getattr(self, "media_status", None)
+        idle = getattr(self, "idle_status", None)
+        if host is None or idle is None:
             return
-        name = os.path.basename(self.idle_media_path) if self.idle_media_path else ""
-        if not name:
-            try:
-                label.grid_remove()
-            except tk.TclError:
-                pass
-            self._refresh_settings_warning_status()
-            return
-        if self.idle_showing:
-            label.config(text=name, bg=COLOR_PLAYING, fg=COLOR_WHITE)
-        else:
-            label.config(text=name, bg=COLOR_BG, fg=COLOR_TEXT)
+        paused = getattr(self, "break_status", None)
+        idle_on = self._show_media_chip(
+            idle,
+            getattr(self, "idle_media_path", ""),
+            t("idle_media"),
+            bool(getattr(self, "idle_showing", False)),
+            COLOR_PLAYING,
+        )
+        break_on = self._show_media_chip(
+            paused,
+            getattr(self, "break_media_path", ""),
+            t("break_media"),
+            bool(getattr(self, "break_showing", False)),
+            COLOR_PAUSE,
+        )
+        shown = idle_on or break_on
         try:
-            if not label.winfo_manager():
-                label.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
+            for chip, visible in ((idle, idle_on), (paused, break_on)):
+                if chip is None:
+                    continue
+                if chip.winfo_manager():
+                    chip.pack_forget()
+                if visible:
+                    chip.pack(side="left", padx=(8, 0))
+            if shown:
+                if not host.winfo_manager():
+                    host.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
+            else:
+                host.grid_remove()
         except tk.TclError:
             pass
         self._refresh_settings_warning_status()
+
+    def _show_media_chip(self, label, path, caption, active, color):
+        """One labelled file name. The chip takes ``color`` while that file is on screen."""
+        if label is None:
+            return False
+        name = os.path.basename(path) if path else ""
+        if not name:
+            try:
+                label.pack_forget()
+            except tk.TclError:
+                pass
+            return False
+        if active:
+            label.config(text=f"{caption} {name}", bg=color, fg=COLOR_WHITE, padx=6, pady=1)
+        else:
+            label.config(text=f"{caption} {name}", bg=COLOR_BG, fg=COLOR_TEXT, padx=6, pady=1)
+        return True
 
     def _refresh_settings_warning_status(self):
         label = getattr(self, "settings_warning_status", None)
@@ -12253,8 +12291,7 @@ class VideoPlayerGUI:
         label = getattr(self, spec["label"], None)
         if label is not None:
             label.set(os.path.basename(path) if path else t("idle_none"))
-        if kind == "idle":
-            self._refresh_idle_status()
+        self._refresh_idle_status()
         if kind == "break" and self.program_state == "PAUSE":
             self._show_break_media()
             self.refresh_all()
