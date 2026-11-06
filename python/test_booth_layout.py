@@ -823,6 +823,17 @@ class BoothChromeTests(unittest.TestCase):
             abs(self.app.media_status.winfo_rooty() - self.app.next_clip.winfo_rooty()),
             8,
         )
+        self.assertLessEqual(
+            abs(
+                (self.app.now_playing.winfo_rootx() + self.app.now_playing.winfo_width())
+                - self.app.program_times.winfo_rootx()
+            ),
+            2,
+        )
+        self.assertLessEqual(
+            self.app.next_clip.winfo_rootx() + self.app.next_clip.winfo_width(),
+            self.app.media_status.winfo_rootx() + 1,
+        )
         self.assertEqual(self.app.break_status.cget("bg"), cinema_gui.COLOR_BG)
         self.app.break_showing = True
         cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
