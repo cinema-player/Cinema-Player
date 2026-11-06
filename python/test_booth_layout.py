@@ -1426,6 +1426,8 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
+                "Leerlaufmedium  >",
+                "Standard-Leerlaufmedium verwenden",
                 "Pausenmedium  >",
                 "Standard-Pausenmedium verwenden",
                 "Einstellungswarnung",
@@ -1443,9 +1445,79 @@ class BoothChromeTests(unittest.TestCase):
             if isinstance(child, tk.Label)
         )
         self.assertNotIn("Pausenmedium", playlist_text)
+        self.assertNotIn("Leerlaufmedium", playlist_text)
         self.assertNotIn("Einstellungswarnung", playlist_text)
         self.assertNotIn("Lautstärke einstellen", playlist_text)
         self.assertNotIn("4:3 auf 16:9 umrechnen", playlist_text)
+
+    def test_pause_without_a_film_uses_break_media_and_the_break_scene(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        clip = os.path.join(root, "pause.mp4")
+        with open(clip, "wb") as handle:
+            handle.write(b"film")
+        self.app.root = self.root
+        self.app.program_state = "OFF"
+        self.app.calibration_mode = None
+        self.app.volume_setup = False
+        self.app.beamer_test_active = False
+        self.app.break_media_path = clip
+        self.app.break_light_scene = "hell"
+        self.app.idle_light_scene = "bright"
+        self.app.lights_scenes = []
+        self.app.lights_control = tk.BooleanVar(master=self.root, value=True)
+        self.app.idle_after_id = None
+        self.app.idle_showing = False
+        self.app.break_showing = False
+        self.app._pause_return_state = "OFF"
+        applied = []
+        loaded = []
+        self.app.ensure_main_output = lambda auto=False: True
+        self.app._apply_lights = lambda preset, force=False: applied.append(preset)
+        self.app.refresh_all = lambda: None
+        self.app._cancel_program_volume_glide = lambda: None
+        self.app._remember_program_output = lambda level: None
+        self.app.idle_media_path = ""
+
+        class Player:
+            process = object()
+
+            def load_audio_keepalive(self):
+                return True
+
+            def set_ab_loop(self, *_args):
+                return None
+
+            def set_volume(self, _volume):
+                return None
+
+            def load_file(self, path, play=True, loop=False):
+                loaded.append((path, play, loop))
+
+            def stop(self):
+                return None
+
+        self.app.main_mpv = Player()
+        cinema_gui.VideoPlayerGUI.confirm_pause(self.app)
+        self.assertEqual(self.app.program_state, "PAUSE")
+        self.assertEqual(self.app._pause_return_state, "OFF")
+        self.assertEqual(loaded, [(clip, True, True)])
+        self.assertEqual(applied, ["bright", "bright"])
+        self.assertTrue(self.app.break_showing)
+        self.app.blank_output = lambda show_idle=True: loaded.append(("blank", show_idle))
+        cinema_gui.VideoPlayerGUI.confirm_pause(self.app)
+        self.assertEqual(self.app.program_state, "OFF")
+        self.assertFalse(self.app.break_showing)
+        self.assertEqual(loaded[-1], ("blank", False))
+
+    def test_pause_during_playback_still_asks_before_blacking_out(self):
+        self.app.root = self.root
+        self.app.program_state = "PLAYING"
+        self.app.volume_setup = False
+        with patch.object(cinema_gui.messagebox, "askyesno", return_value=False) as ask:
+            cinema_gui.VideoPlayerGUI.confirm_pause(self.app)
+        ask.assert_called_once()
+        self.assertEqual(self.app.program_state, "PLAYING")
 
     def test_beamer_menu_holds_output_and_aspect_switch(self):
         self.app.root = self.root

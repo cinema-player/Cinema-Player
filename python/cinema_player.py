@@ -132,6 +132,9 @@ def playlist_for_directory(document, root):
     idle = document.get("idle_media_path")
     if isinstance(idle, str) and idle.strip():
         stored["idle_media_path"] = relativize_directory_path(idle, root)
+    paused = document.get("break_media_path")
+    if isinstance(paused, str) and paused.strip():
+        stored["break_media_path"] = relativize_directory_path(paused, root)
     return stored
 
 
@@ -1527,6 +1530,9 @@ def _playlist_media_paths(document):
     idle = document.get("idle_media_path") or ""
     if isinstance(idle, str) and idle.strip():
         paths.append(idle)
+    paused = document.get("break_media_path") or ""
+    if isinstance(paused, str) and paused.strip():
+        paths.append(paused)
     return paths
 
 
@@ -1549,6 +1555,8 @@ def _rewrite_playlist_paths(document, mapping, playlist_path=""):
             entry["filename"] = os.path.basename(new_path)
     if document.get("idle_media_path"):
         document["idle_media_path"] = rewritten(document.get("idle_media_path"))
+    if document.get("break_media_path"):
+        document["break_media_path"] = rewritten(document.get("break_media_path"))
 
 
 def _unique_copy_name(directory, filename, reserved):
