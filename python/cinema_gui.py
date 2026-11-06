@@ -3324,26 +3324,29 @@ class VideoPlayerGUI:
         )
         self.state_label.grid(row=0, column=0, sticky="nsw")
 
+        title = tk.Frame(bar, bg=COLOR_READOUT)
+        title.grid(row=0, column=1, sticky="nsew")
+        title.columnconfigure(0, weight=1)
+        self.program_title = title
         self.now_playing = tk.Label(
-            bar, text=t("no_program"), font=FONT_UI_BOLD, bg=COLOR_READOUT,
-            fg=COLOR_TEXT, anchor="w", padx=10,
+            title, text=t("no_program"), font=FONT_UI_BOLD, bg=COLOR_READOUT,
+            fg=COLOR_TEXT, anchor="w", padx=10, width=1,
         )
-        self.now_playing.grid(row=0, column=1, sticky="nsew")
+        self.now_playing.grid(row=0, column=0, sticky="nsew")
 
         self.program_times = tk.Label(
-            bar, text="-- / --:--", font=FONT_STATUS, bg=COLOR_READOUT,
+            title, text="-- / --:--", font=FONT_STATUS, bg=COLOR_READOUT,
             fg=COLOR_TEXT, padx=10,
         )
-        self.program_times.grid(row=0, column=2, sticky="nse")
+        self.program_times.grid(row=0, column=1, sticky="nse")
 
+        hint = tk.Frame(bar, bg=COLOR_BG)
+        hint.columnconfigure(0, weight=1)
+        self.program_hint = hint
         self.next_clip = tk.Label(
-            bar, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="w",
+            hint, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="w", width=1,
         )
-        self.next_clip.grid(row=1, column=1, sticky="ew", pady=(4, 0))
-        self.next_clip.grid_remove()
-        media = tk.Frame(bar, bg=COLOR_BG)
-        media.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
-        media.grid_remove()
+        media = tk.Frame(hint, bg=COLOR_BG)
         self.media_status = media
         self.idle_status = tk.Label(
             media, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="e",
@@ -5632,13 +5635,28 @@ class VideoPlayerGUI:
         )
         try:
             if not text:
-                label.grid_remove()
-                return
-            label.config(text=text)
-            if not label.winfo_manager():
-                label.grid(row=1, column=1, sticky="ew", pady=(4, 0))
+                if label.winfo_manager():
+                    label.grid_remove()
+            else:
+                label.config(text=text)
+                if not label.winfo_manager():
+                    label.grid(row=0, column=0, sticky="ew")
+            self._place_program_hint()
         except tk.TclError:
             pass
+
+    def _place_program_hint(self):
+        """Keep the next-clip line only while a hint or a standby medium is visible."""
+        hint = getattr(self, "program_hint", None)
+        if hint is None:
+            return
+        next_on = bool(getattr(self, "next_clip", None) and self.next_clip.winfo_manager())
+        media_on = bool(getattr(self, "media_status", None) and self.media_status.winfo_manager())
+        if next_on or media_on:
+            if not hint.winfo_manager():
+                hint.grid(row=1, column=1, sticky="ew", pady=(4, 0))
+        elif hint.winfo_manager():
+            hint.grid_remove()
 
     def _beamer_ready(self):
         """True when a dedicated projector output can run the program."""
@@ -12194,9 +12212,10 @@ class VideoPlayerGUI:
                     chip.pack_forget()
             if shown:
                 if not host.winfo_manager():
-                    host.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
+                    host.grid(row=0, column=1, sticky="e", padx=(12, 0))
             elif host.winfo_manager():
                 host.grid_remove()
+            self._place_program_hint()
         except tk.TclError:
             pass
         self._refresh_settings_warning_status()
