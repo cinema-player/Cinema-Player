@@ -343,6 +343,7 @@ PALETTES = {
         "bg": "#d0d0d0",
         "panel": "#e6e6e6",
         "row": "#efefef",
+        "row_cue": "#f6f6f6",
         "text": "#222222",
         "muted": "#555555",
         "played": "#888888",
@@ -367,6 +368,7 @@ PALETTES = {
         "bg": "#262626",
         "panel": "#303030",
         "row": "#3a3a3a",
+        "row_cue": "#484848",
         "text": "#e8e8e8",
         "muted": "#a0a0a0",
         "played": "#8b8b8b",
@@ -395,7 +397,7 @@ THEME = DEFAULT_THEME
 
 def apply_theme(name):
     """Rebind the palette names so widgets built afterwards use the chosen design."""
-    global THEME, COLOR_BG, COLOR_PANEL, COLOR_ROW, COLOR_TEXT, COLOR_MUTED, COLOR_PLAYED
+    global THEME, COLOR_BG, COLOR_PANEL, COLOR_ROW, COLOR_ROW_CUE, COLOR_TEXT, COLOR_MUTED, COLOR_PLAYED
     global COLOR_BORDER, COLOR_READOUT, COLOR_BADGE_IDLE, COLOR_BUTTON, COLOR_BUTTON_ACTIVE
     global COLOR_FIELD, COLOR_VIDEO, TRACK_BG, TRACK_EDGE, RANGE_FILL, PLAYHEAD, MARKER, ACCENT, COLOR_VOLUME
     global COLOR_TIP_BG, COLOR_TIP_FG
@@ -405,6 +407,7 @@ def apply_theme(name):
     COLOR_BG = palette["bg"]
     COLOR_PANEL = palette["panel"]
     COLOR_ROW = palette["row"]
+    COLOR_ROW_CUE = palette["row_cue"]
     COLOR_TEXT = palette["text"]
     COLOR_MUTED = palette["muted"]
     COLOR_PLAYED = palette["played"]
@@ -1145,9 +1148,30 @@ class IconTooltip:
         self.text = text
         self._window = None
         self._after_id = None
+        self.attach(widget)
+
+    def attach(self, widget):
+        """Hover on another part of the same control still uses this one tip."""
         widget.bind("<Enter>", self._schedule, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<Leave>", self._hide_if_left, add="+")
         widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _hide_if_left(self, _event=None):
+        if self._pointer_inside():
+            return
+        self._hide()
+
+    def _pointer_inside(self):
+        try:
+            x, y = self.widget.winfo_pointerxy()
+            hit = self.widget.winfo_containing(x, y)
+        except tk.TclError:
+            return False
+        while hit is not None and not isinstance(hit, (tk.Toplevel, tk.Tk)):
+            if hit is self.widget:
+                return True
+            hit = getattr(hit, "master", None)
+        return hit is self.widget
 
     def _schedule(self, _event=None):
         self._cancel()
@@ -1233,6 +1257,16 @@ class IconTooltip:
             return 0, 0, self.widget.winfo_screenwidth(), self.widget.winfo_screenheight()
 
 
+_MENU_ANCHOR_X = {
+    "n": 0.5, "ne": 1.0, "e": 1.0, "se": 1.0, "s": 0.5,
+    "sw": 0.0, "w": 0.0, "nw": 0.0, "center": 0.5,
+}
+_MENU_ANCHOR_Y = {
+    "n": 0.0, "ne": 0.0, "e": 0.5, "se": 1.0, "s": 1.0,
+    "sw": 1.0, "w": 0.5, "nw": 0.0, "center": 0.5,
+}
+
+
 class DropdownMenu(tk.Frame):
     """In-window menu so GNOME/Wayland cannot place it on another output."""
 
@@ -1255,8 +1289,116 @@ class DropdownMenu(tk.Frame):
             except tk.TclError:
                 pass
         self._cascades = []
+        self.pack_propagate(True)
+        self._scroll_canvas = None
+        self._scroll_body = None
         for child in list(self.winfo_children()):
             child.destroy()
+
+    def place_within(self, x, y, anchor="nw"):
+        """Keep every row inside the parent window, scrolling when the menu is taller."""
+        master = self.master
+        try:
+            master.update_idletasks()
+            self.update_idletasks()
+            limit_w = max(int(master.winfo_width()), 1)
+            limit_h = max(int(master.winfo_height()), 1)
+        except tk.TclError:
+            self.place(x=x, y=y, anchor=anchor)
+            self.lift()
+            return
+        margin = 4
+        available_h = max(1, limit_h - 2 * margin)
+        height = max(self.winfo_reqheight(), 1)
+        if height > available_h:
+            self._limit_height(available_h)
+            self.update_idletasks()
+            height = available_h
+        width = max(self.winfo_reqwidth(), 1)
+        left = int(x - width * _MENU_ANCHOR_X.get(anchor, 0))
+        top = int(y - height * _MENU_ANCHOR_Y.get(anchor, 0))
+        if left + width > limit_w - margin:
+            left = limit_w - margin - width
+        if left < margin:
+            left = margin
+        if top + height > limit_h - margin:
+            top = limit_h - margin - height
+        if top < margin:
+            top = margin
+        self.place(x=left, y=top, anchor="nw")
+        self.lift()
+
+    def _limit_height(self, max_height):
+        canvas = getattr(self, "_scroll_canvas", None)
+        if canvas is not None:
+            try:
+                if canvas.winfo_exists():
+                    canvas.configure(height=max_height)
+                    self.configure(height=max_height)
+                    return
+            except tk.TclError:
+                self._scroll_canvas = None
+        children = list(self.winfo_children())
+        body = tk.Frame(self, bg=COLOR_PANEL)
+        for child in children:
+            info = {}
+            try:
+                info = child.pack_info()
+            except tk.TclError:
+                info = {}
+            options = {
+                key: info[key]
+                for key in ("side", "fill", "expand", "padx", "pady", "ipadx", "ipady", "anchor")
+                if info.get(key) not in (None, "")
+            }
+            child.pack_forget()
+            child.pack(in_=body, **options)
+        canvas = tk.Canvas(
+            self, height=max_height, highlightthickness=0, bd=0, bg=COLOR_PANEL,
+        )
+        bar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        item = canvas.create_window((0, 0), window=body, anchor="nw")
+
+        def sync(_event=None, canvas=canvas, body=body, item=item):
+            try:
+                bbox = canvas.bbox("all")
+                canvas.configure(scrollregion=bbox or (0, 0, 0, 0))
+                canvas.itemconfigure(item, width=max(canvas.winfo_width(), body.winfo_reqwidth()))
+            except tk.TclError:
+                pass
+
+        body.bind("<Configure>", sync)
+        canvas.bind("<Configure>", sync)
+        canvas.configure(
+            yscrollcommand=lambda first, last, bar=bar: bar.set(first, last),
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        self.update_idletasks()
+        self.pack_propagate(False)
+        self.configure(
+            width=max(body.winfo_reqwidth(), 1) + max(bar.winfo_reqwidth(), 1),
+            height=max_height,
+        )
+        self._scroll_canvas = canvas
+        self._scroll_body = body
+        self._bind_menu_wheel(canvas)
+
+    def _bind_menu_wheel(self, canvas):
+        def wheel(event, canvas=canvas):
+            if getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
+                canvas.yview_scroll(3, "units")
+            else:
+                canvas.yview_scroll(-3, "units")
+            return "break"
+
+        pending = [self]
+        while pending:
+            widget = pending.pop()
+            widget.bind("<Button-4>", wheel, add="+")
+            widget.bind("<Button-5>", wheel, add="+")
+            widget.bind("<MouseWheel>", wheel, add="+")
+            pending.extend(widget.winfo_children())
 
     def add_command(
         self, label="", command=None, state="normal", accelerator="",
@@ -1353,10 +1495,14 @@ class DropdownMenu(tk.Frame):
         rx, ry = root.winfo_rootx(), root.winfo_rooty()
         y = row.winfo_rooty() - ry
         if self._cascade_side == "left":
-            submenu.place(x=self.winfo_rootx() - rx, y=y, anchor="ne")
+            x, anchor = self.winfo_rootx() - rx, "ne"
         else:
-            submenu.place(x=self.winfo_rootx() - rx + self.winfo_width(), y=y, anchor="nw")
-        submenu.lift()
+            x, anchor = self.winfo_rootx() - rx + self.winfo_width(), "nw"
+        if isinstance(submenu, DropdownMenu):
+            submenu.place_within(x, y, anchor=anchor)
+        else:
+            submenu.place(x=x, y=y, anchor=anchor)
+            submenu.lift()
 
     def unpost(self):
         self.place_forget()
@@ -1374,10 +1520,9 @@ class DropdownMenu(tk.Frame):
         x = widget.winfo_rootx() - root.winfo_rootx()
         y = widget.winfo_rooty() - root.winfo_rooty() + widget.winfo_height()
         if side == "right":
-            self.place(x=x + widget.winfo_width(), y=y, anchor="ne")
+            self.place_within(x + widget.winfo_width(), y, anchor="ne")
         else:
-            self.place(x=x, y=y, anchor="nw")
-        self.lift()
+            self.place_within(x, y, anchor="nw")
 
 
 class CheckLabel(tk.Label):
@@ -1655,18 +1800,31 @@ def clamp_booth_split_width(
     return max(min_allowed, min(max_left, width))
 
 
-# Playlist metadata columns. Widths are in characters so the header and the
-# rows share one alignment.
+# Playlist metadata, four values on each of two lines. Widths are in
+# characters so the header and the rows share one alignment, and one line
+# still fits when the list is narrow.
+PLAYLIST_META_PER_LINE = 4
 PLAYLIST_META_COLUMNS = (
-    ("duration", "col_duration", 8),
-    ("fps", "col_fps", 13),
-    ("aspect", "col_format", 14),
+    ("duration", "col_duration", 9),
+    ("fps", "col_fps", 11),
+    ("aspect", "col_format", 16),
     ("par", "col_par", 16),
-    ("colorspace", "col_color", 25),
-    ("volume", "col_volume", 5),
-    ("loudness", "col_lufs", 9),
-    ("notes", "col_notes", 16),
+    ("colorspace", "col_color", 22),
+    ("volume", "col_volume", 6),
+    ("loudness", "col_lufs", 12),
+    ("notes", "col_notes", 14),
 )
+
+
+def _playlist_meta_reserve():
+    """Pixels kept beside the file name for one line of metadata."""
+    per = PLAYLIST_META_PER_LINE
+    lines = [
+        PLAYLIST_META_COLUMNS[start:start + per]
+        for start in range(0, len(PLAYLIST_META_COLUMNS), per)
+    ]
+    chars = max(sum(item[2] for item in line) for line in lines)
+    return chars * 8 + per * 8 + 48
 
 
 def source_color_label(entry):
@@ -1676,8 +1834,8 @@ def source_color_label(entry):
 
 
 def playlist_color_text(entry):
-    """SDR/HDR on the first line, the colorspace underneath."""
-    return f"{source_color_label(entry)}\n{format_colorspace_label(entry)}"
+    """SDR/HDR and the colorspace on one line of the playlist row."""
+    return f"{source_color_label(entry)} · {format_colorspace_label(entry)}"
 
 
 def playlist_warning_keys(entry):
@@ -2005,6 +2163,50 @@ _ACTION_ICON_ROWS = (
     "   ##           ",
 )
 _ACTION_ICON_CACHE = {}
+
+
+# A loop for idle media and pause bars for break media.
+_IDLE_ICON_ROWS = (
+    "    ######    ",
+    "  ##      ##  ",
+    " #        # # ",
+    "#          #  ",
+    "#             ",
+    " #            ",
+    "  ##      ##  ",
+    "    ###### #  ",
+    "          #   ",
+    "         #    ",
+    "    ######    ",
+)
+_BREAK_ICON_ROWS = (
+    "               ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "   ###   ###   ",
+    "               ",
+    "               ",
+)
+_CHIP_ICON_CACHE = {}
+
+
+def chip_icon_photo(rows, color):
+    """Small header mark. Cached per drawing and colour."""
+    photo = _CHIP_ICON_CACHE.get((rows, color))
+    if photo is not None:
+        try:
+            photo.width()
+            return photo
+        except tk.TclError:
+            photo = None
+    photo = _bitmap_photo(rows, color)
+    _CHIP_ICON_CACHE[(rows, color)] = photo
+    return photo
 
 
 def action_icon_photo(color):
@@ -3349,12 +3551,8 @@ class VideoPlayerGUI:
 
         media = tk.Frame(bar, bg=COLOR_BG)
         self.media_status = media
-        self.idle_status = tk.Label(
-            media, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="e",
-        )
-        self.break_status = tk.Label(
-            media, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT, anchor="e",
-        )
+        self.idle_status = self._media_chip(media, _IDLE_ICON_ROWS, "idle")
+        self.break_status = self._media_chip(media, _BREAK_ICON_ROWS, "break")
 
     def _build_show_strip(self, parent):
         """House lights and the clip dimmer, clear of the playlist file tools."""
@@ -4253,8 +4451,11 @@ class VideoPlayerGUI:
         self.root.update_idletasks()
         x = int(x_root) - self.root.winfo_rootx()
         y = int(y_root) - self.root.winfo_rooty()
-        menu.place(x=x, y=y, anchor="nw")
-        menu.lift()
+        if isinstance(menu, DropdownMenu):
+            menu.place_within(x, y, anchor="nw")
+        else:
+            menu.place(x=x, y=y, anchor="nw")
+            menu.lift()
         self.root.after_idle(self._allow_menu_dismiss)
 
     def _popup_menu(self, menu, x, y):
@@ -4922,9 +5123,15 @@ class VideoPlayerGUI:
         ]
 
     def _fill_program_menu(self, menu):
-        """Idle media, then break media. Volume setup stays last."""
-        self._fill_ambient_menu(menu, "idle")
-        self._fill_ambient_menu(menu, "break")
+        """Idle media, then break media. Each item opens its own window."""
+        menu.add_command(
+            label=t("idle_media_menu"),
+            command=lambda: self.show_ambient_settings("idle"),
+        )
+        menu.add_command(
+            label=t("break_media_menu"),
+            command=lambda: self.show_ambient_settings("break"),
+        )
         menu.add_separator()
         menu.add_checkbutton(
             label=t("projection_zoom"),
@@ -4966,14 +5173,22 @@ class VideoPlayerGUI:
             highlightthickness=2, highlightbackground=COLOR_PANEL,
         )
         header.grid(row=0, column=0, sticky="ew", padx=2, pady=(4, 0))
-        header.columnconfigure(1, weight=1, minsize=140)
-        tk.Label(header, text="", width=2, bg=COLOR_PANEL).grid(row=0, column=0)
-        tk.Label(header, text="", bg=COLOR_PANEL).grid(row=0, column=1, sticky="ew")
-        for offset, (_key, label_key, width) in enumerate(PLAYLIST_META_COLUMNS):
-            tk.Label(
-                header, text=t(label_key), width=width, anchor="e",
-                bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
-            ).grid(row=0, column=2 + offset, sticky="e", padx=(6, 0))
+        header.columnconfigure(1, weight=1, minsize=80)
+        tk.Label(header, text="", width=2, bg=COLOR_PANEL).grid(row=0, column=0, rowspan=2)
+        tk.Label(header, text="", bg=COLOR_PANEL).grid(row=0, column=1, rowspan=2, sticky="ew")
+        stack = tk.Frame(header, bg=COLOR_PANEL)
+        stack.grid(row=0, column=2, rowspan=2, sticky="e")
+        per = PLAYLIST_META_PER_LINE
+        for line_index in range(0, len(PLAYLIST_META_COLUMNS), per):
+            line = tk.Frame(stack, bg=COLOR_PANEL)
+            line.pack(anchor="e")
+            for column, (_key, label_key, width) in enumerate(
+                PLAYLIST_META_COLUMNS[line_index:line_index + per]
+            ):
+                tk.Label(
+                    line, text=t(label_key), width=width, anchor="e",
+                    bg=COLOR_PANEL, fg=COLOR_MUTED, font=FONT_SMALL,
+                ).grid(row=0, column=column, sticky="e", padx=(8, 0))
         self.playlist_column_header = header
 
     def _build_playlist(self, parent):
@@ -5017,7 +5232,7 @@ class VideoPlayerGUI:
             width = 0
         if width <= 1:
             width = 900
-        return max(140, width - 720)
+        return max(80, width - _playlist_meta_reserve())
 
     def _apply_playlist_name_wrap(self, width=None):
         wrap = self._playlist_name_wrap(width)
@@ -5813,7 +6028,8 @@ class VideoPlayerGUI:
         return self.preview_index == index
 
     def _row_colors(self, index, entry):
-        bg = COLOR_ROW
+        marked = entry_is_action(entry) or getattr(entry, "is_image", False)
+        bg = COLOR_ROW_CUE if marked else COLOR_ROW
         fg = COLOR_PLAYED if entry.played and index != self.program_index else COLOR_TEXT
         if entry.missing:
             fg = COLOR_WARNING
@@ -5850,12 +6066,27 @@ class VideoPlayerGUI:
             widget.bind("<Button-3>", lambda e, i=start_index: self.on_folder_menu(i, e))
             self._bind_playlist_wheel(widget)
 
-    def _meta_column(self, row, column, width, bg, fg):
-        label = tk.Label(
-            row, text="", width=width, anchor="e", bg=bg, fg=fg, font=FONT_SMALL,
-        )
-        label.grid(row=0, column=column, rowspan=2, sticky="e", padx=(6, 0))
-        return label
+    def _meta_lines(self, row, bg, fg):
+        """Two right-hand lines. Each sizes on its own, so a narrow list keeps every value."""
+        stack = tk.Frame(row, bg=bg)
+        stack.grid(row=0, column=2, rowspan=2, sticky="ne")
+        columns = {}
+        frames = [stack]
+        per = PLAYLIST_META_PER_LINE
+        for line_index in range(0, len(PLAYLIST_META_COLUMNS), per):
+            line = tk.Frame(stack, bg=bg)
+            line.pack(anchor="e")
+            frames.append(line)
+            for column, (key, _label_key, width) in enumerate(
+                PLAYLIST_META_COLUMNS[line_index:line_index + per]
+            ):
+                label = tk.Label(
+                    line, text="", width=width, anchor="e", justify="right",
+                    bg=bg, fg=fg, font=FONT_SMALL, wraplength=width * 8,
+                )
+                label.grid(row=0, column=column, sticky="e", padx=(8, 0))
+                columns[key] = label
+        return columns, frames
 
     def _make_row(self, index, entry):
         bg, fg = self._row_colors(index, entry)
@@ -5867,7 +6098,7 @@ class VideoPlayerGUI:
         )
         row.playlist_index = index
         row.pack(fill="x", pady=1, padx=2)
-        row.columnconfigure(1, weight=1, minsize=140)
+        row.columnconfigure(1, weight=1, minsize=80)
 
         cursor = tk.Label(row, text="", width=2, bg=bg, fg=fg, font=FONT_ROW_BOLD)
         cursor.grid(row=0, column=0, rowspan=2)
@@ -5890,9 +6121,7 @@ class VideoPlayerGUI:
         detail.grid(row=1, column=1, sticky="ew", pady=(1, 0))
         filename.tooltip = IconTooltip(filename, getattr(entry, "path", "") or "")
 
-        columns = {}
-        for offset, (key, _label_key, width) in enumerate(PLAYLIST_META_COLUMNS):
-            columns[key] = self._meta_column(row, 2 + offset, width, bg, fg)
+        columns, meta_frames = self._meta_lines(row, bg, fg)
         plain = [filename, *columns.values()]
 
         self.row_widgets.append({
@@ -5900,6 +6129,7 @@ class VideoPlayerGUI:
             "cursor": cursor,
             "name": name,
             "still_icon": still_icon,
+            "meta_frames": meta_frames,
             "plain": plain,
             "filename": filename,
             "detail": detail,
@@ -5931,12 +6161,20 @@ class VideoPlayerGUI:
         if not entry_is_action(entry):
             return entry.filename
         if entry.action == "light":
-            scene = dmx.find_scene(getattr(self, "lights_scenes", None), entry.action_target)
-            name = self._scene_label(scene) if scene is not None else (
-                entry.action_target or entry.filename
-            )
+            name = self._action_light_label(entry) or entry.filename
             return f"{t('ambient_light_scene')}: {name}"
         return t("action_pause_mode")
+
+    def _action_light_label(self, entry):
+        """Scene name for a light action, including the built-in cues."""
+        if getattr(entry, "action", "") != "light":
+            return ""
+        target = getattr(entry, "action_target", "") or ""
+        scene = dmx.find_scene(getattr(self, "lights_scenes", None), target)
+        if scene is not None:
+            return self._scene_label(scene)
+        known = self._default_scene_name(dmx.Scene(dmx.normalize_preset(target) or target, ""))
+        return known or target
 
     def _paint_row(self, index, entry):
         widgets = self.row_widgets[index]
@@ -5947,6 +6185,8 @@ class VideoPlayerGUI:
         )
         for label in widgets["plain"]:
             label.config(bg=bg, fg=fg)
+        for frame in widgets.get("meta_frames", []):
+            frame.config(bg=bg)
         if entry_is_action(entry):
             self._paint_action_row(widgets, entry, bg, fg)
             return
@@ -6034,8 +6274,13 @@ class VideoPlayerGUI:
     def _paint_action_row(self, widgets, entry, bg, fg):
         """An action row shows its cue and never carries the program pointer."""
         widgets["filename"].config(text=self._playlist_row_title(entry), bg=bg, fg=fg)
+        scene = self._action_light_label(entry)
         detail = widgets["detail"]
-        detail.config(text=t("action_entry"), bg=bg, fg=self._location_fg(fg))
+        detail.config(
+            text=scene or t("action_entry"),
+            bg=bg,
+            fg=fg if fg == COLOR_WHITE else ACCENT,
+        )
         try:
             if not detail.winfo_manager():
                 detail.grid(row=1, column=1, sticky="ew", pady=(1, 0))
@@ -6055,8 +6300,13 @@ class VideoPlayerGUI:
             still_tip.text = t("action_entry")
         if not still_icon.winfo_manager():
             still_icon.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 6))
-        for key in ("duration", "volume", "loudness", "fps", "aspect", "par", "colorspace", "notes"):
+        for key in ("duration", "volume", "loudness", "fps", "aspect", "par", "colorspace"):
             widgets[key].config(text="", bg=bg, fg=fg)
+        widgets["notes"].config(
+            text=self._action_light_label(entry),
+            bg=bg,
+            fg=fg if fg == COLOR_WHITE else ACCENT,
+        )
 
     def _sync_clip_settings_warning_option(self):
         """Preview force-warning is only offered while playlist-menu warnings are on."""
@@ -6236,7 +6486,10 @@ class VideoPlayerGUI:
             self.preview_title.config(
                 text=self._playlist_row_title(entry), bg=COLOR_PREVIEW, fg=COLOR_WHITE,
             )
-            self.preview_meta.config(text=t("action_entry"))
+            scene = self._action_light_label(entry)
+            self.preview_meta.config(
+                text=f"{t('action_entry')} · {scene}" if scene else t("action_entry"),
+            )
             self.autoplay_var.set(False)
             self.loop_var.set(False)
             self.played_var.set(bool(entry.played))
@@ -7003,6 +7256,8 @@ class VideoPlayerGUI:
         """Single click: show the clip in the preview window."""
         if not 0 <= index < len(self.playlist):
             return
+        if entry_is_action(self.playlist[index]):
+            return
         self.preview_index = index
         self.preview_live = False
         self.repaint_playlist()
@@ -7022,11 +7277,11 @@ class VideoPlayerGUI:
         action = entry_is_action(entry)
         menu = DropdownMenu(self.root, self)
         busy = playing and index == self.program_index
-        menu.add_command(
-            label=t("set_program"), command=lambda: self.set_program_point(index),
-            state="disabled" if playing or (missing and not action) else "normal",
-        )
         if action:
+            menu.add_command(
+                label=t("action_settings"),
+                command=lambda index=index: self.open_action_settings(index),
+            )
             menu.add_separator()
             menu.add_command(
                 label=t("delete_entry"), command=lambda: self.delete_entry(index),
@@ -7035,6 +7290,10 @@ class VideoPlayerGUI:
             self._post_dropdown(menu, event.x_root, event.y_root)
             self.row_menu = menu
             return
+        menu.add_command(
+            label=t("set_program"), command=lambda: self.set_program_point(index),
+            state="disabled" if playing or missing else "normal",
+        )
         menu.add_separator()
         menu.add_command(label=t("autoplay"), command=lambda: self.toggle_autoplay(index))
         menu.add_command(
@@ -7069,6 +7328,18 @@ class VideoPlayerGUI:
         )
         self._post_dropdown(menu, event.x_root, event.y_root)
         self.row_menu = menu
+
+    def open_action_settings(self, index):
+        """Light cues open the dimmer. Pause mode opens the break-media window."""
+        if not 0 <= index < len(self.playlist):
+            return
+        entry = self.playlist[index]
+        if not entry_is_action(entry):
+            return
+        if getattr(entry, "action", "") == "light":
+            self.show_lights()
+            return
+        self.show_ambient_settings("break")
 
     def on_folder_menu(self, start_index, event):
         """Right click on a folder heading: relink that group from a folder."""
@@ -12249,57 +12520,6 @@ class VideoPlayerGUI:
             "light_setting": "idle_light_scene",
         }
 
-    def _fill_ambient_menu(self, menu, kind):
-        spec = self._ambient_spec(kind)
-        submenu = self._menu(menu)
-        path = getattr(self, spec["path"], "") or ""
-        if path:
-            submenu.add_command(
-                label=os.path.basename(path),
-                command=lambda: self.choose_ambient_media(kind),
-            )
-            submenu.add_command(label=t("idle_none"), command=lambda: self.clear_ambient_media(kind))
-        else:
-            submenu.add_command(
-                label=t("idle_media_choose"),
-                command=lambda: self.choose_ambient_media(kind),
-            )
-        if kind == "idle":
-            submenu.add_separator()
-            submenu.add_entry(
-                label=t("autoplay_delay"),
-                variable=self.autoplay_delay,
-                suffix=t("seconds_short"),
-            )
-        submenu.add_separator()
-        lights = self._menu(submenu)
-        self._fill_light_scene_menu(lights, kind)
-        submenu.add_cascade(label=t("ambient_light_scene"), menu=lights)
-        submenu.add_separator()
-        flag = spec["flag"]
-        variable = getattr(self, flag, None)
-        if variable is None:
-            variable = tk.BooleanVar(master=self.root, value=False)
-            setattr(self, flag, variable)
-        command = self._on_use_default_idle_media if kind == "idle" else self._on_use_default_break_media
-        submenu.add_checkbutton(label=t(spec["title"]), variable=variable, command=command)
-        title = t("idle_media_menu") if kind == "idle" else t("break_media_menu")
-        menu.add_cascade(label=title, menu=submenu)
-
-    def _fill_light_scene_menu(self, menu, kind):
-        current = self._ambient_light_preset(kind)
-        scenes = list(getattr(self, "lights_scenes", None) or [])
-        if not scenes:
-            scenes = [dmx.Scene(dmx.SCENE_BRIGHT, "")]
-        for scene in scenes:
-            label = self._scene_label(scene)
-            if scene.id == current:
-                label = f"✔  {label}"
-            menu.add_command(
-                label=label,
-                command=lambda scene_id=scene.id, ambient=kind: self._set_ambient_light(ambient, scene_id),
-            )
-
     def _stored_ambient_scene(self, value):
         """Scene id for idle or break lighting. Missing values stay on bright."""
         key = dmx.scene_key(value or "hell", getattr(self, "lights_scenes", None)) or dmx.SCENE_BRIGHT
@@ -12331,6 +12551,7 @@ class VideoPlayerGUI:
             self._apply_ambient_lights("idle")
         elif kind == "break" and self.program_state == "PAUSE":
             self._apply_ambient_lights("break")
+        self._refresh_ambient_window(kind)
 
     def choose_ambient_media(self, kind):
         spec = self._ambient_spec(kind)
@@ -12355,64 +12576,244 @@ class VideoPlayerGUI:
         self.clear_ambient_media("idle")
 
     def _refresh_idle_status(self):
-        """Show the chosen idle and break files under the program title."""
+        """Show idle and break icons under the program title, with a file name when one is set."""
         host = getattr(self, "media_status", None)
         idle = getattr(self, "idle_status", None)
         if host is None or idle is None:
             return
         paused = getattr(self, "break_status", None)
-        idle_on = self._show_media_chip(
+        self._show_media_chip(
             idle,
             getattr(self, "idle_media_path", ""),
             t("idle_media"),
             bool(getattr(self, "idle_showing", False)),
             COLOR_PLAYING,
         )
-        break_on = self._show_media_chip(
+        self._show_media_chip(
             paused,
             getattr(self, "break_media_path", ""),
             t("break_media"),
             bool(getattr(self, "break_showing", False)),
             COLOR_PAUSE,
         )
-        shown = idle_on or break_on
         try:
-            for chip, visible in ((idle, idle_on), (paused, break_on)):
+            for chip in (idle, paused):
                 if chip is None:
                     continue
-                managed = bool(chip.winfo_manager())
-                if visible and not managed:
+                if not chip.winfo_manager():
                     options = {"side": "left", "padx": (8, 0)}
                     if chip is idle and paused is not None and paused.winfo_manager():
                         options["before"] = paused
                     chip.pack(**options)
-                elif not visible and managed:
-                    chip.pack_forget()
-            if shown:
-                if not host.winfo_manager():
-                    host.grid(row=1, column=1, sticky="e", pady=(4, 0))
-            elif host.winfo_manager():
-                host.grid_remove()
+            if not host.winfo_manager():
+                host.grid(row=1, column=1, sticky="e", pady=(4, 0))
         except tk.TclError:
             pass
         self._refresh_settings_warning_status()
 
-    def _show_media_chip(self, label, path, caption, active, color):
-        """One labelled file name. The chip takes ``color`` while that file is on screen."""
-        if label is None:
+    def _media_chip(self, parent, icon_rows, kind):
+        """Icon button for one ambient medium, plus the file name when a file is chosen."""
+        chip = tk.Frame(parent, bg=COLOR_BG, cursor="hand2")
+        tip = t("idle_media_menu") if kind == "idle" else t("break_media_menu")
+
+        def open_settings(_event=None, kind=kind):
+            self.show_ambient_settings(kind)
+
+        chip.bind("<Button-1>", open_settings)
+        icon = tk.Button(
+            chip, bd=0, highlightthickness=0, relief="flat",
+            bg=COLOR_BG, activebackground=COLOR_BG, cursor="hand2",
+            command=lambda kind=kind: self.show_ambient_settings(kind),
+        )
+        icon.pack(side="left", padx=(6, 4), pady=1)
+        caption = tk.Button(
+            chip, text="", font=FONT_SMALL, bg=COLOR_BG, fg=COLOR_TEXT,
+            activebackground=COLOR_BG, activeforeground=COLOR_TEXT,
+            anchor="w", bd=0, highlightthickness=0, relief="flat", cursor="hand2",
+            command=lambda kind=kind: self.show_ambient_settings(kind),
+        )
+        chip.icon = icon
+        chip.caption = caption
+        chip.kind = kind
+        chip._icon_rows = icon_rows
+        tooltip = IconTooltip(chip, tip)
+        tooltip.attach(icon)
+        tooltip.attach(caption)
+        icon.tooltip = tooltip
+        return chip
+
+    def _show_media_chip(self, chip, path, caption, active, color):
+        """Keep the icon visible. The chip takes ``color`` while that file is on screen."""
+        if chip is None:
             return False
         name = os.path.basename(path) if path else ""
-        if not name:
-            label._chip_state = None
-            return False
-        text = f"{caption} {name}"
-        bg = color if active else COLOR_BG
-        fg = COLOR_WHITE if active else COLOR_TEXT
-        state = (text, bg, fg)
-        if getattr(label, "_chip_state", None) != state:
-            label.config(text=text, bg=bg, fg=fg, padx=6, pady=1)
-            label._chip_state = state
+        tip = str(caption or "").rstrip(":").strip()
+        tooltip = getattr(chip.icon, "tooltip", None)
+        if tooltip is not None:
+            tooltip.text = tip
+        showing = bool(active and name)
+        bg = color if showing else COLOR_BG
+        fg = COLOR_WHITE if showing else COLOR_TEXT
+        state = (name, bg, fg)
+        if getattr(chip, "_chip_state", None) != state:
+            chip.config(bg=bg)
+            photo = chip_icon_photo(chip._icon_rows, fg)
+            chip.icon.config(image=photo, bg=bg, activebackground=bg)
+            chip.icon.image = photo
+            chip.caption.config(
+                text=name, bg=bg, fg=fg, activebackground=bg, activeforeground=fg,
+            )
+            try:
+                if name and not chip.caption.winfo_manager():
+                    chip.caption.pack(side="left", padx=(0, 6), pady=1)
+                elif not name and chip.caption.winfo_manager():
+                    chip.caption.pack_forget()
+            except tk.TclError:
+                pass
+            chip._chip_state = state
         return True
+
+    def show_ambient_settings(self, kind):
+        """Open the idle or break media settings in their own window."""
+        kind = "break" if kind == "break" else "idle"
+        windows = getattr(self, "ambient_windows", None)
+        if windows is None:
+            windows = {}
+            self.ambient_windows = windows
+        existing = windows.get(kind)
+        if existing is not None:
+            try:
+                if existing.winfo_exists():
+                    existing.deiconify()
+                    self._present_popup(existing)
+                    self._refresh_ambient_window(kind)
+                    return
+            except tk.TclError:
+                windows.pop(kind, None)
+        title = t("idle_media_menu") if kind == "idle" else t("break_media_menu")
+        window = tk.Toplevel(self.root)
+        window.title(title)
+        window.configure(bg=COLOR_BG)
+        window.minsize(420, 220)
+        icon = getattr(self, "icon_image", None)
+        if icon is not None:
+            try:
+                window.iconphoto(True, icon)
+            except tk.TclError:
+                pass
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", lambda kind=kind: self._close_ambient_window(kind))
+        windows[kind] = window
+        buttons = tk.Frame(window, bg=COLOR_BG)
+        buttons.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        tk.Button(
+            buttons, text=t("lights_close"), font=FONT_UI,
+            command=lambda kind=kind: self._close_ambient_window(kind),
+        ).pack(side="right")
+        body = self._install_popup_scroll(window, COLOR_PANEL, padx=10, pady=10)
+        window.file_label = tk.Label(
+            body, text="", bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI_BOLD, anchor="w",
+        )
+        window.file_label.pack(fill="x", padx=8, pady=(8, 6))
+        actions = tk.Frame(body, bg=COLOR_PANEL)
+        actions.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Button(
+            actions, text=t("idle_media_choose"), font=FONT_UI,
+            command=lambda kind=kind: self.choose_ambient_media(kind),
+        ).pack(side="left")
+        tk.Button(
+            actions, text=t("idle_none"), font=FONT_UI,
+            command=lambda kind=kind: self.clear_ambient_media(kind),
+        ).pack(side="left", padx=(8, 0))
+        light_row = tk.Frame(body, bg=COLOR_PANEL)
+        light_row.pack(fill="x", padx=8, pady=(0, 8))
+        tk.Label(
+            light_row, text=t("ambient_light_scene"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI,
+        ).pack(side="left")
+        window.light_var = tk.StringVar()
+        window.light_ids = []
+        window.light_combo = ttk.Combobox(
+            light_row, textvariable=window.light_var, state="readonly", width=24,
+        )
+        window.light_combo.pack(side="left", padx=(8, 0))
+        window.light_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _event, kind=kind: self._ambient_window_light(kind),
+        )
+        if kind == "idle":
+            delay = tk.Frame(body, bg=COLOR_PANEL)
+            delay.pack(fill="x", padx=8, pady=(0, 8))
+            tk.Label(
+                delay, text=t("autoplay_delay"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI,
+            ).pack(side="left")
+            tk.Entry(
+                delay, textvariable=self.autoplay_delay, width=6, font=FONT_UI,
+            ).pack(side="left", padx=(8, 4))
+            tk.Label(
+                delay, text=t("seconds_short"), bg=COLOR_PANEL, fg=COLOR_TEXT, font=FONT_UI,
+            ).pack(side="left")
+        spec = self._ambient_spec(kind)
+        flag = spec["flag"]
+        variable = getattr(self, flag, None)
+        if variable is None:
+            variable = tk.BooleanVar(master=self.root, value=False)
+            setattr(self, flag, variable)
+        command = self._on_use_default_idle_media if kind == "idle" else self._on_use_default_break_media
+        CheckLabel(body, t(spec["title"]), variable, command, COLOR_PANEL).pack(
+            anchor="w", padx=8, pady=(0, 8),
+        )
+        self._refresh_ambient_window(kind)
+        self._open_popup(window, 460, 260)
+
+    def _close_ambient_window(self, kind):
+        windows = getattr(self, "ambient_windows", None) or {}
+        window = windows.pop(kind, None)
+        if window is None:
+            return
+        try:
+            window.destroy()
+        except tk.TclError:
+            pass
+
+    def _refresh_ambient_window(self, kind):
+        windows = getattr(self, "ambient_windows", None) or {}
+        window = windows.get(kind)
+        if window is None:
+            return
+        try:
+            if not window.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        spec = self._ambient_spec(kind)
+        path = getattr(self, spec["path"], "") or ""
+        name = os.path.basename(path) if path else t("idle_none")
+        window.file_label.config(text=name)
+        scenes = list(getattr(self, "lights_scenes", None) or [])
+        if not scenes:
+            scenes = [dmx.Scene(dmx.SCENE_BRIGHT, "")]
+        choices = self._scene_choices(scenes)
+        labels = [label for _scene, label in choices]
+        window.light_ids = [scene.id for scene, _label in choices]
+        window.light_combo.configure(values=labels)
+        current = self._ambient_light_preset(kind)
+        selected = labels[0] if labels else ""
+        for scene, label in choices:
+            if scene.id == current:
+                selected = label
+                break
+        window.light_var.set(selected)
+
+    def _ambient_window_light(self, kind):
+        windows = getattr(self, "ambient_windows", None) or {}
+        window = windows.get(kind)
+        if window is None:
+            return
+        label = window.light_var.get()
+        ids = getattr(window, "light_ids", [])
+        values = list(window.light_combo.cget("values"))
+        if label in values:
+            self._set_ambient_light(kind, ids[values.index(label)])
 
     def _refresh_settings_warning_status(self):
         label = getattr(self, "settings_warning_status", None)
@@ -12496,6 +12897,7 @@ class VideoPlayerGUI:
         if label is not None:
             label.set(os.path.basename(path) if path else t("idle_none"))
         self._refresh_idle_status()
+        self._refresh_ambient_window(kind)
         if kind == "break" and self.program_state == "PAUSE":
             self._show_break_media()
             self.refresh_all()

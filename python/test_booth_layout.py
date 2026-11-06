@@ -188,14 +188,61 @@ class PlaylistMarkTests(unittest.TestCase):
         finally:
             root.destroy()
 
-    def test_playlist_color_stacks_status_above_the_space(self):
+    def test_action_row_menu_has_no_program_pointer(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.root = root
+            app.playlist = [PlaylistEntry(
+                path="", filename="Hell", action="light", action_target="bright",
+            )]
+            app.program_state = "OFF"
+            app.program_index = 0
+            app.on_row_click = lambda index: None
+            posted = {}
+            app._post_dropdown = lambda menu, x, y: posted.update(menu=menu)
+            event = type("E", (), {"x_root": 0, "y_root": 0})()
+            cinema_gui.VideoPlayerGUI.on_row_menu(app, 0, event)
+            labels = [
+                child.cget("text") if isinstance(child, tk.Label) else "---"
+                for child in posted["menu"].winfo_children()
+            ]
+            self.assertEqual(labels, ["Einstellungen", "---", "Eintrag löschen"])
+            self.assertNotIn("Programmzeiger setzen", labels)
+            opened = []
+            app.show_lights = lambda: opened.append("lights")
+            app.show_ambient_settings = lambda kind: opened.append(kind)
+            cinema_gui.VideoPlayerGUI.open_action_settings(app, 0)
+            app.playlist.append(PlaylistEntry(
+                path="", filename="Pause", action="mode", action_target="PAUSE",
+            ))
+            cinema_gui.VideoPlayerGUI.open_action_settings(app, 1)
+            self.assertEqual(opened, ["lights", "break"])
+        finally:
+            root.destroy()
+
+    def test_clicking_an_action_leaves_the_preview_alone(self):
+        app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        film = _entry(path="/media/a.mp4")
+        action = PlaylistEntry(path="", filename="Hell", action="light", action_target="bright")
+        app.playlist = [film, action]
+        app.preview_index = 0
+        app.preview_live = False
+        called = []
+        app.show_preview_clip = lambda entry: called.append(entry)
+        app.repaint_playlist = lambda: called.append("paint")
+        cinema_gui.VideoPlayerGUI.on_row_click(app, 1)
+        self.assertEqual(app.preview_index, 0)
+        self.assertEqual(called, [])
+
+    def test_playlist_color_joins_status_and_space(self):
         entry = _entry(colorspace="Rec.709", color_range="", hdr_status="SDR")
-        self.assertEqual(cinema_gui.playlist_color_text(entry), "Native SDR\nRec.709")
+        self.assertEqual(cinema_gui.playlist_color_text(entry), "Native SDR · Rec.709")
         entry.hdr_status = "HDR"
         entry.colorspace = "Rec.2020 PQ"
         self.assertEqual(
             cinema_gui.playlist_color_text(entry),
-            "HDR (output unverified)\nRec.2020 PQ",
+            "HDR (output unverified) · Rec.2020 PQ",
         )
 
     def test_color_warning_is_a_note(self):
@@ -335,11 +382,17 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(self.app.row_widgets[0]["filename"].cget("text"), "one.mp4")
         self.assertIn("HD", self.app.row_widgets[0]["detail"].cget("text"))
         header = self.app.playlist_column_header
-        texts = [
-            child.cget("text")
-            for child in header.winfo_children()
-            if isinstance(child, tk.Label) and child.cget("text")
-        ]
+
+        def header_labels(widget):
+            found = []
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Label) and child.cget("text"):
+                    found.append(child)
+                found.extend(header_labels(child))
+            return found
+
+        titles = header_labels(header)
+        texts = [child.cget("text") for child in titles]
         self.assertEqual(
             texts,
             ["Dauer", "fps", "Format", "PAR", "Farbe", "Laut", "LUFS", "Hinweise"],
@@ -347,6 +400,36 @@ class BoothChromeTests(unittest.TestCase):
         self.assertTrue(headers[0].bind("<Button-3>"))
         self.assertEqual(headers[0].group_start, 0)
         self.assertEqual(headers[1].group_start, 2)
+        self.assertLess(titles[0].winfo_rooty(), titles[4].winfo_rooty())
+
+    def test_playlist_meta_stays_inside_a_narrow_list(self):
+        self.root.geometry("640x360+20+20")
+        parent = tk.Frame(self.root, width=640, height=300)
+        parent.pack(fill="both", expand=True)
+        parent.pack_propagate(False)
+        parent.rowconfigure(0, weight=1)
+        parent.columnconfigure(0, weight=1)
+        cinema_gui.VideoPlayerGUI._build_playlist(self.app, parent)
+        self.app.playlist = [
+            _entry(
+                path="/media/films/day/one.mp4",
+                fps=24, aspect="16:9", pixel_aspect="1:1",
+                colorspace="Rec.709", hdr_status="SDR",
+                volume=80, loudness_lufs=-23.0, duration=90,
+                autoplay=True,
+            ),
+        ]
+        cinema_gui.VideoPlayerGUI.refresh_playlist(self.app)
+        self.root.update()
+        row = self.app.row_widgets[0]
+        right = row["row"].winfo_rootx() + row["row"].winfo_width()
+        self.assertLess(row["duration"].winfo_rooty(), row["colorspace"].winfo_rooty())
+        self.assertLess(row["filename"].winfo_rootx(), row["duration"].winfo_rootx())
+        self.assertLess(row["duration"].winfo_rootx(), row["par"].winfo_rootx())
+        for key in ("duration", "fps", "aspect", "par", "colorspace", "volume", "loudness", "notes"):
+            widget = row[key]
+            self.assertNotEqual(widget.cget("text"), "")
+            self.assertLessEqual(widget.winfo_rootx() + widget.winfo_width(), right + 2)
 
     def test_folder_heading_relinks_files_found_in_the_chosen_folder(self):
         root = tempfile.mkdtemp()
@@ -449,6 +532,8 @@ class BoothChromeTests(unittest.TestCase):
         ]
         cinema_gui.VideoPlayerGUI.refresh_playlist(self.app)
         self.root.update_idletasks()
+        self.assertEqual(self.app.row_widgets[0]["row"].cget("bg"), cinema_gui.COLOR_ROW_CUE)
+        self.assertEqual(self.app.row_widgets[1]["row"].cget("bg"), cinema_gui.COLOR_ROW)
         still = self.app.row_widgets[0]["still_icon"]
         film = self.app.row_widgets[1]["still_icon"]
         self.assertTrue(still.winfo_ismapped())
@@ -463,6 +548,7 @@ class BoothChromeTests(unittest.TestCase):
         cinema_gui.VideoPlayerGUI._paint_row(self.app, 0, self.app.playlist[0])
         self.root.update_idletasks()
         self.assertEqual(self._icon_pixel(still.image, 0, 0), cinema_gui.COLOR_WHITE)
+        self.assertEqual(self.app.row_widgets[0]["row"].cget("bg"), cinema_gui.COLOR_PLAYING)
         self.assertEqual(self.app.row_widgets[0]["volume"].cget("text"), "")
         self.assertEqual(self.app.row_widgets[0]["loudness"].cget("text"), "")
         self.assertEqual(self.app.row_widgets[1]["volume"].cget("text"), "80%")
@@ -813,8 +899,16 @@ class BoothChromeTests(unittest.TestCase):
         cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
         self.root.update()
         self.assertFalse(hasattr(self.app, "next_clip"))
-        self.assertEqual(self.app.idle_status.cget("text"), "Leerlaufmedium: pause.mp4")
-        self.assertEqual(self.app.break_status.cget("text"), "Pausenmedium: interval.mp4")
+        self.assertEqual(self.app.idle_status.caption.cget("text"), "pause.mp4")
+        self.assertEqual(self.app.break_status.caption.cget("text"), "interval.mp4")
+        self.assertNotIn("Leerlaufmedium", self.app.idle_status.caption.cget("text"))
+        self.assertNotIn("Pausenmedium", self.app.break_status.caption.cget("text"))
+        self.assertEqual(self.app.idle_status.icon.tooltip.text, "Leerlaufmedium")
+        self.assertEqual(self.app.break_status.icon.tooltip.text, "Pausenmedium")
+        self.assertFalse(hasattr(self.app.idle_status.caption, "tooltip"))
+        self.assertFalse(hasattr(self.app.break_status.caption, "tooltip"))
+        self.assertLess(self.app.idle_status.icon.winfo_rootx(), self.app.idle_status.caption.winfo_rootx())
+        self.assertLess(self.app.break_status.icon.winfo_rootx(), self.app.break_status.caption.winfo_rootx())
         self.assertLess(self.app.idle_status.winfo_rootx(), self.app.break_status.winfo_rootx())
         self.assertGreater(self.app.media_status.winfo_rooty(), self.app.now_playing.winfo_rooty())
         self.assertLessEqual(
@@ -828,7 +922,11 @@ class BoothChromeTests(unittest.TestCase):
         self.app.break_showing = True
         cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
         self.assertEqual(self.app.break_status.cget("bg"), cinema_gui.COLOR_PAUSE)
-        self.assertEqual(self.app.break_status.cget("fg"), cinema_gui.COLOR_WHITE)
+        self.assertEqual(self.app.break_status.caption.cget("fg"), cinema_gui.COLOR_WHITE)
+        self.assertEqual(
+            self._icon_pixel(self.app.break_status.icon.image, 4, 2),
+            cinema_gui.COLOR_WHITE.lower(),
+        )
         self.assertEqual(self.app.idle_status.cget("bg"), cinema_gui.COLOR_BG)
         moves = []
         for chip in (self.app.idle_status, self.app.break_status, self.app.media_status):
@@ -849,6 +947,26 @@ class BoothChromeTests(unittest.TestCase):
             chip.grid_remove = counting(remove, "grid_remove")
         cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
         self.assertEqual(moves, [])
+        opened = []
+        self.app.show_ambient_settings = lambda kind: opened.append(kind)
+        self.app.idle_status.icon.invoke()
+        self.app.idle_status.caption.invoke()
+        self.app.idle_status.event_generate("<Button-1>")
+        self.app.break_status.icon.invoke()
+        self.app.break_status.caption.invoke()
+        self.app.break_status.event_generate("<Button-1>")
+        self.assertEqual(opened, ["idle", "idle", "idle", "break", "break", "break"])
+        self.app.idle_media_path = ""
+        self.app.break_media_path = ""
+        self.app.idle_showing = False
+        self.app.break_showing = False
+        cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
+        self.root.update()
+        self.assertTrue(self.app.idle_status.icon.winfo_ismapped())
+        self.assertTrue(self.app.break_status.icon.winfo_ismapped())
+        self.assertFalse(self.app.idle_status.caption.winfo_ismapped())
+        self.assertFalse(self.app.break_status.caption.winfo_ismapped())
+        self.assertTrue(self.app.media_status.winfo_ismapped())
 
     def test_media_folder_window_keeps_its_buttons_on_screen(self):
         self.app.root = self.root
@@ -1684,19 +1802,52 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                "Leerlaufmedium  >",
-                "Pausenmedium  >",
+                "Leerlaufmedium",
+                "Pausenmedium",
                 "Einstellungswarnung",
                 "Lautstärke einstellen",
             ],
         )
-        idle_menu, break_menu = program._cascades
-        idle_text = " ".join(child.cget("text") for child in idle_menu.winfo_children() if isinstance(child, tk.Label))
-        break_text = " ".join(child.cget("text") for child in break_menu.winfo_children() if isinstance(child, tk.Label))
-        self.assertIn("Standard-Leerlaufmedium verwenden", idle_text)
-        self.assertIn("Standard-Pausenmedium verwenden", break_text)
-        self.assertNotIn("Standard-Pausenmedium verwenden", idle_text)
-        self.assertNotIn("Standard-Leerlaufmedium verwenden", break_text)
+        self.assertEqual(program._cascades, [])
+        program.place(x=10, y=10)
+        self.root.update()
+        self.app.icon_image = None
+        self.app.lights_scenes = []
+        self.app.idle_light_scene = "bright"
+        self.app.break_light_scene = "bright"
+        self.app.settings = {}
+        self.app.idle_media = tk.StringVar(master=self.root, value="")
+        self.app.break_media = tk.StringVar(master=self.root, value="")
+        self.app.break_media_path = ""
+        self.app.use_default_break_media = tk.BooleanVar(master=self.root, value=False)
+        for label, kind, marker in (
+            (program.winfo_children()[0], "idle", "Standard-Leerlaufmedium verwenden"),
+            (program.winfo_children()[1], "break", "Standard-Pausenmedium verwenden"),
+        ):
+            label.event_generate("<Button-1>")
+            self.root.update()
+            window = self.app.ambient_windows[kind]
+            self.assertEqual(window.title(), label.cget("text"))
+
+            def texts(widget):
+                found = []
+                try:
+                    found.append(str(widget.cget("text")))
+                except tk.TclError:
+                    pass
+                for child in widget.winfo_children():
+                    found.extend(texts(child))
+                return found
+
+            body = " ".join(texts(window))
+            self.assertIn(marker, body)
+            self.assertIn("Lichtszene", body)
+            self.assertIn("Datei wählen…", body)
+            if kind == "idle":
+                self.assertIn("Schwarzpause:", body)
+            else:
+                self.assertNotIn("Schwarzpause:", body)
+            window.destroy()
         children = program.winfo_children()
         self.assertIsInstance(children[-2], tk.Frame)
         self.assertEqual(children[-1].cget("text"), "Lautstärke einstellen")
@@ -1974,6 +2125,57 @@ class BoothChromeTests(unittest.TestCase):
         self.assertLessEqual(label.winfo_reqwidth(), canvas.winfo_width())
         self.assertLessEqual(self.app.about_logo.width(), canvas.winfo_width())
         window.destroy()
+
+    def test_context_menu_at_the_bottom_keeps_every_row_reachable(self):
+        self.app.root = self.root
+        self.app._posted_menu = None
+        self.app.row_menu = None
+        self.root.geometry("480x240+30+30")
+        self.root.update()
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        for index in range(12):
+            menu.add_command(label=f"Eintrag {index}")
+        cinema_gui.VideoPlayerGUI._post_dropdown(
+            self.app,
+            menu,
+            self.root.winfo_rootx() + 16,
+            self.root.winfo_rooty() + self.root.winfo_height() - 6,
+        )
+        self.root.update()
+        bottom = self.root.winfo_rooty() + self.root.winfo_height()
+        self.assertGreaterEqual(menu.winfo_rooty(), self.root.winfo_rooty())
+        self.assertLessEqual(menu.winfo_rooty() + menu.winfo_height(), bottom)
+        menu._scroll_canvas.yview_moveto(1.0)
+        self.root.update()
+        last = menu._scroll_body.pack_slaves()[-1]
+        self.assertEqual(last.cget("text"), "Eintrag 11")
+        self.assertGreaterEqual(last.winfo_rooty(), menu.winfo_rooty())
+        self.assertLessEqual(
+            last.winfo_rooty() + last.winfo_height(),
+            menu.winfo_rooty() + menu.winfo_height(),
+        )
+
+    def test_short_context_menu_slides_up_from_the_bottom_edge(self):
+        self.app.root = self.root
+        self.app._posted_menu = None
+        self.app.row_menu = None
+        self.root.geometry("480x420+30+30")
+        self.root.update()
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        for index in range(4):
+            menu.add_command(label=f"Eintrag {index}")
+        click_y = self.root.winfo_rooty() + self.root.winfo_height() - 6
+        cinema_gui.VideoPlayerGUI._post_dropdown(
+            self.app, menu, self.root.winfo_rootx() + 16, click_y,
+        )
+        self.root.update()
+        bottom = self.root.winfo_rooty() + self.root.winfo_height()
+        labels = [child for child in menu.winfo_children() if isinstance(child, tk.Label)]
+        self.assertFalse(hasattr(menu, "_scroll_canvas") and menu._scroll_canvas)
+        self.assertEqual(labels[-1].cget("text"), "Eintrag 3")
+        self.assertGreaterEqual(labels[0].winfo_rooty(), self.root.winfo_rooty())
+        self.assertLessEqual(labels[-1].winfo_rooty() + labels[-1].winfo_height(), bottom)
+        self.assertLess(menu.winfo_rooty(), click_y)
 
 
 class BeamerSummaryTests(unittest.TestCase):
@@ -3538,9 +3740,13 @@ class PlaylistActionTests(unittest.TestCase):
         self.app._make_row(0, light)
         self.root.update_idletasks()
         row = self.app.row_widgets[0]
+        self.assertEqual(row["row"].cget("bg"), cinema_gui.COLOR_ROW_CUE)
+        self.assertEqual(row["filename"].cget("bg"), cinema_gui.COLOR_ROW_CUE)
         self.assertEqual(row["cursor"].cget("text"), " ")
         self.assertIn("Lichtszene", row["filename"].cget("text"))
-        self.assertEqual(row["detail"].cget("text"), "Aktion")
+        self.assertEqual(row["detail"].cget("text"), "Hell")
+        self.assertEqual(row["detail"].cget("fg"), cinema_gui.ACCENT)
+        self.assertEqual(row["notes"].cget("text"), "Hell")
         self.assertEqual(row["duration"].cget("text"), "")
         icon = row["still_icon"]
         self.assertTrue(icon.winfo_ismapped())
