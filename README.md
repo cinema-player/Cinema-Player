@@ -42,7 +42,7 @@ The burger menu in the header covers booth setup:
 
 - Fullscreen on the control monitor (`F11`)
 - Media directories (saved folders offered when importing into the playlist)
-- **Program** — Use default Idle Media (checkbox; remembered, applies the file in `media/idle` at startup)
+- **Program** — Idle media and Break media. Each submenu holds its default-file switch and dimmer scene.
 - **Playlist** — check files, reset, autosave, load last playlist, analyze loudness
 - **System settings**
   - **Beamer**
