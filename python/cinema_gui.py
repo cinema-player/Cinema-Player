@@ -12180,14 +12180,18 @@ class VideoPlayerGUI:
             for chip, visible in ((idle, idle_on), (paused, break_on)):
                 if chip is None:
                     continue
-                if chip.winfo_manager():
+                managed = bool(chip.winfo_manager())
+                if visible and not managed:
+                    options = {"side": "left", "padx": (8, 0)}
+                    if chip is idle and paused is not None and paused.winfo_manager():
+                        options["before"] = paused
+                    chip.pack(**options)
+                elif not visible and managed:
                     chip.pack_forget()
-                if visible:
-                    chip.pack(side="left", padx=(8, 0))
             if shown:
                 if not host.winfo_manager():
                     host.grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(4, 0))
-            else:
+            elif host.winfo_manager():
                 host.grid_remove()
         except tk.TclError:
             pass
@@ -12199,15 +12203,15 @@ class VideoPlayerGUI:
             return False
         name = os.path.basename(path) if path else ""
         if not name:
-            try:
-                label.pack_forget()
-            except tk.TclError:
-                pass
+            label._chip_state = None
             return False
-        if active:
-            label.config(text=f"{caption} {name}", bg=color, fg=COLOR_WHITE, padx=6, pady=1)
-        else:
-            label.config(text=f"{caption} {name}", bg=COLOR_BG, fg=COLOR_TEXT, padx=6, pady=1)
+        text = f"{caption} {name}"
+        bg = color if active else COLOR_BG
+        fg = COLOR_WHITE if active else COLOR_TEXT
+        state = (text, bg, fg)
+        if getattr(label, "_chip_state", None) != state:
+            label.config(text=text, bg=bg, fg=fg, padx=6, pady=1)
+            label._chip_state = state
         return True
 
     def _refresh_settings_warning_status(self):

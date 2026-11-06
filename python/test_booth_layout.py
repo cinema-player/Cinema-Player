@@ -829,6 +829,25 @@ class BoothChromeTests(unittest.TestCase):
         self.assertEqual(self.app.break_status.cget("bg"), cinema_gui.COLOR_PAUSE)
         self.assertEqual(self.app.break_status.cget("fg"), cinema_gui.COLOR_WHITE)
         self.assertEqual(self.app.idle_status.cget("bg"), cinema_gui.COLOR_BG)
+        moves = []
+        for chip in (self.app.idle_status, self.app.break_status, self.app.media_status):
+            pack = chip.pack
+            forget = chip.pack_forget
+            grid = chip.grid
+            remove = chip.grid_remove
+
+            def counting(method, name, calls=moves):
+                def wrapped(*args, **kwargs):
+                    calls.append(name)
+                    return method(*args, **kwargs)
+                return wrapped
+
+            chip.pack = counting(pack, "pack")
+            chip.pack_forget = counting(forget, "pack_forget")
+            chip.grid = counting(grid, "grid")
+            chip.grid_remove = counting(remove, "grid_remove")
+        cinema_gui.VideoPlayerGUI._refresh_idle_status(self.app)
+        self.assertEqual(moves, [])
 
     def test_media_folder_window_keeps_its_buttons_on_screen(self):
         self.app.root = self.root
