@@ -30,7 +30,13 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 import cinema_gui
-from cinema_player import PlaylistEntry, folder_created, reload_entry_metadata
+from cinema_player import (
+    PlaylistEntry,
+    entry_is_action,
+    folder_created,
+    media_file_available,
+    reload_entry_metadata,
+)
 from language import set_language, t
 
 
@@ -3408,6 +3414,144 @@ class ProgramVolumeGlideTests(unittest.TestCase):
         self.assertLess(self.sent[1], 30)
         self.assertGreater(self.sent[len(self.sent) // 2], self.sent[1])
         self.assertEqual(self.sent, sorted(self.sent))
+
+
+class PlaylistActionTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app.playlist = []
+        self.app.program_index = 0
+        self.app.program_state = "OFF"
+        self.app.preview_index = None
+        self.app.preview_live = True
+        self.app.zoom_confirmed_index = None
+        self.app.lights_scenes = []
+        self.app.lights_sequences = []
+        self.app._remote_action = False
+        self.app.projection_zoom = tk.BooleanVar(master=self.root, value=False)
+        self.applied = []
+        self.app._apply_lights = lambda preset, force=False: self.applied.append(("light", preset))
+        self.app._enter_pause_mode = lambda: self.applied.append("pause") or True
+        self.app.apply_beamer_mode_for_pointer = lambda: None
+        self.app._autosave_playlist = lambda: None
+        self.app.repaint_playlist = lambda: None
+        self.app.refresh_status = lambda: None
+        self.app.refresh_all = lambda: None
+        self._real_available = cinema_gui.media_file_available
+
+        def available(entry):
+            if entry_is_action(entry):
+                return True
+            path = str(getattr(entry, "path", "") or "")
+            return path.endswith(".mp4") and "gone" not in path
+
+        cinema_gui.media_file_available = available
+
+    def tearDown(self):
+        cinema_gui.media_file_available = self._real_available
+        self.root.destroy()
+        set_language("en")
+
+    def test_action_rows_have_no_media_file_and_round_trip(self):
+        stored = PlaylistEntry.from_dict({
+            "path": "",
+            "filename": "Hell",
+            "action": "light",
+            "action_target": "bright",
+        })
+        self.assertTrue(entry_is_action(stored))
+        self.assertTrue(media_file_available(stored))
+        self.assertFalse(reload_entry_metadata(stored))
+        self.assertFalse(stored.missing)
+        self.assertEqual(stored.action_target, "bright")
+
+    def test_reaching_actions_runs_them_and_rests_on_the_next_clip(self):
+        film = _entry(path="/media/a.mp4")
+        light = PlaylistEntry(path="", filename="Hell", action="light", action_target="bright")
+        pause = PlaylistEntry(path="", filename="Pause", action="mode", action_target="PAUSE")
+        nxt = _entry(path="/media/b.mp4")
+        self.app.playlist = [film, light, pause, nxt]
+        self.app.program_index = 0
+        self.assertTrue(self.app._skip_to_playable(inclusive=False, run_actions=True))
+        self.assertEqual(self.app.program_index, 3)
+        self.assertEqual(self.applied, [("light", "bright"), "pause"])
+        self.assertTrue(self.app._action_entered_pause)
+        self.assertTrue(light.played)
+        self.assertTrue(pause.played)
+        self.assertIn("Lichtszene", self.app._playlist_row_title(light))
+        self.assertEqual(self.app._playlist_row_title(pause), "Pausenmodus")
+
+    def test_the_pointer_steps_back_when_nothing_follows_an_action(self):
+        film = _entry(path="/media/a.mp4")
+        light = PlaylistEntry(path="", filename="Hell", action="light", action_target="hell")
+        self.app.playlist = [film, light]
+        self.app.program_index = 0
+        self.assertFalse(self.app._skip_to_playable(inclusive=False, run_actions=True))
+        self.assertEqual(self.app.program_index, 0)
+        self.assertEqual(self.applied, [("light", "hell")])
+
+    def test_setting_the_pointer_on_an_action_runs_it_and_moves_on(self):
+        film = _entry(path="/media/a.mp4")
+        pause = PlaylistEntry(path="", filename="Pause", action="mode", action_target="PAUSE")
+        nxt = _entry(path="/media/b.mp4")
+        self.app.playlist = [film, pause, nxt]
+        self.app.program_state = "PROGRAM"
+        self.app.set_program_point(1)
+        self.assertEqual(self.app.program_index, 2)
+        self.assertEqual(self.applied, ["pause"])
+
+    def test_insert_action_lands_after_the_program_pointer(self):
+        film = _entry(path="/media/a.mp4")
+        nxt = _entry(path="/media/b.mp4")
+        self.app.playlist = [film, nxt]
+        self.app.program_index = 0
+        self.app.insert_playlist_action("mode", "PAUSE", "Pausenmodus")
+        self.assertEqual(self.app.program_index, 0)
+        self.assertTrue(entry_is_action(self.app.playlist[1]))
+        self.assertEqual(self.app.playlist[1].action, "mode")
+        self.assertEqual(self.app.playlist[2].path, "/media/b.mp4")
+        self.assertEqual(self.applied, [])
+
+    def test_insert_action_button_sits_beside_import(self):
+        self.app.transport_icons = {}
+        frame = tk.Frame(self.root)
+        self.app._build_playlist_header(frame)
+        names = [
+            getattr(child, "icon_name", None)
+            for child in self.app.playlist_tool_buttons.winfo_children()
+        ]
+        self.assertEqual(names[:3], ["video_import", "insert_action", "playlist_load"])
+        self.assertEqual(self.app.insert_action_button.tooltip.text, "Aktion einfügen")
+
+    def test_action_row_shows_the_cue_and_hides_the_pointer(self):
+        self.app.playlist_canvas = tk.Canvas(self.root, width=900, height=200)
+        self.app.playlist_inner = tk.Frame(self.root)
+        self.app.media_directories = []
+        self.app.row_widgets = []
+        light = PlaylistEntry(path="", filename="Hell", action="light", action_target="hell")
+        self.app.playlist = [light]
+        self.app.program_index = 0
+        self.app._make_row(0, light)
+        self.root.update_idletasks()
+        row = self.app.row_widgets[0]
+        self.assertEqual(row["cursor"].cget("text"), " ")
+        self.assertIn("Lichtszene", row["filename"].cget("text"))
+        self.assertEqual(row["detail"].cget("text"), "Aktion")
+        self.assertEqual(row["duration"].cget("text"), "")
+
+    def test_program_clock_ignores_action_rows(self):
+        pause = PlaylistEntry(
+            path="", filename="Pause", action="mode", action_target="PAUSE",
+            is_image=True, display_time=0,
+        )
+        total = cinema_gui.program_remaining_seconds(
+            [_entry(duration=10, autoplay=True), pause, _entry(duration=5)],
+            0, 0, False, autoplay_delay=4,
+        )
+        self.assertEqual(total, 19)
 
 
 if __name__ == "__main__":

@@ -124,6 +124,7 @@ from cinema_player import (
     gpu_context_for_mpv,
     hwdec_for_gpu,
     media_file_available,
+    entry_is_action,
     reload_entry_metadata,
     parse_bitrate_bps,
     parse_mpv_count,
@@ -1772,7 +1773,11 @@ def entry_video_seconds(entry):
 
 
 def playlist_video_seconds(playlist):
-    return sum(entry_video_seconds(entry) for entry in playlist or [])
+    return sum(
+        entry_video_seconds(entry)
+        for entry in playlist or []
+        if not entry_is_action(entry)
+    )
 
 
 def entry_waits_for_operator(entry):
@@ -1789,6 +1794,8 @@ def entry_waits_for_operator(entry):
 
 def _later_program_entry(playlist, index):
     for entry in playlist[index + 1:]:
+        if entry_is_action(entry):
+            continue
         if not getattr(entry, "missing", False):
             return True
     return False
@@ -1852,7 +1859,7 @@ def program_remaining_seconds(playlist, index, position, playing, autoplay_delay
         delay = 0.0
     total = 0.0
     for cursor, entry in enumerate(items[index:], start=index):
-        if getattr(entry, "missing", False):
+        if entry_is_action(entry) or getattr(entry, "missing", False):
             continue
         if entry_waits_for_operator(entry):
             return None
@@ -3982,6 +3989,9 @@ class VideoPlayerGUI:
         buttons.grid(row=0, column=2, sticky="e", padx=(8, 0))
         self.playlist_tool_buttons = buttons
         self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
+        self.insert_action_button = self._icon_button(
+            buttons, "insert_action", self.insert_action_menu, t("insert_action"), t("insert_action"),
+        )
         self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
         self._icon_button(buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"))
 
@@ -5746,6 +5756,9 @@ class VideoPlayerGUI:
         apply_playlist_warnings(self.playlist, self.projection_zoom.get())
         last_group = None
         for index, entry in enumerate(self.playlist):
+            if entry_is_action(entry):
+                self._make_row(index, entry)
+                continue
             group = self._playlist_group_label(entry)
             if group and group != last_group:
                 self._make_folder_header(group, index)
@@ -5769,6 +5782,8 @@ class VideoPlayerGUI:
         fg = COLOR_PLAYED if entry.played and index != self.program_index else COLOR_TEXT
         if entry.missing:
             fg = COLOR_WARNING
+        if entry_is_action(entry):
+            return bg, fg
         if index == self.program_index:
             if self.program_state == "PLAYING":
                 bg, fg = COLOR_PLAYING, COLOR_WHITE
@@ -5876,6 +5891,18 @@ class VideoPlayerGUI:
         parts = [part for part in (entry.resolution_label, technical) if part]
         return " · ".join(parts)
 
+    def _playlist_row_title(self, entry):
+        """Filename, or the cue name for an action row."""
+        if not entry_is_action(entry):
+            return entry.filename
+        if entry.action == "light":
+            scene = dmx.find_scene(getattr(self, "lights_scenes", None), entry.action_target)
+            name = self._scene_label(scene) if scene is not None else (
+                entry.action_target or entry.filename
+            )
+            return f"{t('ambient_light_scene')}: {name}"
+        return t("action_pause_mode")
+
     def _paint_row(self, index, entry):
         widgets = self.row_widgets[index]
         bg, fg = self._row_colors(index, entry)
@@ -5885,6 +5912,9 @@ class VideoPlayerGUI:
         )
         for label in widgets["plain"]:
             label.config(bg=bg, fg=fg)
+        if entry_is_action(entry):
+            self._paint_action_row(widgets, entry, bg, fg)
+            return
         detail = self._row_detail_text(entry)
         widgets["detail"].config(text=detail, bg=bg, fg=self._location_fg(fg))
         try:
@@ -5962,6 +5992,29 @@ class VideoPlayerGUI:
             bg=bg,
             fg=COLOR_WARNING if note_warning else (fg if fg == COLOR_WHITE else ACCENT),
         )
+
+    def _paint_action_row(self, widgets, entry, bg, fg):
+        """An action row shows its cue and never carries the program pointer."""
+        widgets["filename"].config(text=self._playlist_row_title(entry), bg=bg, fg=fg)
+        detail = widgets["detail"]
+        detail.config(text=t("action_entry"), bg=bg, fg=self._location_fg(fg))
+        try:
+            if not detail.winfo_manager():
+                detail.grid(row=1, column=1, sticky="ew", pady=(1, 0))
+        except tk.TclError:
+            pass
+        tip = getattr(widgets["filename"], "tooltip", None)
+        if tip is not None:
+            tip.text = t("action_entry")
+        widgets["cursor"].config(text=" ", bg=bg, fg=fg)
+        widgets["name"].config(bg=bg)
+        still_icon = widgets["still_icon"]
+        still_icon.config(image="")
+        still_icon.image = None
+        if still_icon.winfo_manager():
+            still_icon.grid_remove()
+        for key in ("duration", "volume", "loudness", "fps", "aspect", "par", "colorspace", "notes"):
+            widgets[key].config(text="", bg=bg, fg=fg)
 
     def _sync_clip_settings_warning_option(self):
         """Preview force-warning is only offered while playlist-menu warnings are on."""
@@ -6049,6 +6102,22 @@ class VideoPlayerGUI:
 
     def apply_preview_layout(self, entry):
         """Stills keep Autoplay, display time, fade, and the dimmer. Loop stays hidden."""
+        if entry_is_action(entry):
+            for name in ("preview_controls",):
+                widget = getattr(self, name, None)
+                if widget is not None:
+                    try:
+                        widget.grid_remove()
+                    except tk.TclError:
+                        pass
+            for name in ("preview_clip_settings", "preview_image_settings", "preview_played_box"):
+                widget = getattr(self, name, None)
+                if widget is not None:
+                    try:
+                        widget.pack_forget()
+                    except tk.TclError:
+                        pass
+            return
         image = bool(entry and entry.is_image)
         if image:
             self.preview_controls.grid_remove()
@@ -6121,6 +6190,17 @@ class VideoPlayerGUI:
         self._set_preview_lufs(entry)
         self._set_preview_envelope(entry)
         self.refresh_transport()
+        if entry_is_action(entry):
+            self.preview_title.config(
+                text=self._playlist_row_title(entry), bg=COLOR_PREVIEW, fg=COLOR_WHITE,
+            )
+            self.preview_meta.config(text=t("action_entry"))
+            self.autoplay_var.set(False)
+            self.loop_var.set(False)
+            self.played_var.set(bool(entry.played))
+            self._set_play_light_combo("")
+            self._update_preview_bar()
+            return
         if not entry:
             self.preview_meta.config(text=t("length_empty"))
             self.audio_combo["values"] = ["--"]
@@ -6895,13 +6975,24 @@ class VideoPlayerGUI:
             return
         self.on_row_click(index)
         playing = self.program_state == "PLAYING"
-        missing = bool(self.playlist[index].missing)
+        entry = self.playlist[index]
+        missing = bool(entry.missing)
+        action = entry_is_action(entry)
         menu = DropdownMenu(self.root, self)
         busy = playing and index == self.program_index
         menu.add_command(
             label=t("set_program"), command=lambda: self.set_program_point(index),
-            state="disabled" if playing or missing else "normal",
+            state="disabled" if playing or (missing and not action) else "normal",
         )
+        if action:
+            menu.add_separator()
+            menu.add_command(
+                label=t("delete_entry"), command=lambda: self.delete_entry(index),
+                state="disabled" if busy else "normal",
+            )
+            self._post_dropdown(menu, event.x_root, event.y_root)
+            self.row_menu = menu
+            return
         menu.add_separator()
         menu.add_command(label=t("autoplay"), command=lambda: self.toggle_autoplay(index))
         menu.add_command(
@@ -7065,7 +7156,7 @@ class VideoPlayerGUI:
         if self.program_state == "PLAYING":
             return
         entry = self.current_entry()
-        if not entry or entry.missing or entry.is_image:
+        if not entry or entry.missing or entry.is_image or entry_is_action(entry):
             return
         if not media_file_available(entry):
             return
@@ -7098,19 +7189,60 @@ class VideoPlayerGUI:
             or not self.output_manager.refresh_close(before.refresh, mode.refresh)
         )
 
-    def _skip_to_playable(self, inclusive=True):
-        """Move the program cursor to the next clip whose file is still on disk."""
+    def _skip_to_playable(self, inclusive=True, run_actions=False):
+        """Move the program cursor to the next clip whose file is still on disk.
+
+        Action rows are never a resting place. With ``run_actions``, each one
+        is executed on the way past and the cursor lands on the clip after it.
+        """
         if not self.playlist:
             return False
         start = self.program_index if inclusive else self.program_index + 1
         start = max(0, start)
         for index in range(start, len(self.playlist)):
             entry = self.playlist[index]
+            if entry_is_action(entry):
+                if run_actions:
+                    self._execute_playlist_action(entry)
+                continue
             entry.missing = not media_file_available(entry)
             if not entry.missing:
                 self._move_program_cursor(index)
                 return True
+        self._park_off_action()
         return False
+
+    def _park_off_action(self):
+        """Leave an action row for the previous real clip, without running cues."""
+        if not self.playlist:
+            return
+        index = min(max(self.program_index, 0), len(self.playlist) - 1)
+        if not entry_is_action(self.playlist[index]):
+            return
+        for earlier in range(index - 1, -1, -1):
+            entry = self.playlist[earlier]
+            if entry_is_action(entry):
+                continue
+            if media_file_available(entry):
+                self._move_program_cursor(earlier)
+                return
+
+    def _execute_playlist_action(self, entry):
+        """Run one cue. The caller moves the program pointer afterwards."""
+        if not entry_is_action(entry):
+            return
+        entry.played = True
+        if entry.action == "light":
+            self._apply_lights(entry.action_target or dmx.SCENE_BRIGHT, force=True)
+            self._action_set_light = True
+            return
+        if (entry.action_target or "PAUSE").upper() == "PAUSE":
+            if self._enter_pause_mode():
+                self._action_entered_pause = True
+
+    def _clear_action_flags(self):
+        self._action_entered_pause = False
+        self._action_set_light = False
 
     def confirm_projection_zoom(self, prompt=True):
         """Ask as soon as the program cursor lands on a clip that needs a settings change."""
@@ -7145,7 +7277,17 @@ class VideoPlayerGUI:
     def set_program_point(self, index):
         if self.program_state == "PLAYING" or not 0 <= index < len(self.playlist):
             return
-        if self.playlist[index].missing:
+        entry = self.playlist[index]
+        if entry_is_action(entry):
+            self._clear_action_flags()
+            self.program_index = index
+            self._skip_to_playable(inclusive=True, run_actions=True)
+            self.repaint_playlist()
+            self.refresh_status()
+            if self.program_state == "PROGRAM" and not self._action_entered_pause:
+                self.confirm_projection_zoom(prompt=not self._remote_action)
+            return
+        if entry.missing:
             return
         self._move_program_cursor(index)
         self.repaint_playlist()
@@ -7185,6 +7327,8 @@ class VideoPlayerGUI:
         if self.program_state == "PLAYING" and index == self.program_index:
             return
         entry = self.playlist[index]
+        if entry_is_action(entry):
+            return
         if reload_entry_metadata(entry):
             self._match_entry_refresh(entry)
         if self.preview_index == index and not self.preview_live:
@@ -7193,7 +7337,7 @@ class VideoPlayerGUI:
 
     def _match_entry_refresh(self, entry):
         """Store whether the projector can show this clip's size and rate."""
-        if entry.missing or entry.is_image or not media_file_available(entry):
+        if entry_is_action(entry) or entry.missing or entry.is_image or not media_file_available(entry):
             return
         try:
             if not self.output_manager.video_output:
@@ -7282,7 +7426,7 @@ class VideoPlayerGUI:
 
     def _entry_is_in_playlist_folder(self, entry):
         folder = self._playlist_folder_path()
-        if not folder or entry is None:
+        if not folder or entry is None or entry_is_action(entry):
             return False
         try:
             return os.path.dirname(os.path.abspath(entry.path)) == folder
@@ -7382,6 +7526,8 @@ class VideoPlayerGUI:
         if self.program_index > index:
             self.program_index -= 1
         self.program_index = max(0, min(self.program_index, len(self.playlist) - 1))
+        if self.playlist and entry_is_action(self.playlist[self.program_index]):
+            self._skip_to_playable(inclusive=True, run_actions=False)
         self.apply_beamer_mode_for_pointer()
         self.refresh_all()
 
@@ -7469,6 +7615,8 @@ class VideoPlayerGUI:
             self.program_index = self._index_of(program_entry)
         if preview_entry is not None:
             self.preview_index = self._index_of(preview_entry)
+        if self.playlist and entry_is_action(self.playlist[self.program_index]):
+            self._skip_to_playable(inclusive=True, run_actions=False)
         self.refresh_playlist()
 
     def _entry_at(self, index):
@@ -9892,15 +10040,16 @@ class VideoPlayerGUI:
         for index, item in enumerate(self.playlist):
             playlist.append({
                 "index": index,
-                "filename": item.filename,
-                "duration": item.duration,
-                "duration_label": self._row_duration_text(item),
+                "filename": self._playlist_row_title(item),
+                "duration": 0 if entry_is_action(item) else item.duration,
+                "duration_label": "" if entry_is_action(item) else self._row_duration_text(item),
                 "played": bool(item.played),
-                "missing": bool(item.missing),
+                "missing": bool(item.missing) and not entry_is_action(item),
                 "autoplay": bool(item.autoplay),
                 "loop": bool(item.loop),
                 "is_image": bool(item.is_image),
-                "current": index == self.program_index,
+                "action": item.action if entry_is_action(item) else "",
+                "current": index == self.program_index and not entry_is_action(item),
             })
         clip = None
         if entry is not None:
@@ -10899,6 +11048,74 @@ class VideoPlayerGUI:
         self.playlist_path = path
         self._set_playlist_name(os.path.basename(path))
         self.remember_playlist_dir(path)
+
+    def insert_action_menu(self):
+        """Choose a dimmer scene or a program mode and insert that cue."""
+        menu = DropdownMenu(self.root, self)
+        lights = DropdownMenu(self.root, self)
+        scenes = list(getattr(self, "lights_scenes", None) or [])
+        if not scenes:
+            lights.add_command(label=t("ambient_light_scene"), state="disabled")
+        else:
+            for scene, label in self._scene_choices(scenes):
+                lights.add_command(
+                    label=label,
+                    command=lambda scene_id=scene.id, name=label: self.insert_playlist_action(
+                        "light", scene_id, name,
+                    ),
+                )
+        menu.add_cascade(label=t("ambient_light_scene"), menu=lights)
+        modes = DropdownMenu(self.root, self)
+        modes.add_command(
+            label=t("action_pause_mode"),
+            command=lambda: self.insert_playlist_action("mode", "PAUSE", t("action_pause_mode")),
+        )
+        menu.add_cascade(label=t("program_mode"), menu=modes)
+        button = getattr(self, "insert_action_button", None)
+        if button is not None:
+            try:
+                x = button.winfo_rootx()
+                y = button.winfo_rooty() + button.winfo_height()
+            except tk.TclError:
+                x = self.root.winfo_pointerx()
+                y = self.root.winfo_pointery()
+        else:
+            x = self.root.winfo_pointerx()
+            y = self.root.winfo_pointery()
+        self._post_dropdown(menu, x, y)
+
+    def insert_playlist_action(self, kind, target, label):
+        """Insert a cue after the selected row, or after the program pointer."""
+        title = label or ""
+        if kind == "light":
+            title = f"{t('ambient_light_scene')}: {label}"
+        entry = PlaylistEntry(
+            path="",
+            filename=title,
+            action=kind,
+            action_target=str(target or ""),
+        )
+        if (
+            self.preview_index is not None
+            and not self.preview_live
+            and 0 <= self.preview_index < len(self.playlist)
+        ):
+            at = self.preview_index + 1
+        elif self.playlist:
+            at = min(self.program_index + 1, len(self.playlist))
+        else:
+            at = 0
+        self.playlist.insert(at, entry)
+        if at <= self.program_index:
+            self.program_index += 1
+        if self.playlist:
+            self.program_index = min(self.program_index, len(self.playlist) - 1)
+        if self.preview_index is not None and at <= self.preview_index:
+            self.preview_index += 1
+        if self.playlist and entry_is_action(self.playlist[self.program_index]):
+            self._skip_to_playable(inclusive=True, run_actions=False)
+        self._autosave_playlist()
+        self.refresh_all()
 
     def add_media(self, path):
         try:
@@ -12521,6 +12738,11 @@ class VideoPlayerGUI:
             self.preview_placeholder.config(text=t("preview_unavailable", error=exc))
 
     def show_preview_clip(self, entry, follow_live=False, start=None, play=None):
+        if entry_is_action(entry):
+            if getattr(self, "preview_mpv", None) and self.preview_mpv.process:
+                self.preview_mpv.stop()
+            self._reset_preview_meter()
+            return
         if not entry or entry.missing or not media_file_available(entry):
             if entry:
                 entry.missing = True
@@ -12721,7 +12943,11 @@ class VideoPlayerGUI:
         if self.program_state == "OFF":
             # Start only arms the program; Resume then rolls the clip.
             self.program_state = "PROGRAM"
-            self._skip_to_playable(inclusive=True)
+            self._clear_action_flags()
+            self._skip_to_playable(inclusive=True, run_actions=True)
+            if self._action_entered_pause:
+                self.refresh_all()
+                return
             self.ensure_main_output()
             # Arming brings up the idle background, if one is set.
             self.blank_output()
@@ -12761,7 +12987,12 @@ class VideoPlayerGUI:
             delay = int(self.autoplay_seconds() * 1000)
             self.autoplay_after_id = self.root.after(delay, self.start_current_clip)
             return
-        if not self._skip_to_playable(inclusive=True):
+        self._clear_action_flags()
+        found = self._skip_to_playable(inclusive=True, run_actions=True)
+        if self._action_entered_pause:
+            self.refresh_all()
+            return
+        if not found:
             self.program_state = "PROGRAM"
             self.blank_output()
             self.refresh_all()
@@ -12785,7 +13016,10 @@ class VideoPlayerGUI:
         except Exception as exc:
             if not media_file_available(entry):
                 entry.missing = True
-                if self._skip_to_playable(inclusive=False):
+                if self._skip_to_playable(inclusive=False, run_actions=True):
+                    if self._action_entered_pause:
+                        self.refresh_all()
+                        return
                     self.start_current_clip()
                     return
                 self.program_state = "PROGRAM"
@@ -13201,9 +13435,14 @@ class VideoPlayerGUI:
         self.blank_output()
         self.preview_mpv.stop()
         self._reset_preview_meter()
-        self._skip_to_playable(inclusive=False)
+        self._clear_action_flags()
+        self._skip_to_playable(inclusive=False, run_actions=True)
         self.lights_end_sent = False
-        self._apply_lights(dmx.resolve_end_preset("", False, self.lights_scenes))
+        if self._action_entered_pause:
+            self.refresh_all()
+            return True
+        if not self._action_set_light:
+            self._apply_lights(dmx.resolve_end_preset("", False, self.lights_scenes))
         self.refresh_all()
         self.confirm_projection_zoom(prompt=not self._remote_action)
         return True
@@ -13261,10 +13500,15 @@ class VideoPlayerGUI:
             entry.played = True
         autoplay = bool(entry and entry.autoplay)
         self.program_state = "PROGRAM"
-        has_next = self._skip_to_playable(inclusive=False)
+        self._clear_action_flags()
+        has_next = self._skip_to_playable(inclusive=False, run_actions=True)
+        if self._action_entered_pause:
+            self.lights_end_sent = False
+            self.refresh_all()
+            return
         # The delay stays black; the idle background only follows when nothing is queued.
         self.blank_output(show_idle=not (autoplay and has_next))
-        if not self.lights_end_sent:
+        if not self.lights_end_sent and not self._action_set_light:
             self._apply_lights(
                 dmx.resolve_end_preset("", autoplay and has_next, self.lights_scenes)
             )
@@ -13869,6 +14113,8 @@ class VideoPlayerGUI:
         if not self.playlist:
             return False
         for item in self.playlist[index + 1:]:
+            if entry_is_action(item):
+                continue
             if not item.missing and media_file_available(item):
                 return True
         return False

@@ -1013,6 +1013,9 @@ class PlaylistEntry:
     light_start: str = ""
     light_end: str = ""
     force_settings_warning: bool = False
+    # "" is a media clip. "light" applies a dimmer scene, "mode" a program mode.
+    action: str = ""
+    action_target: str = ""
 
     def __post_init__(self):
         if not self.filename:
@@ -1023,6 +1026,8 @@ class PlaylistEntry:
         self.light_start = str(self.light_start or "")
         self.light_end = str(self.light_end or "")
         self.force_settings_warning = bool(self.force_settings_warning)
+        self.action = str(self.action or "")
+        self.action_target = str(self.action_target or "")
         self.audio_envelope = normalize_envelope(self.audio_envelope)
 
     @classmethod
@@ -2052,8 +2057,20 @@ def compose_mpv_vf(*parts):
     return ",".join(part for part in parts if part)
 
 
+ACTION_LIGHT = "light"
+ACTION_MODE = "mode"
+ACTION_PAUSE = "PAUSE"
+
+
+def entry_is_action(entry):
+    """True for a playlist row that runs a cue instead of a media file."""
+    return bool(entry and getattr(entry, "action", "") in (ACTION_LIGHT, ACTION_MODE))
+
+
 def media_file_available(entry):
     """True when the playlist entry still points at a readable file."""
+    if entry_is_action(entry):
+        return True
     return bool(entry and entry.path and os.path.isfile(entry.path))
 
 
@@ -2073,7 +2090,7 @@ def apply_playlist_warnings(entries, projection_zoom):
     previous_par = None
     previous_colorspace = None
     for entry in entries:
-        if entry.missing:
+        if entry_is_action(entry) or entry.missing:
             entry.aspect_warning = False
             entry.par_warning = False
             entry.colorspace_warning = False
@@ -2108,7 +2125,7 @@ def apply_playlist_warnings(entries, projection_zoom):
 
 def clip_needs_settings_warning(entry, enabled=True):
     """True when this clip should show setting! and the beamer confirmation."""
-    if not enabled or not entry or getattr(entry, "missing", False):
+    if not enabled or not entry or entry_is_action(entry) or getattr(entry, "missing", False):
         return False
     if getattr(entry, "force_settings_warning", False):
         return True
@@ -2133,6 +2150,9 @@ def reload_entry_metadata(entry):
     Returns True when the file was read. A missing file is flagged and left
     otherwise unchanged.
     """
+    if entry_is_action(entry):
+        entry.missing = False
+        return False
     if not media_file_available(entry):
         entry.missing = True
         return False
