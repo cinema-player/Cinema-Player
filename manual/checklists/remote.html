@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cinema Player — Fernsteuerung</title>
+  <link rel="stylesheet" href="checklist.css">
+</head>
+<body data-title-de="Cinema Player — Fernsteuerung" data-title-en="Cinema Player — Remote control">
+  <div class="screen-bar">
+    <a href="../index.html">
+      <span data-lang="de">Bedienungsanleitung</span>
+      <span data-lang="en">Operator manual</span>
+    </a>
+    <p class="hint">
+      <span data-lang="de">A5, beidseitig. Vorderseite Grundfunktionen, Rückseite erweitert.</span>
+      <span data-lang="en">A5, double-sided. Front is the basic steps, back is the rest.</span>
+    </p>
+    <button type="button" data-set-lang="de">Deutsch</button>
+    <button type="button" data-set-lang="en">English</button>
+    <button type="button" data-print>
+      <span data-lang="de">Drucken</span>
+      <span data-lang="en">Print</span>
+    </button>
+  </div>
+  <main class="desk">
+    <article class="sheet front">
+      <p class="kicker">Cinema Player</p>
+      <h1>
+        <span data-lang="de">Fernsteuerung</span>
+        <span data-lang="en">Remote control</span>
+      </h1>
+      <p class="face">
+        <span data-lang="de">Vorderseite · Grundfunktionen</span>
+        <span data-lang="en">Front · Basic steps</span>
+      </p>
+      <ol class="checks">
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Einschalten.</strong>
+          <span data-lang="de">Funk-Icon rechts oben. Die API im Fenster einschalten. Das Icon wird grün.</span>
+          <strong data-lang="en">Switch on.</strong>
+          <span data-lang="en">Radio icon at the top right. Turn the API on in that window. The icon turns green.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">WLAN.</strong>
+          <span data-lang="de">Telefon und Pult im selben Netz.</span>
+          <strong data-lang="en">WLAN.</strong>
+          <span data-lang="en">Phone and booth on the same network.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Verbinden.</strong>
+          <span data-lang="de">QR-Code scannen. Sonst die angezeigte Adresse in den Browser und denselben Token eintragen.</span>
+          <strong data-lang="en">Connect.</strong>
+          <span data-lang="en">Scan the QR code. If that fails, open the shown address and enter the same token.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Transport.</strong>
+          <span data-lang="de">Start schaltet scharf, Weiter startet den Film. Stop, Pause und Still fragen wie am Pult.</span>
+          <strong data-lang="en">Transport.</strong>
+          <span data-lang="en">Start arms the show, Resume starts the film. Stop, Pause, and Still ask the same questions as the booth.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Uhren.</strong>
+          <span data-lang="de">Rest und Ende sind die großen Zeiten.</span>
+          <strong data-lang="en">Clocks.</strong>
+          <span data-lang="en">Remaining and End are the large times.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Playlist.</strong>
+          <span data-lang="de">Eine Zeile antippen setzt den Programmzeiger. Während der Wiedergabe ist das gesperrt und muss bestätigt werden.</span>
+          <strong data-lang="en">Playlist.</strong>
+          <span data-lang="en">Tap a row to set the program pointer. During playback it is locked, and it asks for confirmation.</span>
+        </p></li>
+      </ol>
+    </article>
+    <article class="sheet back">
+      <p class="kicker">Cinema Player</p>
+      <h1>
+        <span data-lang="de">Fernsteuerung</span>
+        <span data-lang="en">Remote control</span>
+      </h1>
+      <p class="face">
+        <span data-lang="de">Rückseite · Erweiterte Funktionen</span>
+        <span data-lang="en">Back · Further steps</span>
+      </p>
+      <ol class="checks">
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Token.</strong>
+          <span data-lang="de">Das Feld verschwindet, sobald die Verbindung steht.</span>
+          <strong data-lang="en">Token.</strong>
+          <span data-lang="en">The field hides once the phone is connected.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Offline.</strong>
+          <span data-lang="de">Reißt die Verbindung ab, wird die Seite grau und zeigt Offline, bis sie wieder da ist.</span>
+          <strong data-lang="en">Offline.</strong>
+          <span data-lang="en">If the link drops, the page turns grey and shows Offline until it returns.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Licht.</strong>
+          <span data-lang="de">Die Szenentasten sitzen unten und folgen der Lichtsteuerung am Pult.</span>
+          <strong data-lang="en">Lights.</strong>
+          <span data-lang="en">The scene buttons sit at the bottom and follow the booth light control.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Lautstärke.</strong>
+          <span data-lang="de">Speichern schreibt den Pegel in den Playlist-Eintrag. Bei einem Standbild ist der Block ausgeblendet.</span>
+          <strong data-lang="en">Volume.</strong>
+          <span data-lang="en">Save writes the level into the playlist entry. On a still, that block is hidden.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Lautstärke einstellen.</strong>
+          <span data-lang="de">Startet nur am Pult, der Status wird lila. Danach lassen sich Balken und Hüllkurve auch am Telefon ziehen. Pause und Still fragen dann nicht.</span>
+          <strong data-lang="en">Set volume.</strong>
+          <span data-lang="en">Started only at the booth; the status turns purple. The bar and envelope can then be dragged on the phone. Pause and Still no longer ask.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Port und Token.</strong>
+          <span data-lang="de">Stehen im Fenster der Fernsteuerung, falls der QR-Code nicht reicht.</span>
+          <strong data-lang="en">Port and token.</strong>
+          <span data-lang="en">They are in the remote window, if the QR code is not enough.</span>
+        </p></li>
+      </ol>
+    </article>
+  </main>
+  <script src="lang.js"></script>
+</body>
+</html>

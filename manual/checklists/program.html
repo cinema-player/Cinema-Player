@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cinema Player — Programm anlegen</title>
+  <link rel="stylesheet" href="checklist.css">
+</head>
+<body data-title-de="Cinema Player — Programm anlegen" data-title-en="Cinema Player — Build a programme">
+  <div class="screen-bar">
+    <a href="../index.html">
+      <span data-lang="de">Bedienungsanleitung</span>
+      <span data-lang="en">Operator manual</span>
+    </a>
+    <p class="hint">
+      <span data-lang="de">A5, beidseitig. Vorderseite Grundfunktionen, Rückseite erweitert.</span>
+      <span data-lang="en">A5, double-sided. Front is the basic steps, back is the rest.</span>
+    </p>
+    <button type="button" data-set-lang="de">Deutsch</button>
+    <button type="button" data-set-lang="en">English</button>
+    <button type="button" data-print>
+      <span data-lang="de">Drucken</span>
+      <span data-lang="en">Print</span>
+    </button>
+  </div>
+  <main class="desk">
+    <article class="sheet front">
+      <p class="kicker">Cinema Player</p>
+      <h1>
+        <span data-lang="de">Programm anlegen</span>
+        <span data-lang="en">Build a programme</span>
+      </h1>
+      <p class="face">
+        <span data-lang="de">Vorderseite · Grundfunktionen</span>
+        <span data-lang="en">Front · Basic steps</span>
+      </p>
+      <ol class="checks">
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Neue Playlist.</strong>
+          <span data-lang="de">Playlist verwalten, links vom Import. Einen Namen vergeben, nicht „unbekannt“.</span>
+          <strong data-lang="en">New playlist.</strong>
+          <span data-lang="en">Manage playlists, to the left of Import. Give it a real name, not “untitled”.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Speichern.</strong>
+          <span data-lang="de">Es entsteht ein Ordner dieses Namens im Importpfad. Die Playlist liegt darin.</span>
+          <strong data-lang="en">Save.</strong>
+          <span data-lang="en">A folder of that name is created in the import path. The playlist is stored there.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Medien importieren.</strong>
+          <span data-lang="de">Datei oder ganzer Ordner. Zuerst erscheinen die Medienverzeichnisse und eingehängte Laufwerke.</span>
+          <strong data-lang="en">Import media.</strong>
+          <span data-lang="en">A file or a whole folder. Media directories and plugged-in drives are offered first.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Reihenfolge.</strong>
+          <span data-lang="de">Einträge ziehen. Der Pfeil links ist der Film, der als nächstes läuft.</span>
+          <strong data-lang="en">Order.</strong>
+          <span data-lang="en">Drag the rows. The arrow on the left is the clip that plays next.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Noch einmal speichern.</strong>
+          <span data-lang="de">Ohne Änderung ist der Knopf inaktiv. Mit Autosave zeigt er das Auto-Icon.</span>
+          <strong data-lang="en">Save again.</strong>
+          <span data-lang="en">With nothing to write, the button is inactive. Autosave shows the auto icon.</span>
+        </p></li>
+      </ol>
+    </article>
+    <article class="sheet back">
+      <p class="kicker">Cinema Player</p>
+      <h1>
+        <span data-lang="de">Programm anlegen</span>
+        <span data-lang="en">Build a programme</span>
+      </h1>
+      <p class="face">
+        <span data-lang="de">Rückseite · Erweiterte Funktionen</span>
+        <span data-lang="en">Back · Further steps</span>
+      </p>
+      <ol class="checks">
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Aktion einfügen.</strong>
+          <span data-lang="de">Neben dem Import: eine Lichtszene oder der Pausenmodus. Der Zeiger bleibt nicht auf der Aktion.</span>
+          <strong data-lang="en">Insert action.</strong>
+          <span data-lang="en">Next to Import: a light scene or pause mode. The pointer does not stay on the action.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Stick oder Platte.</strong>
+          <span data-lang="de">Verlinken spielt vom Datenträger. Kopieren legt die Dateien in den Playlistordner. Dafür braucht es einen echten Namen.</span>
+          <strong data-lang="en">A stick or a disk.</strong>
+          <span data-lang="en">Link plays from that drive. Copy puts the files in the playlist folder. Copying needs a real playlist name.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Import und Export.</strong>
+          <span data-lang="de">In Playlist verwalten. Die Frage ist, ob die Mediendateien mit der Playlist kopiert werden.</span>
+          <strong data-lang="en">Import and export.</strong>
+          <span data-lang="en">In Manage playlists. The question is whether the media files travel with the playlist.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Aktualisieren.</strong>
+          <span data-lang="de">Liest die Dateien neu. Eine fehlende Datei wird rot und im Ablauf übersprungen.</span>
+          <strong data-lang="en">Refresh.</strong>
+          <span data-lang="en">Re-reads the files. A missing file turns red and is skipped in the show.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Rechtsklick.</strong>
+          <span data-lang="de">Löschen, neu verknüpfen, oder in den Playlistordner kopieren. Die Datei auf dem Stick bleibt, außer sie wird ausdrücklich gelöscht.</span>
+          <strong data-lang="en">Right-click.</strong>
+          <span data-lang="en">Delete, relink, or copy into the playlist folder. The file on the stick stays unless you delete it on purpose.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Während der Vorstellung.</strong>
+          <span data-lang="de">Import, Aktion, Verwalten und Speichern sind versteckt. Der Pfeil neben dem Namen blendet sie ein.</span>
+          <strong data-lang="en">During the show.</strong>
+          <span data-lang="en">Import, action, manage, and save are hidden. The arrow beside the name brings them back.</span>
+        </p></li>
+      </ol>
+    </article>
+  </main>
+  <script src="lang.js"></script>
+</body>
+</html>

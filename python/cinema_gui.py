@@ -125,6 +125,7 @@ from cinema_player import (
     hwdec_for_gpu,
     media_file_available,
     entry_is_action,
+    fitted_dim_point,
     reload_entry_metadata,
     parse_bitrate_bps,
     parse_mpv_count,
@@ -286,6 +287,8 @@ def resume_reaction_name(program_state):
 def resume_reaction_color(name):
     return COLOR_PROGRAM if name == "program" else COLOR_PLAYING
 COLOR_PREVIEW = "#c9a227"
+# Light cue on the progress bar. Gold reads on both the light and the dark track.
+DIM_MARKER = "#e39b2b"
 COLOR_CALIBRATION = "#500070"
 COLOR_WARNING = "#d32f2f"
 COLOR_WHITE = "#ffffff"
@@ -434,7 +437,7 @@ apply_theme(THEME)
 
 
 class RangeProgressBar(tk.Canvas):
-    """Seek bar that highlights the In/Out play range."""
+    """Seek bar that highlights the In/Out play range and the dim point."""
 
     def __init__(self, master, on_seek, can_seek=None, **kwargs):
         kwargs.setdefault("height", 36)
@@ -448,18 +451,20 @@ class RangeProgressBar(tk.Canvas):
         self.position = 0.0
         self.in_point = None
         self.out_point = None
+        self.dim_point = None
         self.dragging = False
         self.bind("<Configure>", lambda e: self.redraw())
         self.bind("<ButtonPress-1>", self._press)
         self.bind("<B1-Motion>", self._drag)
         self.bind("<ButtonRelease-1>", self._release)
 
-    def set_state(self, duration, position, in_point=None, out_point=None):
+    def set_state(self, duration, position, in_point=None, out_point=None, dim_point=None):
         self.duration = self._finite_time(duration)
         if not self.dragging:
             self.position = self._finite_time(position)
         self.in_point = in_point
         self.out_point = out_point
+        self.dim_point = dim_point
         self.redraw()
 
     @staticmethod
@@ -525,6 +530,7 @@ class RangeProgressBar(tk.Canvas):
             else:
                 self.create_text(rx0, 1, text=t("in_mark"), anchor="n", fill=MARKER, font=FONT_SMALL)
                 self.create_text(rx1, 1, text=t("out_mark"), anchor="n", fill=MARKER, font=FONT_SMALL)
+        self._draw_dim_marker(y0, y1)
         if self.duration > 0:
             px = self._x_for_time(self.position)
             self.create_line(px, y0, px, y1, fill=PLAYHEAD, width=2)
@@ -534,6 +540,20 @@ class RangeProgressBar(tk.Canvas):
                 px - 5, y0 + 7,
                 fill=PLAYHEAD, outline=COLOR_WHITE,
             )
+
+    def _draw_dim_marker(self, y0, y1):
+        """Gold cue where the house lights change."""
+        if self.duration <= 0 or self.dim_point is None:
+            return
+        try:
+            dim = float(self.dim_point)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(dim) or dim < 0 or dim > self.duration:
+            return
+        dx = self._x_for_time(dim)
+        self.create_line(dx, y0 - 3, dx, y1 + 3, fill=DIM_MARKER, width=3)
+        self.create_text(dx, 1, text=t("dim_mark"), anchor="n", fill=DIM_MARKER, font=FONT_SMALL)
 
     def _seek_at(self, event, dragging):
         if self.duration <= 0:
@@ -778,6 +798,54 @@ def program_file_loaded_starts_clip(playing, keepalive, file_matches):
 def program_playback_restart_starts_clip(playing, keepalive, idle, file_matches):
     """playback-restart arms EOF only for the clip that is actually on screen."""
     return bool(playing and file_matches and not keepalive and not idle)
+
+
+# A loop or a seek that lands this close after the cue still counts as reaching it.
+DIM_CUE_CATCH_SECONDS = 0.35
+# Playhead jitter smaller than this must not arm the cue a second time.
+DIM_CUE_REARM_SECONDS = 0.15
+
+
+def entry_dim_point(entry):
+    """Dim time of a video clip, or None for stills and action rows."""
+    if entry is None or getattr(entry, "is_image", False) or entry_is_action(entry):
+        return None
+    return getattr(entry, "dim_point", None)
+
+
+def dim_cue_transition(position, previous, dim_point, scene, armed, rolling=True):
+    """Whether the playhead just reached the dim point.
+
+    Returns ``(fire, armed, position)``. The cue runs once per pass. A jump
+    back to before the point, such as a loop, arms it again. While the picture
+    is held the crossing stays armed and runs once playback continues.
+    """
+    if not scene or dim_point is None:
+        return False, False, position
+    try:
+        position = float(position)
+        point = float(dim_point)
+    except (TypeError, ValueError):
+        return False, bool(armed), previous
+    if not math.isfinite(position) or not math.isfinite(point):
+        return False, bool(armed), previous
+    try:
+        previous_value = None if previous is None else float(previous)
+    except (TypeError, ValueError):
+        previous_value = None
+    if previous_value is not None and not math.isfinite(previous_value):
+        previous_value = None
+    if (
+        previous_value is not None
+        and position + 1.0 < previous_value
+        and position < point + DIM_CUE_CATCH_SECONDS
+    ):
+        armed = True
+    if position < point - DIM_CUE_REARM_SECONDS:
+        armed = True
+    if rolling and armed and position >= point:
+        return True, False, position
+    return False, bool(armed), position
 
 
 def playback_out_point(entry, looping=False):
@@ -2726,6 +2794,8 @@ class VideoPlayerGUI:
         self.program_light_meter_bars = {}
         self.lights_play_after = None
         self.lights_end_sent = False
+        self._dim_cue_armed = False
+        self._dim_cue_at = None
         self._light_errors = []
         self._light_error_lock = threading.Lock()
         self.program_light_buttons = {}
@@ -2745,6 +2815,9 @@ class VideoPlayerGUI:
         self._fullscreen_applied = False
         self._fullscreen_contain_after = None
         self.autoplay_delay = tk.StringVar(value="0")
+        self.autoplay_delay.trace_add(
+            "write", lambda *_args: self._refresh_playlist_save_button(),
+        )
         self.idle_media = tk.StringVar(value=t("idle_none"))
         self.break_media = tk.StringVar(value=t("idle_none"))
         self.idle_status = None
@@ -2758,6 +2831,7 @@ class VideoPlayerGUI:
         self.subtitle_var = tk.StringVar(value="--")
         self.light_start_var = tk.StringVar(value="")
         self.light_end_var = tk.StringVar(value="")
+        self.dim_scene_var = tk.StringVar(value="")
         self.program_volume = tk.DoubleVar(value=100)
         self.preview_volume = tk.DoubleVar(value=100)
         self.preview_muted = False
@@ -3602,6 +3676,10 @@ class VideoPlayerGUI:
         body.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=6)
         body.columnconfigure(0, weight=1)
         self.program_body = body
+        transport = tk.Frame(body, bg=COLOR_PANEL)
+        transport.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.program_transport = transport
+        self._build_transport(transport)
         self.program_missing = tk.Label(
             group,
             text=t("beamer_disconnected"),
@@ -3617,7 +3695,7 @@ class VideoPlayerGUI:
         self.program_missing.grid_remove()
 
         progress = tk.Frame(body, bg=COLOR_PANEL)
-        progress.grid(row=0, column=0, sticky="ew")
+        progress.grid(row=1, column=0, sticky="ew")
         progress.columnconfigure(0, weight=1)
 
         self.program_progress = progress
@@ -3689,13 +3767,12 @@ class VideoPlayerGUI:
         self.main_out.grid(row=0, column=2, sticky="e")
 
         bottom = tk.Frame(body, bg=COLOR_PANEL)
-        bottom.grid(row=1, column=0, sticky="ew", pady=(8, 2))
-        bottom.columnconfigure(1, weight=1)
-        self._build_transport(bottom)
+        bottom.grid(row=2, column=0, sticky="ew", pady=(8, 2))
+        bottom.columnconfigure(0, weight=1)
 
         times = tk.Frame(bottom, bg=COLOR_PANEL)
         self.program_clocks = times
-        times.grid(row=0, column=1, sticky="ew")
+        times.grid(row=0, column=0, sticky="ew")
         for col in range(4):
             times.columnconfigure(col, weight=1)
         self.time_total = self._time_box(times, t("total"), 0)
@@ -4180,14 +4257,29 @@ class VideoPlayerGUI:
                 buttons["play"], preview_playing, "playing", enabled=preview_ok,
             )
         can_mark = preview_ok
-        can_clear = bool(entry and (entry.in_point is not None or entry.out_point is not None))
+        can_clear = bool(
+            entry and (
+                entry.in_point is not None
+                or entry.out_point is not None
+                or entry_dim_point(entry) is not None
+            )
+        )
         io = getattr(self, "preview_io_buttons", {})
         if io.get("set_in"):
             self._set_transport_active(io["set_in"], False, enabled=can_mark)
         if io.get("set_out"):
             self._set_transport_active(io["set_out"], False, enabled=can_mark)
+        if io.get("set_dim"):
+            self._set_transport_active(io["set_dim"], False, enabled=self._dim_mark_allowed(entry))
         if io.get("clear_in_out"):
             self._set_transport_active(io["clear_in_out"], False, enabled=can_clear)
+        combo = getattr(self, "dim_scene_combo", None)
+        if combo is not None:
+            editable = bool(entry and not entry.is_image and not entry_is_action(entry))
+            try:
+                combo.config(state="readonly" if editable else "disabled")
+            except tk.TclError:
+                self.dim_scene_combo = None
 
     def _build_playlist_block(self, parent):
         """Toolbar/settings and the entry list sit in separate frames with a gap."""
@@ -4220,16 +4312,20 @@ class VideoPlayerGUI:
         self.playlist_name = tk.Entry(header, font=FONT_UI)
         self.playlist_name.insert(0, t("playlist_untitled"))
         self.playlist_name.grid(row=0, column=1, sticky="ew")
+        self.playlist_name.bind("<KeyRelease>", lambda _event: self._refresh_playlist_save_button())
 
         buttons = tk.Frame(header, bg=COLOR_PANEL)
         buttons.grid(row=0, column=2, sticky="e", padx=(8, 0))
         self.playlist_tool_buttons = buttons
+        self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
         self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
         self.insert_action_button = self._icon_button(
             buttons, "insert_action", self.insert_action_menu, t("insert_action"), t("insert_action"),
         )
-        self._icon_button(buttons, "playlist_load", self.load_playlist, t("load"), t("load_playlist"))
-        self._icon_button(buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"))
+        self.playlist_save_button = self._icon_button(
+            buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"),
+        )
+        self._refresh_playlist_save_button()
 
         toggle = tk.Canvas(
             header, width=28, height=28, bg=COLOR_PANEL,
@@ -4279,7 +4375,7 @@ class VideoPlayerGUI:
         return canvas
 
     def _help_button(self, parent):
-        """Open the operator manual; sits left of the settings menu."""
+        """Help menu beside the settings button: the manual and the checklists."""
         points = int(FONT_STATUS[1]) * 2
         font = (FONT_STATUS[0], points, *FONT_STATUS[2:])
         size = points + 20
@@ -4290,10 +4386,37 @@ class VideoPlayerGUI:
         canvas.create_text(
             size / 2, size / 2, text="?", fill=COLOR_TEXT, font=font,
         )
-        canvas.bind("<Button-1>", lambda _event: self.open_manual())
+        menu = DropdownMenu(self.root, self)
+
+        def popup(_event=None):
+            self._close_menus()
+            menu.delete(0, "end")
+            self._fill_help_menu(menu)
+            self._posted_menu = menu
+            self._menu_ignore_press = True
+            menu.post_below(canvas, side="right")
+            self.root.after_idle(self._allow_menu_dismiss)
+
+        canvas.bind("<Button-1>", popup)
         canvas.pack(side="right", padx=(0, 4))
-        canvas.tooltip = IconTooltip(canvas, t("manual"))
+        canvas.tooltip = IconTooltip(canvas, t("help"))
+        canvas.menu = menu
         return canvas
+
+    def _fill_help_menu(self, menu):
+        """Operator manual, then one A5 checklist per booth task."""
+        menu.add_command(label=t("manual"), command=self.open_manual)
+        menu.add_separator()
+        pages = (
+            ("checklist_setup", "checklists/setup.html"),
+            ("checklist_program", "checklists/program.html"),
+            ("checklist_clip", "checklists/clip.html"),
+            ("checklist_show", "checklists/show.html"),
+            ("lights", "checklists/lights.html"),
+            ("remote_control", "checklists/remote.html"),
+        )
+        for key, page in pages:
+            menu.add_command(label=t(key), command=lambda path=page: self.open_help_page(path))
 
     def _make_indicator_canvas(self, parent, command, tooltip):
         """36-pixel header icon. The same drawing is used in the settings windows."""
@@ -4431,9 +4554,14 @@ class VideoPlayerGUI:
         self._refresh_header_indicators()
 
     def open_manual(self):
-        path = os.path.join(ROOT_DIR, "manual", "index.html")
+        self.open_help_page("index.html")
+
+    def open_help_page(self, name):
+        """Open a manual page or a checklist in the browser, in the booth language."""
+        path = os.path.join(ROOT_DIR, "manual", name)
+        title = t("manual") if name == "index.html" else t("help")
         if not os.path.isfile(path):
-            messagebox.showerror(t("manual"), t("manual_missing"))
+            messagebox.showerror(title, t("help_missing"))
             return
         url = Path(path).resolve().as_uri()
         lang = self.language if self.language in ("de", "en") else "en"
@@ -5651,7 +5779,7 @@ class VideoPlayerGUI:
         self.preview_out.grid(row=0, column=2, sticky="e")
 
         buttons = tk.Frame(controls, bg=COLOR_PANEL)
-        buttons.grid(row=4, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 4))
+        buttons.grid(row=5, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
 
         transport = tk.Frame(buttons, bg=COLOR_PANEL)
         self.preview_transport = transport
@@ -5672,12 +5800,28 @@ class VideoPlayerGUI:
         self.preview_io_buttons = {
             "set_in": self._icon_button(io, "set_in", self.set_in_point, t("set_in")),
             "set_out": self._icon_button(io, "set_out", self.set_out_point, t("set_out")),
-            "clear_in_out": self._icon_button(io, "clear_in_out", self.clear_in_out, t("clear_in_out")),
+            "set_dim": self._icon_button(io, "set_dim", self.set_dim_point, t("set_dim")),
         }
+        self._configure_light_combo_style(io)
+        self.dim_scene_combo = ttk.Combobox(
+            io, textvariable=self.dim_scene_var, width=14, state="readonly",
+            style="BoothLight.TCombobox",
+        )
+        self.dim_scene_combo.pack(side="left", padx=(0, 4))
+        self.dim_scene_combo.bind("<<ComboboxSelected>>", self._on_dim_scene)
+        self._paint_light_combo_popup(self.dim_scene_combo)
+        self.dim_scene_combo.tooltip = IconTooltip(self.dim_scene_combo, t("dim_scene"))
+        self.preview_dim = tk.Label(
+            io, text=t("dim_value", value="--:--"), bg=COLOR_PANEL, font=FONT_SMALL,
+        )
+        self.preview_dim.pack(side="left", padx=(0, 8))
+        self.preview_io_buttons["clear_in_out"] = self._icon_button(
+            io, "clear_in_out", self.clear_in_out, t("clear_in_out"),
+        )
 
         tracks = tk.Frame(controls, bg=COLOR_PANEL)
         self.preview_track_settings = tracks
-        tracks.grid(row=5, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 8))
+        tracks.grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 2))
         tk.Label(tracks, text=t("audio_track"), bg=COLOR_PANEL, font=FONT_SMALL).pack(side="left", padx=(0, 4))
         self.audio_combo = ttk.Combobox(tracks, textvariable=self.audio_var, width=16, state="readonly")
         self.audio_combo.pack(side="left")
@@ -6022,6 +6166,7 @@ class VideoPlayerGUI:
         self._apply_playlist_name_wrap()
         self._sync_clip_settings_warning_option()
         self._refresh_settings_warning_status()
+        self._refresh_playlist_save_button()
 
     def _row_is_preview(self, index):
         if not self.playlist:
@@ -6319,10 +6464,10 @@ class VideoPlayerGUI:
         try:
             if bool(self.projection_zoom.get()):
                 if not box.winfo_manager():
-                    played = getattr(self, "preview_played_box", None)
                     options = {"side": "left", "padx": (8, 0)}
-                    if played is not None:
-                        options["before"] = played
+                    before = self._warning_pack_before()
+                    if before is not None:
+                        options["before"] = before
                     box.pack(**options)
             else:
                 box.pack_forget()
@@ -6339,6 +6484,7 @@ class VideoPlayerGUI:
         for widget in (
             getattr(self, "clip_settings_warning_check", None),
             getattr(self, "preview_played_box", None),
+            self._mapped_clip_scene(),
         ):
             if widget is None:
                 continue
@@ -6405,13 +6551,14 @@ class VideoPlayerGUI:
                         widget.grid_remove()
                     except tk.TclError:
                         pass
-            for name in ("preview_clip_settings", "preview_image_settings", "preview_played_box"):
+            for name in ("preview_clip_settings", "preview_image_settings", "preview_played_box", "program_light_dimmer"):
                 widget = getattr(self, name, None)
                 if widget is not None:
                     try:
                         widget.pack_forget()
                     except tk.TclError:
                         pass
+            self._refresh_safety_group()
             return
         image = bool(entry and entry.is_image)
         if image:
@@ -6438,6 +6585,7 @@ class VideoPlayerGUI:
             return
         for index, entry in enumerate(self.playlist):
             self._paint_row(index, entry)
+        self._refresh_playlist_save_button()
 
     def _set_preview_lufs(self, entry):
         label = self.preview_lufs
@@ -6469,6 +6617,7 @@ class VideoPlayerGUI:
         canvas.set_playhead(self._clip_duration(), self.preview_position)
 
     def refresh_preview_meta(self):
+        self._refresh_playlist_save_button()
         entry = self.selected_entry()
         live = self.preview_live or self.preview_index is None
         mode = t("live") if live else t("preview_mode")
@@ -6481,6 +6630,7 @@ class VideoPlayerGUI:
                 text=entry.filename if entry else t("preview_mode"), bg=COLOR_PREVIEW, fg=COLOR_WHITE
             )
         self.apply_preview_layout(entry)
+        self._sync_dim_scene(entry)
         self._load_preview_volume(entry)
         self._set_preview_lufs(entry)
         self._set_preview_envelope(entry)
@@ -7423,6 +7573,7 @@ class VideoPlayerGUI:
         probed.display_time = entry.display_time
         probed.light_start = entry.light_start
         probed.light_end = entry.light_end
+        probed.dim_scene = str(getattr(entry, "dim_scene", "") or "")
         probed.force_settings_warning = bool(entry.force_settings_warning)
         if probed.duration > 0:
             if entry.in_point is not None and 0 <= entry.in_point < probed.duration:
@@ -7435,6 +7586,13 @@ class VideoPlayerGUI:
                 and probed.in_point > probed.out_point
             ):
                 probed.in_point, probed.out_point = probed.out_point, probed.in_point
+            if not probed.is_image:
+                probed.dim_point = fitted_dim_point(
+                    getattr(entry, "dim_point", None),
+                    probed.in_point,
+                    probed.out_point,
+                    probed.duration,
+                )
         if entry.audio_track in probed.audio_tracks:
             probed.audio_track = entry.audio_track
         if entry.subtitle_track in (probed.subtitle_tracks or ["--"]):
@@ -7466,6 +7624,7 @@ class VideoPlayerGUI:
         else:
             self.program_index = index
         self.apply_beamer_mode_for_pointer()
+        self._refresh_playlist_save_button()
 
     def apply_beamer_mode_for_pointer(self):
         """Switch the projector refresh as soon as the program pointer sits on a film."""
@@ -7548,6 +7707,7 @@ class VideoPlayerGUI:
         if not entry_is_action(entry):
             return
         entry.played = True
+        self._refresh_playlist_save_button()
         if entry.action == "light":
             self._apply_lights(entry.action_target or dmx.SCENE_BRIGHT, force=True)
             self._action_set_light = True
@@ -8151,6 +8311,7 @@ class VideoPlayerGUI:
             entry.insert(0, name)
         except tk.TclError:
             pass
+        self._refresh_playlist_save_button()
 
     def _unique_copy_path(self, directory, filename):
         base, ext = os.path.splitext(filename)
@@ -8697,6 +8858,7 @@ class VideoPlayerGUI:
         if getattr(self, "light_start_var", None) is not None:
             entry = self.selected_entry() if self.playlist else None
             self._set_play_light_combo(entry.light_start if entry else "")
+            self._sync_dim_scene(entry)
         self._refresh_light_buttons()
 
     def _configure_light_combo_style(self, widget):
@@ -8740,35 +8902,53 @@ class VideoPlayerGUI:
         except tk.TclError:
             pass
 
-    def _place_light_dimmer(self, image=None):
-        """Keep the clip dimmer on screen for a video and for a still."""
+    def _mapped_clip_scene(self):
+        """The clip scene selector while it is packed into the safety row."""
+        dimmer = getattr(self, "program_light_dimmer", None)
+        safety = getattr(self, "preview_safety", None)
+        if dimmer is None or safety is None:
+            return None
+        try:
+            if dimmer.winfo_manager() and str(dimmer.pack_info().get("in")) == str(safety):
+                return dimmer
+        except tk.TclError:
+            return None
+        return None
+
+    def _warning_pack_before(self):
+        """Keep the settings warning next to Safety, in front of the scene or Played."""
+        scene = self._mapped_clip_scene()
+        if scene is not None:
+            return scene
+        return getattr(self, "preview_played_box", None)
+
+    def _place_light_dimmer(self, _image=None):
+        """Clip scene above the preview, between Safety and Played."""
         dimmer = getattr(self, "program_light_dimmer", None)
         if dimmer is None:
             return
-        if image is None:
-            entry = None
-            if getattr(self, "playlist", None):
-                entry = self.selected_entry()
-            image = bool(entry and getattr(entry, "is_image", False))
         visible = bool(self.lights_control.get()) if getattr(self, "lights_control", None) else False
-        target = None
-        if image and getattr(self, "preview_image_settings", None) is not None:
-            target = self.preview_image_settings
-        elif getattr(self, "preview_track_settings", None) is not None:
-            target = self.preview_track_settings
+        safety = getattr(self, "preview_safety", None)
+        played = getattr(self, "preview_played_box", None)
         try:
             dimmer.pack_forget()
-            if not visible:
-                return
-            options = {"side": "left", "padx": (12, 0)}
-            if target is not None:
-                options["in_"] = target
-            dimmer.pack(**options)
+            if visible:
+                options = {"side": "left", "padx": (8, 0)}
+                if safety is not None:
+                    options["in_"] = safety
+                    if played is not None:
+                        try:
+                            if played.winfo_manager():
+                                options["before"] = played
+                        except tk.TclError:
+                            pass
+                dimmer.pack(**options)
         except tk.TclError:
             pass
+        self._refresh_safety_group()
 
     def _build_light_dimmer(self, parent):
-        """Clip dimmer, shown with the subtitle track and again for a still."""
+        """Clip scene selector. Playback rows place it between Safety and Played."""
         host = getattr(self, "preview_column", None) or parent
         dimmer = tk.Frame(host, bg=COLOR_PANEL)
         self.program_light_dimmer = dimmer
@@ -8789,12 +8969,20 @@ class VideoPlayerGUI:
 
     def _fill_light_combos(self):
         start = getattr(self, "light_start_combo", None)
-        if start is None:
+        dim = getattr(self, "dim_scene_combo", None)
+        if start is None and dim is None:
             return
-        try:
-            start["values"] = [label for _scene, label in self._scene_choices()]
-        except tk.TclError:
-            self.light_start_combo = None
+        labels = [label for _scene, label in self._scene_choices()]
+        if start is not None:
+            try:
+                start["values"] = labels
+            except tk.TclError:
+                self.light_start_combo = None
+        if dim is not None:
+            try:
+                dim["values"] = labels
+            except tk.TclError:
+                self.dim_scene_combo = None
 
     def _set_play_light_combo(self, key):
         cue = dmx.find_cue(key, self.lights_scenes, getattr(self, "lights_sequences", None)) if key else None
@@ -8807,6 +8995,28 @@ class VideoPlayerGUI:
                     label = text
                     break
         self.light_start_var.set(label)
+
+    def _set_dim_scene_combo(self, key):
+        variable = getattr(self, "dim_scene_var", None)
+        combo = getattr(self, "dim_scene_combo", None)
+        if variable is None or combo is None:
+            return
+        cue = dmx.find_cue(key, self.lights_scenes, getattr(self, "lights_sequences", None)) if key else None
+        if cue is None:
+            cue = dmx.find_scene(self.lights_scenes, dmx.SCENE_DARK)
+        label = ""
+        if cue is not None:
+            for item, text in self._scene_choices():
+                if item.id == cue.id:
+                    label = text
+                    break
+        variable.set(label)
+
+    def _on_dim_scene(self, _event=None):
+        entry = self.selected_entry()
+        if not entry or entry.is_image or entry_is_action(entry):
+            return
+        entry.dim_scene = self._play_light_from_label(self.dim_scene_var.get())
 
     def _play_light_from_label(self, label):
         for cue, text in self._scene_choices():
@@ -12406,6 +12616,7 @@ class VideoPlayerGUI:
     def _remember_saved_playlist(self):
         """The playlist now matches what is on disk, or there is nothing to keep."""
         self._playlist_saved_token = self._playlist_token()
+        self._refresh_playlist_save_button()
 
     def _playlist_has_unsaved_changes(self):
         saved = getattr(self, "_playlist_saved_token", None)
@@ -12415,12 +12626,49 @@ class VideoPlayerGUI:
             return True
         return current != saved
 
+    def _playlist_save_pending(self):
+        """True when the file content or the playlist title still needs writing."""
+        if self._playlist_has_unsaved_changes():
+            return True
+        path = getattr(self, "playlist_path", "") or ""
+        if not path:
+            return False
+        current = self._current_playlist_name()
+        return bool(current) and current != os.path.basename(path)
+
     def _write_playlist(self, path):
         payload = self._playlist_payload()
         written = playlist_for_saved_file(payload, path, getattr(self, "import_path", ""))
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(written, handle, indent=2)
         self._playlist_saved_token = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        self._refresh_playlist_save_button()
+
+    def _playlist_save_icon_name(self):
+        """Autosave keeps its own glyph; a clean playlist uses the disabled one."""
+        auto = False
+        flag = getattr(self, "autosave_on_program_change", None)
+        if flag is not None:
+            try:
+                auto = bool(flag.get())
+            except tk.TclError:
+                auto = False
+        return "playlist_save_auto" if auto else "playlist_save"
+
+    def _refresh_playlist_save_button(self):
+        button = getattr(self, "playlist_save_button", None)
+        if button is None:
+            return
+        try:
+            name = self._playlist_save_icon_name()
+            dirty = self._playlist_save_pending()
+        except (AttributeError, tk.TclError, TypeError, ValueError):
+            return
+        button.icon_name = name
+        try:
+            self._set_transport_active(button, False, enabled=dirty)
+        except tk.TclError:
+            pass
 
     def _pad_16x9_enabled(self):
         """True when 4:3 and non-square PAR should be padded to 16:9."""
@@ -12476,6 +12724,7 @@ class VideoPlayerGUI:
             save_settings(self.settings)
         except OSError:
             pass
+        self._refresh_playlist_save_button()
 
     def _on_load_last_playlist_at_start(self):
         self.settings["load_last_playlist_at_start"] = bool(self.load_last_playlist_at_start.get())
@@ -12901,6 +13150,7 @@ class VideoPlayerGUI:
             label.set(os.path.basename(path) if path else t("idle_none"))
         self._refresh_idle_status()
         self._refresh_ambient_window(kind)
+        self._refresh_playlist_save_button()
         if kind == "break" and self.program_state == "PAUSE":
             self._show_break_media()
             self.refresh_all()
@@ -13505,6 +13755,7 @@ class VideoPlayerGUI:
         self.idle_showing = False
         self._cancel_light_after("lights_play_after")
         self.lights_end_sent = False
+        self._arm_dim_cue(entry)
         self.main_pause = False
         self.blackout = False
         self.current_file = entry.path
@@ -13543,6 +13794,7 @@ class VideoPlayerGUI:
         self.lights_play_after = None
         if self.program_state != "PLAYING" or entry is not self.current_entry():
             return
+        self._arm_dim_cue(entry)
         self._program_playback_started = False
         looping = bool(entry.loop and not entry.is_image)
         volume = clamp_volume(entry.volume)
@@ -14047,6 +14299,7 @@ class VideoPlayerGUI:
         entry.in_point = self.preview_position
         if entry.out_point is not None and entry.in_point > entry.out_point:
             entry.in_point, entry.out_point = entry.out_point, entry.in_point
+        self._keep_dim_inside(entry)
         self.refresh_preview_meta()
 
     def set_out_point(self):
@@ -14056,6 +14309,20 @@ class VideoPlayerGUI:
         entry.out_point = self.preview_position
         if entry.in_point is not None and entry.in_point > entry.out_point:
             entry.in_point, entry.out_point = entry.out_point, entry.in_point
+        self._keep_dim_inside(entry)
+        self.refresh_preview_meta()
+
+    def set_dim_point(self):
+        entry = self.selected_entry()
+        if not self._dim_mark_allowed(entry):
+            return
+        duration = entry.duration or self._clip_duration()
+        entry.dim_point = fitted_dim_point(
+            self.preview_position, entry.in_point, entry.out_point, duration,
+        )
+        label = self.dim_scene_var.get() if getattr(self, "dim_scene_var", None) is not None else ""
+        if label:
+            entry.dim_scene = self._play_light_from_label(label)
         self.refresh_preview_meta()
 
     def clear_in_out(self):
@@ -14064,7 +14331,109 @@ class VideoPlayerGUI:
             return
         entry.in_point = None
         entry.out_point = None
+        entry.dim_point = None
         self.refresh_preview_meta()
+
+    def _dim_mark_allowed(self, entry):
+        """The playhead can take a dim point inside the clip.
+
+        In and Out, when they are set, still fence the cue in.
+        """
+        if not entry or entry.missing or entry.is_image or entry_is_action(entry):
+            return False
+        duration = entry.duration or getattr(self, "preview_duration", 0) or 0
+        return fitted_dim_point(
+            getattr(self, "preview_position", None),
+            entry.in_point,
+            entry.out_point,
+            duration,
+        ) is not None
+
+    def _keep_dim_inside(self, entry):
+        if entry is None or entry.is_image:
+            return
+        duration = entry.duration or self._clip_duration()
+        entry.dim_point = fitted_dim_point(
+            entry.dim_point, entry.in_point, entry.out_point, duration,
+        )
+
+    def _sync_dim_scene(self, entry):
+        if entry and not getattr(entry, "is_image", False) and not entry_is_action(entry):
+            self._set_dim_scene_combo(getattr(entry, "dim_scene", "") or "")
+            return
+        variable = getattr(self, "dim_scene_var", None)
+        if variable is not None:
+            variable.set("")
+
+    def _rearm_dim_cue(self, entry, start):
+        """A loop returns to In, so the dim cue can run again on the next pass."""
+        point = entry_dim_point(entry)
+        scene = "" if entry is None else str(getattr(entry, "dim_scene", "") or "")
+        try:
+            start_value = float(start)
+            point_value = None if point is None else float(point)
+        except (TypeError, ValueError):
+            return
+        if scene and point_value is not None and math.isfinite(point_value) and start_value < point_value:
+            self._dim_cue_armed = True
+            self._dim_cue_at = start_value
+
+    def _arm_dim_cue(self, entry):
+        """Arm the mid-clip light cue when this title starts before its dim point."""
+        self._dim_cue_at = None
+        point = entry_dim_point(entry)
+        scene = "" if entry is None else str(getattr(entry, "dim_scene", "") or "")
+        try:
+            start = 0.0 if entry is None or entry.in_point is None else float(entry.in_point)
+            point_value = None if point is None else float(point)
+        except (TypeError, ValueError):
+            start = 0.0
+            point_value = None
+        self._dim_cue_armed = bool(
+            scene
+            and point_value is not None
+            and math.isfinite(point_value)
+            and math.isfinite(start)
+            and start < point_value
+        )
+
+    def _consider_dim_cue(self, entry, position):
+        if self.program_state != "PLAYING" or self.idle_showing or getattr(self, "break_showing", False):
+            return
+        if entry_dim_point(entry) is None and not getattr(entry, "dim_scene", ""):
+            self._dim_cue_armed = False
+            self._dim_cue_at = position
+            return
+        rolling = not self.main_pause and not self.blackout
+        scene = str(getattr(entry, "dim_scene", "") or "")
+        fire, armed, previous = dim_cue_transition(
+            position,
+            getattr(self, "_dim_cue_at", None),
+            entry_dim_point(entry),
+            scene,
+            getattr(self, "_dim_cue_armed", False),
+            rolling=rolling,
+        )
+        self._dim_cue_armed = armed
+        self._dim_cue_at = previous
+        if not fire:
+            return
+        root = getattr(self, "root", None)
+        if root is None:
+            return
+        try:
+            root.after(0, lambda scene=scene, entry=entry: self._apply_dim_scene(entry, scene))
+        except tk.TclError:
+            pass
+
+    def _apply_dim_scene(self, entry, scene):
+        if self.program_state != "PLAYING" or self.idle_showing or getattr(self, "break_showing", False):
+            return
+        if self.current_entry() is not entry:
+            return
+        if str(getattr(entry, "dim_scene", "") or "") != scene:
+            return
+        self._apply_lights(scene)
 
     def _clip_duration(self):
         entry = self.selected_entry()
@@ -14082,13 +14451,25 @@ class VideoPlayerGUI:
             position=self.preview_position,
             in_point=entry.in_point if entry else None,
             out_point=entry.out_point if entry else None,
+            dim_point=entry_dim_point(entry),
         )
+        dim_readout = getattr(self, "preview_dim", None)
+        if dim_readout is not None:
+            try:
+                dim_readout.config(text=t("dim_value", value=format_clock(entry_dim_point(entry))))
+            except tk.TclError:
+                self.preview_dim = None
+        dim_button = getattr(self, "preview_io_buttons", {}).get("set_dim")
+        if dim_button is not None:
+            self._set_transport_active(dim_button, False, enabled=self._dim_mark_allowed(entry))
         if getattr(self, "preview_envelope", None):
             self.preview_envelope.set_playhead(duration, self.preview_position)
 
     def _update_main_bar(self):
         if self.program_state == "OFF":
-            self.main_progress.set_state(duration=0, position=0, in_point=None, out_point=None)
+            self.main_progress.set_state(
+                duration=0, position=0, in_point=None, out_point=None, dim_point=None,
+            )
             self._set_program_envelope(None, 0, 0)
             blank = format_clock(None)
             self.main_in.config(text=t("in_value", value=blank))
@@ -14111,6 +14492,9 @@ class VideoPlayerGUI:
             position=self.position,
             in_point=in_point,
             out_point=out_point,
+            dim_point=None if (
+                self.idle_showing or getattr(self, "break_showing", False) or self.program_state == "PAUSE"
+            ) else entry_dim_point(entry),
         )
         background = self.idle_showing or getattr(self, "break_showing", False) or self.program_state == "PAUSE"
         self._set_program_envelope(None if background else entry, duration, self.position)
@@ -14321,6 +14705,7 @@ class VideoPlayerGUI:
             self.position = position
             if self.program_state == "PLAYING" and not self.idle_showing:
                 self._program_playhead = position
+                self._consider_dim_cue(entry, position)
             end = playback_out_point(entry)
             if (
                 self.program_state == "PLAYING"
@@ -14332,6 +14717,7 @@ class VideoPlayerGUI:
                     mpv.set_position(start)
                     if self.preview_live:
                         self.preview_mpv.set_position(start)
+                    self._rearm_dim_cue(entry, start)
                 else:
                     self.root.after(0, self.on_clip_finished)
         elif name == "duration" and value is not None:

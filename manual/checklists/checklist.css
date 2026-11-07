@@ -1,0 +1,150 @@
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 400;
+  src: url("../../assets/fonts/Inter-Regular.ttf") format("truetype");
+}
+
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 700;
+  src: url("../../assets/fonts/Inter-Bold.ttf") format("truetype");
+}
+
+* { box-sizing: border-box; }
+
+[data-lang] { display: none; }
+html[lang="en"] [data-lang="en"],
+html[lang="de"] [data-lang="de"] { display: revert; }
+
+html, body {
+  margin: 0;
+  background: #d9dde3;
+  color: #16181d;
+  font-family: Inter, "Liberation Sans", sans-serif;
+}
+
+.screen-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 148mm;
+  margin: 16px auto 0;
+  padding: 0 2px;
+  font-size: 13px;
+}
+
+.screen-bar a {
+  color: #1565c0;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.screen-bar .hint {
+  margin: 0;
+  color: #3c4250;
+  flex: 1;
+}
+
+.screen-bar button {
+  font: inherit;
+  border: 1px solid #16181d;
+  background: #fff;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.desk {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 12px 28px;
+}
+
+.sheet {
+  width: 148mm;
+  min-height: 210mm;
+  padding: 9mm 10mm 8mm;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(16, 17, 20, 0.16);
+}
+
+.kicker {
+  margin: 0;
+  font-size: 8.5pt;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5c6573;
+}
+
+h1 {
+  margin: 1mm 0 0;
+  font-size: 16.5pt;
+  line-height: 1.15;
+}
+
+.face {
+  margin: 1.5mm 0 5mm;
+  font-size: 9.5pt;
+  font-weight: 700;
+}
+
+.sheet.front .face { color: #1565c0; }
+.sheet.back .face { color: #6a4a12; }
+
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.checks li {
+  display: flex;
+  gap: 3mm;
+  align-items: flex-start;
+  margin: 0 0 3.1mm;
+  font-size: 10.2pt;
+  line-height: 1.28;
+  break-inside: avoid;
+}
+
+.box {
+  flex: 0 0 4.2mm;
+  width: 4.2mm;
+  height: 4.2mm;
+  margin-top: 0.7mm;
+  border: 0.35mm solid #16181d;
+}
+
+.checks p {
+  margin: 0;
+}
+
+.checks strong {
+  font-weight: 700;
+}
+
+@page {
+  size: A5;
+  margin: 9mm 10mm 8mm;
+}
+
+@media print {
+  html, body { background: #fff; }
+  .screen-bar { display: none !important; }
+  .desk { display: block; padding: 0; }
+  .sheet {
+    width: auto;
+    min-height: 0;
+    padding: 0;
+    box-shadow: none;
+    break-after: page;
+    page-break-after: always;
+  }
+  .sheet:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}

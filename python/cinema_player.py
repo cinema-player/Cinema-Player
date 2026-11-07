@@ -971,6 +971,62 @@ class VideoInfo:
     pixel_aspect: str = "--"
 
 
+def _finite_mark(value):
+    """A saved timecode, or None when the value is empty or not a real number."""
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def fitted_dim_point(dim_point, in_point, out_point, duration):
+    """Dim time the clip can reach, or None when it falls outside.
+
+    A set In or Out is a hard edge: the cue sits strictly after In and strictly
+    before Out. A missing In starts at the beginning of the file, and a missing
+    Out runs through the end of the file.
+    """
+    point = _finite_mark(dim_point)
+    if point is None or point < 0:
+        return None
+    start = _finite_mark(in_point)
+    end = _finite_mark(out_point)
+    has_in = start is not None
+    has_out = end is not None
+    length = _finite_mark(duration)
+    if length is not None and length > 0:
+        if start is None:
+            start = 0.0
+        else:
+            start = min(length, max(0.0, start))
+        if end is None:
+            end = length
+        else:
+            end = min(length, max(0.0, end))
+    elif start is None:
+        start = 0.0
+    if has_in and has_out and end < start:
+        start, end = end, start
+    if has_in:
+        if point <= start:
+            return None
+    elif point < start:
+        return None
+    if end is None:
+        return point
+    if has_out:
+        if point >= end:
+            return None
+    elif point > end:
+        return None
+    return point
+
+
 @dataclass
 class PlaylistEntry:
     path: str
@@ -995,6 +1051,9 @@ class PlaylistEntry:
     subtitle_track: str = "--"
     in_point: float | None = None
     out_point: float | None = None
+    # Mid-clip light cue. In and Out, when set, bound it; otherwise the file does.
+    dim_point: float | None = None
+    dim_scene: str = ""
     # Seconds a still image stays on screen; 0 keeps it until the operator resumes.
     display_time: float = 0.0
     is_image: bool = False
@@ -1025,6 +1084,13 @@ class PlaylistEntry:
             self.loop = False
         self.light_start = str(self.light_start or "")
         self.light_end = str(self.light_end or "")
+        self.dim_scene = str(self.dim_scene or "")
+        if self.is_image:
+            self.dim_point = None
+        else:
+            self.dim_point = fitted_dim_point(
+                self.dim_point, self.in_point, self.out_point, self.duration,
+            )
         self.force_settings_warning = bool(self.force_settings_warning)
         self.action = str(self.action or "")
         self.action_target = str(self.action_target or "")
@@ -2195,6 +2261,12 @@ def reload_entry_metadata(entry):
     else:
         entry.in_point = None
         entry.out_point = None
+    if entry.is_image:
+        entry.dim_point = None
+    else:
+        entry.dim_point = fitted_dim_point(
+            entry.dim_point, entry.in_point, entry.out_point, entry.duration,
+        )
     return True
 
 

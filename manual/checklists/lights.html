@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cinema Player — Lichtsteuerung</title>
+  <link rel="stylesheet" href="checklist.css">
+</head>
+<body data-title-de="Cinema Player — Lichtsteuerung" data-title-en="Cinema Player — Light control">
+  <div class="screen-bar">
+    <a href="../index.html">
+      <span data-lang="de">Bedienungsanleitung</span>
+      <span data-lang="en">Operator manual</span>
+    </a>
+    <p class="hint">
+      <span data-lang="de">A5, beidseitig. Vorderseite Grundfunktionen, Rückseite erweitert.</span>
+      <span data-lang="en">A5, double-sided. Front is the basic steps, back is the rest.</span>
+    </p>
+    <button type="button" data-set-lang="de">Deutsch</button>
+    <button type="button" data-set-lang="en">English</button>
+    <button type="button" data-print>
+      <span data-lang="de">Drucken</span>
+      <span data-lang="en">Print</span>
+    </button>
+  </div>
+  <main class="desk">
+    <article class="sheet front">
+      <p class="kicker">Cinema Player</p>
+      <h1>
+        <span data-lang="de">Lichtsteuerung</span>
+        <span data-lang="en">Light control</span>
+      </h1>
+      <p class="face">
+        <span data-lang="de">Vorderseite · Grundfunktionen</span>
+        <span data-lang="en">Front · Basic steps</span>
+      </p>
+      <ol class="checks">
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Öffnen.</strong>
+          <span data-lang="de">Die Lampe rechts oben. Dieselbe Lampe im Fenster schaltet die Steuerung ein und aus.</span>
+          <strong data-lang="en">Open it.</strong>
+          <span data-lang="en">The bulb at the top right. The same bulb in the window switches control on and off.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Anschluss.</strong>
+          <span data-lang="de">Enttec DMX USB Pro, Open DMX USB, oder Art-Net mit Adresse und Universe.</span>
+          <strong data-lang="en">Connection.</strong>
+          <span data-lang="en">Enttec DMX USB Pro, Open DMX USB, or Art-Net with address and universe.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Kanäle.</strong>
+          <span data-lang="de">Die Dimmer eintragen, zum Beispiel 1 oder 1, 2, 5-7.</span>
+          <strong data-lang="en">Channels.</strong>
+          <span data-lang="en">List the dimmers, for example 1 or 1, 2, 5-7.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Szenen.</strong>
+          <span data-lang="de">Eine Taste je Szene. Die blaue Taste ist die Szene, die gerade gilt.</span>
+          <strong data-lang="en">Scenes.</strong>
+          <span data-lang="en">One button per scene. The blue button is the scene that is on now.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Im Ablauf.</strong>
+          <span data-lang="de">Filmstart dimmt auf dunkel. Am Ende wird es hell, außer bei Autoplay oder einer folgenden Aktion.</span>
+          <strong data-lang="en">In the show.</strong>
+          <span data-lang="en">A film starts by dimming to dark. At the end the lights come up, unless autoplay or a following action keeps them down.</span>
+        </p></li>
+      </ol>
+    </article>
+    <article class="sheet back">
+      <p class="kicker">Cinema Player</p>
+      <h1>
+        <span data-lang="de">Lichtsteuerung</span>
+        <span data-lang="en">Light control</span>
+      </h1>
+      <p class="face">
+        <span data-lang="de">Rückseite · Erweiterte Funktionen</span>
+        <span data-lang="en">Back · Further steps</span>
+      </p>
+      <ol class="checks">
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Dimmzeit.</strong>
+          <span data-lang="de">Dauer der Überblendung. Die Taste blinkt, solange sie läuft.</span>
+          <strong data-lang="en">Fade.</strong>
+          <span data-lang="en">How long the crossfade takes. The button blinks while it runs.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Filmstart.</strong>
+          <span data-lang="de">Der Film beginnt die eingestellten Sekunden, bevor es ganz dunkel ist.</span>
+          <strong data-lang="en">Start film.</strong>
+          <span data-lang="en">The film begins this many seconds before the lights are fully dark.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Filmende.</strong>
+          <span data-lang="de">Das Licht beginnt die eingestellten Sekunden vor dem Ende hell zu werden.</span>
+          <strong data-lang="en">Lights up.</strong>
+          <span data-lang="en">The lights start to rise this many seconds before the film ends.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Dimmer am Film.</strong>
+          <span data-lang="de">Eine andere Szene schon beim Start, zum Beispiel ein Insert, das hell bleiben soll.</span>
+          <strong data-lang="en">Dimmer on the film.</strong>
+          <span data-lang="en">A different scene at the start, for example an insert that should stay bright.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Dimmpunkt.</strong>
+          <span data-lang="de">Setzt die gewählte Lichtszene mitten im Film, auch ohne In oder Out.</span>
+          <strong data-lang="en">Dim point.</strong>
+          <span data-lang="en">Sends the chosen light scene in the middle of the film, even without In or Out.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Aktion Licht.</strong>
+          <span data-lang="de">Aktion einfügen setzt eine Szene an dieser Stelle der Playlist.</span>
+          <strong data-lang="en">Light action.</strong>
+          <span data-lang="en">Insert action places a scene at that point in the playlist.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Leerlauf und Pause.</strong>
+          <span data-lang="de">Jedes der beiden Medien hat eine eigene Lichtszene. Voreingestellt ist hell.</span>
+          <strong data-lang="en">Idle and break.</strong>
+          <span data-lang="en">Each of the two media has its own light scene. The default is bright.</span>
+        </p></li>
+        <li><span class="box"></span><p>
+          <strong data-lang="de">Fernsteuerung.</strong>
+          <span data-lang="de">Dieselben Szenentasten sitzen unten auf dem Telefon.</span>
+          <strong data-lang="en">Remote.</strong>
+          <span data-lang="en">The same scene buttons sit at the bottom of the phone.</span>
+        </p></li>
+      </ol>
+    </article>
+  </main>
+  <script src="lang.js"></script>
+</body>
+</html>

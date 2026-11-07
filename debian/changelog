@@ -1,8 +1,10 @@
 cinema-player (0.3.6-5) stable; urgency=medium
 
+  * Add dim action in previev. Update icons. Additional usability updates.
   * Action added in the playlist. Usability updates.
   * Fixed layout with a grip to control the position of the vertical line.
   * Deactivate mpv and program control when no beamer is connected.
   * Add relative paths from import directory to make transfer of files possible.
 
- -- Thomas Winkler <thomas.winkler@iggmp.net>  Fri, 06 Nov 2026 19:35:44 +0100
+ -- Thomas Winkler <thomas.winkler@iggmp.net>  Fri, Sat, 07 Nov 2026 14:52:55 +0100
+

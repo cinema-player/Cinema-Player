@@ -33,6 +33,7 @@ import cinema_gui
 from cinema_player import (
     PlaylistEntry,
     entry_is_action,
+    fitted_dim_point,
     folder_created,
     media_file_available,
     reload_entry_metadata,
@@ -697,6 +698,24 @@ class BoothChromeTests(unittest.TestCase):
         self.root.update_idletasks()
         self.assertTrue(progress.winfo_ismapped())
 
+    def test_program_transport_sits_above_the_progress_bar(self):
+        self.app.root = self.root
+        self.app.program_volume = tk.DoubleVar(master=self.root, value=100)
+        parent = tk.Frame(self.root)
+        parent.pack(fill="x")
+        cinema_gui.VideoPlayerGUI._build_program_block(self.app, parent)
+        self.root.update()
+        bar = self.app.main_progress.winfo_rooty()
+        self.assertLess(self.app.btn_stop.winfo_rooty(), bar)
+        self.assertLess(self.app.btn_play.winfo_rooty(), bar)
+        self.assertLess(bar, self.app.program_clocks.winfo_rooty())
+        self.app._beamer_ready = lambda: True
+        self.app.program_state = "OFF"
+        cinema_gui.VideoPlayerGUI._apply_program_stop_chrome(self.app)
+        self.root.update()
+        self.assertTrue(self.app.btn_play.winfo_ismapped())
+        self.assertFalse(self.app.program_progress.winfo_ismapped())
+
     def test_still_hides_program_and_preview_audio(self):
         group = tk.Frame(self.root)
         group.pack()
@@ -788,6 +807,7 @@ class BoothChromeTests(unittest.TestCase):
         self.app.audio_var = tk.StringVar(master=self.root, value="--")
         self.app.subtitle_var = tk.StringVar(master=self.root, value="--")
         self.app.light_start_var = tk.StringVar(master=self.root, value="")
+        self.app.dim_scene_var = tk.StringVar(master=self.root, value="")
         self.app.lights_control = tk.BooleanVar(master=self.root, value=False)
         parent = tk.Frame(self.root)
         parent.pack(fill="both", expand=True)
@@ -800,6 +820,29 @@ class BoothChromeTests(unittest.TestCase):
         ]
         self.assertNotIn("Ablauf", labels)
         self.assertTrue(self.app.autoplay_check.winfo_ismapped())
+        self.assertEqual(self.app.preview_io_buttons["set_dim"].winfo_manager(), "pack")
+        self.assertEqual(self.app.dim_scene_combo.winfo_manager(), "pack")
+        self.assertEqual(self.app.preview_dim.cget("text"), "Dimm: --:--")
+        self.root.update()
+        self.assertLess(
+            self.app.audio_combo.winfo_rooty(),
+            self.app.preview_transport.winfo_rooty(),
+        )
+        self.assertLess(
+            self.app.subtitle_combo.winfo_rooty(),
+            self.app.preview_transport.winfo_rooty(),
+        )
+        self.app.lights_control.set(True)
+        cinema_gui.VideoPlayerGUI._place_light_dimmer(self.app)
+        self.root.update()
+        scene = self.app.program_light_dimmer
+        self.assertIs(scene.pack_info()["in"], self.app.preview_safety)
+        self.assertLess(scene.winfo_rootx(), self.app.preview_played_box.winfo_rootx())
+        self.assertGreater(scene.winfo_rootx(), self.app.preview_safety.winfo_rootx())
+        self.assertLess(
+            self.app.clip_settings_warning_check.winfo_rootx(),
+            scene.winfo_rootx(),
+        )
 
     def test_resume_reaction_is_blue_to_arm_and_green_to_roll(self):
         self.assertEqual(cinema_gui.resume_reaction_name("OFF"), "program")
@@ -2177,6 +2220,41 @@ class BoothChromeTests(unittest.TestCase):
         self.assertLessEqual(labels[-1].winfo_rooty() + labels[-1].winfo_height(), bottom)
         self.assertLess(menu.winfo_rooty(), click_y)
 
+    def test_help_menu_opens_the_manual_and_the_a5_checklists(self):
+        menu = cinema_gui.DropdownMenu(self.root, self.app)
+        cinema_gui.VideoPlayerGUI._fill_help_menu(self.app, menu)
+        labels = [
+            child.cget("text")
+            for child in menu.winfo_children()
+            if isinstance(child, tk.Label)
+        ]
+        self.assertEqual(labels, [
+            "Bedienungsanleitung",
+            "Ersteinrichtung",
+            "Programm anlegen",
+            "Film bearbeiten",
+            "Programmablauf",
+            "Lichtsteuerung",
+            "Fernsteuerung",
+        ])
+        folder = os.path.join(os.path.dirname(__file__), "..", "manual", "checklists")
+        with open(os.path.join(folder, "checklist.css"), encoding="utf-8") as handle:
+            css = handle.read()
+        self.assertIn("size: A5", css)
+        pages = (
+            "setup.html", "program.html", "clip.html",
+            "show.html", "lights.html", "remote.html",
+        )
+        for name in pages:
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                text = handle.read()
+            self.assertIn('class="sheet front"', text)
+            self.assertIn('class="sheet back"', text)
+            self.assertIn("Grundfunktionen", text)
+            self.assertIn("Erweiterte Funktionen", text)
+            self.assertIn("Basic steps", text)
+            self.assertIn("Further steps", text)
+
 
 class BeamerSummaryTests(unittest.TestCase):
     def setUp(self):
@@ -2314,18 +2392,24 @@ class BeamerSummaryTests(unittest.TestCase):
 
         cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, still)
         self.root.update()
-        self.assertIs(self.app.program_light_dimmer.pack_info()["in"], image_settings)
+        self.assertIs(self.app.program_light_dimmer.pack_info()["in"], safety)
         self.assertIn("Dimmen", self.app.still_dim_check.cget("text"))
         self.assertEqual(self.app.still_dim_label.cget("text"), "Dimmzeit:")
         self.assertIs(self.app.still_dim_seconds_entry.master, image_settings)
         self.assertTrue(self.app.program_light_dimmer.winfo_ismapped())
         self.assertTrue(image_settings.winfo_ismapped())
         self.assertFalse(controls.winfo_ismapped())
+        self.assertFalse(played.winfo_ismapped())
 
         cinema_gui.VideoPlayerGUI.apply_preview_layout(self.app, film)
         self.root.update()
-        self.assertIs(self.app.program_light_dimmer.pack_info()["in"], tracks)
+        self.assertIs(self.app.program_light_dimmer.pack_info()["in"], safety)
+        self.assertLess(
+            self.app.program_light_dimmer.winfo_rootx(),
+            played.winfo_rootx(),
+        )
         self.assertTrue(self.app.program_light_dimmer.winfo_ismapped())
+        self.assertTrue(played.winfo_ismapped())
         self.assertTrue(controls.winfo_ismapped())
         self.assertFalse(image_settings.winfo_ismapped())
 
@@ -3725,8 +3809,63 @@ class PlaylistActionTests(unittest.TestCase):
             getattr(child, "icon_name", None)
             for child in self.app.playlist_tool_buttons.winfo_children()
         ]
-        self.assertEqual(names[:3], ["video_import", "insert_action", "playlist_load"])
+        self.assertEqual(names[:3], ["playlist_load", "video_import", "insert_action"])
         self.assertEqual(self.app.insert_action_button.tooltip.text, "Aktion einfügen")
+
+    def _playlist_save_app(self):
+        self.app.transport_icons = {}
+        self.app.autoplay_delay = tk.StringVar(master=self.root, value="0")
+        self.app.idle_media = tk.StringVar(master=self.root, value="")
+        self.app.break_media = tk.StringVar(master=self.root, value="")
+        self.app.idle_media_path = ""
+        self.app.break_media_path = ""
+        self.app.autosave_on_program_change = tk.BooleanVar(master=self.root, value=False)
+        self.app.settings = {}
+        frame = tk.Frame(self.root)
+        frame.pack()
+        cinema_gui.VideoPlayerGUI._build_playlist_header(self.app, frame)
+        cinema_gui.VideoPlayerGUI._remember_saved_playlist(self.app)
+        return self.app.playlist_save_button
+
+    def test_save_icon_follows_autosave_and_unsaved_changes(self):
+        button = self._playlist_save_app()
+
+        def shown():
+            return str(button.cget("image"))
+
+        self.assertEqual(shown(), str(self.app._transport_icon("playlist_save-disabled")))
+        self.assertFalse(button._transport_enabled)
+
+        self.app.playlist_path = "/shows/abend.pls"
+        self.app.playlist_name.focus_set()
+        self.root.update()
+
+        def rename(name):
+            self.app.playlist_name.delete(0, "end")
+            self.app.playlist_name.insert(0, name)
+            self.app.playlist_name.event_generate("<KeyRelease>", keysym="a")
+            self.root.update()
+
+        rename("matinee.pls")
+        self.assertEqual(shown(), str(self.app._transport_icon("playlist_save")))
+        self.assertTrue(button._transport_enabled)
+        rename("abend.pls")
+        self.assertFalse(button._transport_enabled)
+
+        self.app.playlist = [_entry(path="/media/a.mp4")]
+        cinema_gui.VideoPlayerGUI._refresh_playlist_save_button(self.app)
+        self.assertEqual(shown(), str(self.app._transport_icon("playlist_save")))
+        self.assertTrue(button._transport_enabled)
+
+        self.app.autosave_on_program_change.set(True)
+        with patch.object(cinema_gui, "save_settings"):
+            cinema_gui.VideoPlayerGUI._on_autosave_program_change(self.app)
+        self.assertEqual(shown(), str(self.app._transport_icon("playlist_save_auto")))
+        self.assertTrue(button._transport_enabled)
+
+        cinema_gui.VideoPlayerGUI._remember_saved_playlist(self.app)
+        self.assertEqual(shown(), str(self.app._transport_icon("playlist_save_auto-disabled")))
+        self.assertFalse(button._transport_enabled)
 
     def test_action_row_shows_the_cue_and_hides_the_pointer(self):
         self.app.playlist_canvas = tk.Canvas(self.root, width=900, height=200)
@@ -3823,6 +3962,268 @@ class PlaylistActionTests(unittest.TestCase):
             0, 0, False, autoplay_delay=4,
         )
         self.assertEqual(total, 19)
+
+
+class DimPointTests(unittest.TestCase):
+    def test_dim_point_must_lie_between_in_and_out(self):
+        self.assertEqual(fitted_dim_point(20, 10, 40, 60), 20)
+        self.assertEqual(fitted_dim_point(20, 30, 10, 60), 20)
+        self.assertIsNone(fitted_dim_point(5, 10, 40, 60))
+        self.assertIsNone(fitted_dim_point(50, 10, 40, 60))
+        self.assertIsNone(fitted_dim_point(10, 10, 40, 60))
+        self.assertIsNone(fitted_dim_point(40, 10, 40, 60))
+        self.assertEqual(fitted_dim_point(20, None, 40, 60), 20)
+        self.assertEqual(fitted_dim_point(20, 10, None, 60), 20)
+        self.assertEqual(fitted_dim_point(20, None, None, 60), 20)
+        self.assertEqual(fitted_dim_point(0, None, None, 60), 0)
+        self.assertEqual(fitted_dim_point(60, None, None, 60), 60)
+        self.assertIsNone(fitted_dim_point(5, 10, None, 60))
+        self.assertIsNone(fitted_dim_point(40, None, 40, 60))
+        self.assertIsNone(fitted_dim_point(61, None, None, 60))
+        self.assertIsNone(fitted_dim_point("nope", 10, 40, 60))
+
+    def test_saved_entry_drops_a_dim_point_outside_the_marks(self):
+        kept = PlaylistEntry(
+            path="/clip.mp4", duration=60, in_point=10, out_point=40,
+            dim_point=20, dim_scene="warm",
+        )
+        self.assertEqual(kept.dim_point, 20)
+        self.assertEqual(kept.dim_scene, "warm")
+        open_clip = PlaylistEntry(path="/clip.mp4", duration=60, dim_point=20, dim_scene="warm")
+        self.assertEqual(open_clip.dim_point, 20)
+        self.assertEqual(open_clip.dim_scene, "warm")
+        dropped = PlaylistEntry(
+            path="/clip.mp4", duration=60, in_point=10, out_point=40, dim_point=5,
+        )
+        self.assertIsNone(dropped.dim_point)
+        image = PlaylistEntry(
+            path="/still.jpg", is_image=True, in_point=1, out_point=4, dim_point=2,
+        )
+        self.assertIsNone(image.dim_point)
+        stored = PlaylistEntry.from_dict({
+            "path": "/clip.mp4",
+            "duration": 30,
+            "in_point": 4,
+            "out_point": 20,
+            "dim_point": 9,
+            "dim_scene": "dark",
+        })
+        self.assertEqual(stored.dim_point, 9)
+        self.assertEqual(stored.dim_scene, "dark")
+
+    def test_reload_keeps_a_dim_point_inside_the_new_file(self):
+        entry = _entry(duration=60, in_point=10, out_point=40, dim_point=20, dim_scene="warm")
+        probed = _entry(duration=30, in_point=None, out_point=None)
+        with (
+            patch("cinema_player.media_file_available", return_value=True),
+            patch("cinema_player.probe_media", return_value=probed),
+        ):
+            self.assertTrue(reload_entry_metadata(entry))
+        self.assertEqual(entry.duration, 30)
+        self.assertEqual(entry.in_point, 10)
+        # Out 40 does not fit a 30s file. The cue stays, because 20s is still
+        # after In and inside the shorter file.
+        self.assertIsNone(entry.out_point)
+        self.assertEqual(entry.dim_point, 20)
+        self.assertEqual(entry.dim_scene, "warm")
+
+        entry = _entry(duration=60, in_point=10, out_point=40, dim_point=35, dim_scene="warm")
+        probed = _entry(duration=30, in_point=None, out_point=None)
+        with (
+            patch("cinema_player.media_file_available", return_value=True),
+            patch("cinema_player.probe_media", return_value=probed),
+        ):
+            self.assertTrue(reload_entry_metadata(entry))
+        self.assertIsNone(entry.out_point)
+        self.assertIsNone(entry.dim_point)
+        self.assertEqual(entry.dim_scene, "warm")
+
+        entry = _entry(duration=60, in_point=2, out_point=20, dim_point=8, dim_scene="warm")
+        probed = _entry(duration=30, in_point=None, out_point=None)
+        with (
+            patch("cinema_player.media_file_available", return_value=True),
+            patch("cinema_player.probe_media", return_value=probed),
+        ):
+            self.assertTrue(reload_entry_metadata(entry))
+        self.assertEqual(entry.dim_point, 8)
+        self.assertEqual(entry.dim_scene, "warm")
+
+    def test_cue_fires_once_per_pass_and_again_after_the_playhead_returns(self):
+        fire, armed, previous = cinema_gui.dim_cue_transition(9, None, 10, "dark", True)
+        self.assertFalse(fire)
+        self.assertTrue(armed)
+        fire, armed, previous = cinema_gui.dim_cue_transition(10.1, previous, 10, "dark", armed)
+        self.assertTrue(fire)
+        self.assertFalse(armed)
+        fire, armed, previous = cinema_gui.dim_cue_transition(12, previous, 10, "dark", armed)
+        self.assertFalse(fire)
+        fire, armed, previous = cinema_gui.dim_cue_transition(1, previous, 10, "dark", armed)
+        self.assertFalse(fire)
+        self.assertTrue(armed)
+        fire, armed, previous = cinema_gui.dim_cue_transition(10, previous, 10, "dark", armed)
+        self.assertTrue(fire)
+        self.assertFalse(armed)
+
+    def test_a_held_frame_waits_to_dim_until_the_picture_moves(self):
+        fire, armed, previous = cinema_gui.dim_cue_transition(
+            12, 9, 10, "dark", True, rolling=False,
+        )
+        self.assertFalse(fire)
+        self.assertTrue(armed)
+        fire, armed, previous = cinema_gui.dim_cue_transition(
+            12.1, previous, 10, "dark", armed, rolling=True,
+        )
+        self.assertTrue(fire)
+        self.assertFalse(armed)
+
+    def test_no_scene_never_dims(self):
+        fire, armed, _previous = cinema_gui.dim_cue_transition(12, 9, 10, "", True)
+        self.assertFalse(fire)
+        self.assertFalse(armed)
+
+    def test_crossing_the_dim_point_applies_the_scene(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.root = root
+            app.program_state = "PLAYING"
+            app.idle_showing = False
+            app.break_showing = False
+            app.main_pause = False
+            app.blackout = False
+            app._dim_cue_armed = True
+            app._dim_cue_at = None
+            applied = []
+            app._apply_lights = lambda preset, force=False: applied.append(preset)
+            entry = PlaylistEntry(
+                path="/clip.mp4", duration=40, in_point=5, out_point=30,
+                dim_point=12, dim_scene="warm",
+            )
+            app.playlist = [entry]
+            app.program_index = 0
+            cinema_gui.VideoPlayerGUI._consider_dim_cue(app, entry, 12.2)
+            root.update()
+            self.assertEqual(applied, ["warm"])
+            self.assertFalse(app._dim_cue_armed)
+            applied.clear()
+            cinema_gui.VideoPlayerGUI._consider_dim_cue(app, entry, 14)
+            root.update()
+            self.assertEqual(applied, [])
+        finally:
+            root.destroy()
+
+    def test_set_and_clear_keep_the_dim_point_between_the_marks(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.root = root
+            entry = PlaylistEntry(
+                path="/clip.mp4", duration=60, in_point=10, out_point=40, dim_scene="",
+            )
+            app.playlist = [entry]
+            app.preview_index = 0
+            app.preview_live = False
+            app.preview_duration = 60
+            app.preview_position = 50
+            app.dim_scene_var = tk.StringVar(master=root, value="Warm")
+            app.refresh_preview_meta = lambda: None
+            app._play_light_from_label = lambda label: "warm"
+            self.assertFalse(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+            cinema_gui.VideoPlayerGUI.set_dim_point(app)
+            self.assertIsNone(entry.dim_point)
+
+            app.preview_position = 22
+            self.assertTrue(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+            cinema_gui.VideoPlayerGUI.set_dim_point(app)
+            self.assertEqual(entry.dim_point, 22)
+            self.assertEqual(entry.dim_scene, "warm")
+
+            app.preview_position = 30
+            cinema_gui.VideoPlayerGUI.set_in_point(app)
+            self.assertEqual(entry.in_point, 30)
+            self.assertIsNone(entry.dim_point)
+            self.assertEqual(entry.dim_scene, "warm")
+
+            entry.dim_point = 25
+            app.preview_position = 12
+            cinema_gui.VideoPlayerGUI.set_in_point(app)
+            self.assertEqual(entry.in_point, 12)
+            self.assertEqual(entry.dim_point, 25)
+
+            cinema_gui.VideoPlayerGUI.clear_in_out(app)
+            self.assertIsNone(entry.in_point)
+            self.assertIsNone(entry.out_point)
+            self.assertIsNone(entry.dim_point)
+            self.assertEqual(entry.dim_scene, "warm")
+        finally:
+            root.destroy()
+
+    def test_dim_point_can_be_set_without_in_or_out(self):
+        root = tk.Tk()
+        try:
+            app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+            app.root = root
+            entry = PlaylistEntry(path="/clip.mp4", duration=60, dim_scene="")
+            app.playlist = [entry]
+            app.preview_index = 0
+            app.preview_live = False
+            app.preview_duration = 60
+            app.preview_position = 15
+            app.dim_scene_var = tk.StringVar(master=root, value="Warm")
+            app.refresh_preview_meta = lambda: None
+            app._play_light_from_label = lambda label: "warm"
+            self.assertTrue(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+            cinema_gui.VideoPlayerGUI.set_dim_point(app)
+            self.assertEqual(entry.dim_point, 15)
+
+            entry.in_point = 10
+            entry.out_point = None
+            app.preview_position = 50
+            self.assertTrue(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+            cinema_gui.VideoPlayerGUI.set_dim_point(app)
+            self.assertEqual(entry.dim_point, 50)
+            app.preview_position = 4
+            self.assertFalse(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+
+            entry.in_point = None
+            entry.out_point = 40
+            app.preview_position = 12
+            self.assertTrue(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+            app.preview_position = 40
+            self.assertFalse(cinema_gui.VideoPlayerGUI._dim_mark_allowed(app, entry))
+        finally:
+            root.destroy()
+
+
+class DimMarkerTests(unittest.TestCase):
+    def setUp(self):
+        set_language("en")
+        self.root = tk.Tk()
+        self.root.geometry("900x160+20+20")
+
+    def tearDown(self):
+        self.root.destroy()
+        set_language("en")
+
+    def test_program_bar_draws_the_dim_point_between_in_and_out(self):
+        frame = tk.Frame(self.root)
+        frame.pack(fill="x")
+        bar = cinema_gui.RangeProgressBar(frame, on_seek=lambda *_args: None, height=36)
+        bar.pack(fill="x", expand=True)
+        bar.set_state(duration=100, position=15, in_point=10, out_point=80, dim_point=40)
+        self.root.update()
+        labels = [
+            bar.itemcget(item, "text")
+            for item in bar.find_all()
+            if bar.type(item) == "text"
+        ]
+        self.assertIn("Dim", labels)
+        self.assertIn("In", labels)
+        self.assertIn("Out", labels)
+        self.assertGreater(bar.winfo_width(), 1)
+        dim_x = bar._x_for_time(40)
+        self.assertGreater(dim_x, bar._x_for_time(10))
+        self.assertLess(dim_x, bar._x_for_time(80))
 
 
 if __name__ == "__main__":
