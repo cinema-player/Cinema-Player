@@ -1,10 +1,33 @@
+cinema-player (0.3.6-6) stable; urgency=medium
+
+  * Add dim action in previev.
+  * Update icons.
+  * Additional usability updates.
+
+ -- Thomas Winkler <thomas.winkler@iggmp.net>  Fri, 07 Nov 2026 14:52:55 +0100
+
 cinema-player (0.3.6-5) stable; urgency=medium
 
-  * Add dim action in previev. Update icons. Additional usability updates.
-  * Action added in the playlist. Usability updates.
+  * Action added in the playlist.
+  * Usability updates.
+
+ -- Thomas Winkler <thomas.winkler@iggmp.net>  Fri, 06 Nov 2026 2026 14:52:55 +0100
+
+cinema-player (0.3.6-4) stable; urgency=medium
+
   * Fixed layout with a grip to control the position of the vertical line.
+
+ -- Thomas Winkler <thomas.winkler@iggmp.net>  Wed, 04 Nov 2026 14:52:55 +0100
+
+cinema-player (0.3.6-3) stable; urgency=medium
+
   * Deactivate mpv and program control when no beamer is connected.
+
+ -- Thomas Winkler <thomas.winkler@iggmp.net>  Sat, 31 Oct 2026 14:52:55 +0100
+
+cinema-player (0.3.6-2) stable; urgency=medium
+
   * Add relative paths from import directory to make transfer of files possible.
 
- -- Thomas Winkler <thomas.winkler@iggmp.net>  Fri, Sat, 07 Nov 2026 14:52:55 +0100
+ -- Thomas Winkler <thomas.winkler@iggmp.net>  Mon, 02 Oct 2026 14:52:55 +0200
 

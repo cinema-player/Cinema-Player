@@ -72,11 +72,11 @@ fi
 %{_datadir}/cinema-player
 
 %changelog
-* Sat, 07 Nov 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-6
+* Sat Nov 07 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-6
 - Add dim action in preview. Update icons. Additional usability updates.
-* Fri, 06 Nov 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-5
+* Fri Nov 06 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-5
 - Actions in the playlist. Usability updates.
-* Wed, 04 Nov 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-4
+* Wed Nov 02 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-4
 - Fixed layout with manual control of the vertical splitting line. Disabled mpv and beamer control when no beamer is connected.
 * Mon Oct 02 2026 Thomas Winkler <thomas.winkler@iggmp.net> - 0.3.6-3
 - Relative paths in playlists to make transfer of playlists possible
