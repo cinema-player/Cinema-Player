@@ -36,6 +36,7 @@ from cinema_player import (
     fitted_dim_point,
     folder_created,
     media_file_available,
+    read_app_version,
     reload_entry_metadata,
 )
 from language import set_language, t
@@ -2254,6 +2255,35 @@ class BoothChromeTests(unittest.TestCase):
             self.assertIn("Erweiterte Funktionen", text)
             self.assertIn("Basic steps", text)
             self.assertIn("Further steps", text)
+            self.assertEqual(text.count("../images/logo-header.png"), 2)
+            self.assertEqual(text.count(f"v{read_app_version()}"), 2)
+        icons = {
+            "setup.html": ("icons/bulb.svg", "icons/radio.svg"),
+            "program.html": (
+                "icon-load.png", "icon-import.png", "icon-save.png",
+                "playlist_save-disabled.png", "playlist_save_auto.png",
+                "insert_action.png", "playlist_refresh.png", "icons/tools-arrow.svg",
+            ),
+            "clip.html": (
+                "icon-resume.png", "set_in.png", "set_out.png", "set_dim.png",
+                "icon-save.png", "rev.png", "clear_in_out.png",
+            ),
+            "show.html": (
+                "icon-start.png", "icon-resume.png", "icon-pause.png",
+                "icon-stop.png", "icon-still.png",
+            ),
+            "lights.html": ("icons/bulb.svg", "set_dim.png", "insert_action.png"),
+            "remote.html": (
+                "icons/radio.svg", "icon-start.png", "icon-resume.png",
+                "icon-stop.png", "icon-pause.png", "icon-still.png",
+            ),
+        }
+        for name, marks in icons.items():
+            with open(os.path.join(folder, name), encoding="utf-8") as handle:
+                text = handle.read()
+            for mark in marks:
+                self.assertIn(mark, text, name)
+                self.assertGreaterEqual(text.count(mark), 2, name)
 
 
 class BeamerSummaryTests(unittest.TestCase):
