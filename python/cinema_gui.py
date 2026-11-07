@@ -3291,13 +3291,16 @@ class VideoPlayerGUI:
             pass
 
     def _window_overlaps_beamer(self):
-        """True when the Tk window really covers the projector.
+        """True when the Tk window really covers a dedicated projector.
 
         Compare both rectangles in XWayland pixels. Logical Wayland positions
         sit in a different space under fractional scaling, so a booth window
         on the control monitor looks like it overlaps the beamer and fullscreen
-        is turned straight back off.
+        is turned straight back off. With no projector attached, the only
+        screen is the booth and fullscreen stays there.
         """
+        if not self._beamer_ready():
+            return False
         beamer = self.output_manager.video_output
         if not beamer:
             return False

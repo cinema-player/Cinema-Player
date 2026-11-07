@@ -432,5 +432,76 @@ class ProjectorLinkTests(unittest.TestCase):
         self.assertEqual(manager.projector_link_status(), "")
 
 
+class FullscreenWithoutBeamerTests(unittest.TestCase):
+    def setUp(self):
+        set_language("de")
+        self.root = tk.Tk()
+        self.root.geometry("800x600+40+40")
+        self.root.update()
+        self.app = cinema_gui.VideoPlayerGUI.__new__(cinema_gui.VideoPlayerGUI)
+        self.app.root = self.root
+        self.app._beamer_link_down = False
+        self.app._posted_menu = None
+        self.app.row_menu = None
+        self.app._fullscreen_applied = False
+        self.app._fullscreen_contain_after = None
+        self.app._windowed_geometry = "1600x900+20+20"
+        self.app.window_fullscreen = tk.BooleanVar(master=self.root, value=True)
+        self.attributes = []
+
+        def attributes(*args):
+            self.attributes.append(args)
+            return 0
+
+        self.root.attributes = attributes
+        self.root.overrideredirect = lambda *_args: None
+
+    def tearDown(self):
+        after_id = getattr(self.app, "_fullscreen_contain_after", None)
+        if after_id:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
+        self.root.destroy()
+        set_language("en")
+
+    def _manager(self, dedicated, output="eDP-1"):
+        class Manager:
+            video_output = output
+
+            def has_dedicated_beamer(self):
+                return dedicated
+
+            def get_tk_output_geometry(self, _name):
+                return (
+                    self_root.winfo_width(),
+                    self_root.winfo_height(),
+                    self_root.winfo_rootx(),
+                    self_root.winfo_rooty(),
+                )
+
+            def get_tk_control_output_geometry(self, prefer_x=None, prefer_y=None):
+                return (800, 600, 40, 40)
+
+        self_root = self.root
+        return Manager()
+
+    def test_the_only_screen_does_not_end_fullscreen(self):
+        self.app.output_manager = self._manager(False)
+        self.assertFalse(cinema_gui.VideoPlayerGUI._window_overlaps_beamer(self.app))
+        cinema_gui.VideoPlayerGUI._apply_window_fullscreen(self.app)
+        self.assertTrue(self.app.window_fullscreen.get())
+        self.assertIn(("-fullscreen", True), self.attributes)
+        self.assertNotIn(("-fullscreen", False), self.attributes)
+
+    def test_a_covered_projector_still_leaves_fullscreen(self):
+        self.app.output_manager = self._manager(True, "HDMI-A-1")
+        self.assertTrue(cinema_gui.VideoPlayerGUI._window_overlaps_beamer(self.app))
+        cinema_gui.VideoPlayerGUI._apply_window_fullscreen(self.app)
+        self.assertEqual(self.attributes[-1], ("-fullscreen", False))
+        self.assertTrue(self.app.window_fullscreen.get())
+
+
 if __name__ == "__main__":
     unittest.main()
