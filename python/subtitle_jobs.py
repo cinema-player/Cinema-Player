@@ -46,7 +46,7 @@ class Cue:
 
 class Recognizer(Protocol):
     name: str
-    def recognize(self, wav: Path, cancel: threading.Event) -> tuple[str, list[Cue]]: ...
+    def recognize(self, wav: Path, cancel: threading.Event, progress_callback=None) -> tuple[str, list[Cue]]: ...
 
 
 class Translator(Protocol):
@@ -67,6 +67,9 @@ class FasterWhisperRecognizer:
         model = WhisperModel(self.model_path, device=self.device,
                              compute_type=self.compute_type, local_files_only=True)
         segments, info = model.transcribe(str(wav), vad_filter=True)
+        import wave
+        with wave.open(str(wav), "rb") as audio:
+            duration = audio.getnframes() / audio.getframerate()
         cues = []
         for segment in segments:
             if cancel.is_set():
@@ -74,6 +77,8 @@ class FasterWhisperRecognizer:
             if segment.text.strip():
                 cues.append(Cue(float(segment.start), float(segment.end),
                                 segment.text.strip()))
+            if progress_callback is not None and duration > 0:
+                progress_callback(min(1.0, max(0.0, float(segment.end) / duration)))
         return info.language, cues
 
 
@@ -182,7 +187,7 @@ class SubtitleProcessor:
             probe = probe_media(video, ffprobe=self.ffprobe)
             if job.stream_index not in [t.stream_index for t in audio_tracks(probe)]:
                 raise ValueError(f"Invalid audio stream index: {job.stream_index}")
-            stage(JobState.EXTRACTING, 0.1)
+            stage(JobState.EXTRACTING, 0.0)
             with tempfile.TemporaryDirectory(prefix="cinema-subtitle-") as temp:
                 wav = Path(temp) / "audio.wav"
                 cmd = [self.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error",
@@ -191,7 +196,13 @@ class SubtitleProcessor:
                 process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                            stderr=subprocess.PIPE)
                 try:
+                    # 16 kHz, mono, signed 16-bit PCM: 32000 bytes per second.
+                    source_duration = float(probe.get("format", {}).get("duration") or 0)
                     while process.poll() is None:
+                        if source_duration > 0 and wav.exists():
+                            fraction = max(0.0, min(1.0, (wav.stat().st_size - 44) /
+                                                     (32000 * source_duration)))
+                            stage(JobState.EXTRACTING, 0.2 * fraction)
                         if job.cancel_event.wait(0.1):
                             process.terminate()
                             try:
@@ -206,20 +217,27 @@ class SubtitleProcessor:
                 finally:
                     process.stderr.close()
                 self._check(job)
-                stage(JobState.TRANSCRIBING, 0.35)
-                language, source_cues = self.recognizer.recognize(wav, job.cancel_event)
+                stage(JobState.TRANSCRIBING, 0.2)
+                def transcription_progress(fraction):
+                    stage(JobState.TRANSCRIBING, 0.2 + 0.6 * min(1.0, max(0.0, fraction)))
+                if isinstance(self.recognizer, FasterWhisperRecognizer):
+                    language, source_cues = self.recognizer.recognize(
+                        wav, job.cancel_event, progress_callback=transcription_progress)
+                else:
+                    language, source_cues = self.recognizer.recognize(wav, job.cancel_event)
                 self._check(job)
                 if not source_cues:
                     raise RuntimeError("No speech detected")
-                stage(JobState.TRANSLATING, 0.65)
+                stage(JobState.TRANSLATING, 0.8)
                 translated = []
-                for cue in source_cues:
+                for index, cue in enumerate(source_cues):
                     self._check(job)
                     translated_text = (cue.text if language == "de" else
                                        self.translator.translate(cue.text, language, "de"))
                     translated.append(Cue(cue.start, cue.end, translated_text))
+                    stage(JobState.TRANSLATING, 0.8 + 0.18 * (index + 1) / len(source_cues))
                 self._check(job)
-                stage(JobState.WRITING, 0.9)
+                stage(JobState.WRITING, 0.98)
                 # A stable file name includes the manually selected audio stream.
                 basename = f"{video.stem}.audio-{job.stream_index}.de"
                 output = job.output_directory
