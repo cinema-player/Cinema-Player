@@ -82,6 +82,8 @@ for _dialog_name in ("askstring", "askinteger", "askfloat"):
 
 from language import LANGUAGES, t, set_language, current_language
 from subtitle_style import apply_subtitle_style, show_subtitle_settings
+from subtitle_discovery import subtitle_status, subtitle_badge
+from subtitle_dialog import show_subtitle_generation
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
 import qr_code
 import dmx
@@ -6173,6 +6175,25 @@ class VideoPlayerGUI:
         self._sync_clip_settings_warning_option()
         self._refresh_settings_warning_status()
         self._refresh_playlist_save_button()
+        self._scan_playlist_subtitles()
+
+    def _scan_playlist_subtitles(self):
+        """Probe subtitle streams off the Tk main thread and update row badges."""
+        paths = [(i, e, getattr(e, "path", "")) for i, e in enumerate(self.playlist)
+                 if not entry_is_action(e) and not getattr(e, "is_image", False)
+                 and not getattr(e, "missing", False)]
+        token = object()
+        self._subtitle_scan_token = token
+        def worker():
+            results = [(i, e, subtitle_status(path)) for i, e, path in paths]
+            def finish():
+                if getattr(self, "_subtitle_scan_token", None) is not token:
+                    return
+                for i, entry, status in results:
+                    if i < len(self.playlist) and self.playlist[i] is entry and i < len(self.row_widgets):
+                        self.row_widgets[i]["subtitle"].config(text=subtitle_badge(status))
+            self.root.after(0, finish)
+        threading.Thread(target=worker, daemon=True).start()
 
     def _row_is_preview(self, index):
         if not self.playlist:
@@ -6272,6 +6293,8 @@ class VideoPlayerGUI:
             bg=bg, fg=self._location_fg(fg), font=FONT_SMALL, wraplength=wrap,
         )
         filename.grid(row=0, column=1, sticky="ew")
+        subtitle_label = tk.Label(name, text="", bg=bg, fg=COLOR_PREVIEW, font=FONT_SMALL)
+        subtitle_label.grid(row=0, column=2, sticky="e", padx=(8, 0))
         detail.grid(row=1, column=1, sticky="ew", pady=(1, 0))
         filename.tooltip = IconTooltip(filename, getattr(entry, "path", "") or "")
 
@@ -6286,6 +6309,7 @@ class VideoPlayerGUI:
             "meta_frames": meta_frames,
             "plain": plain,
             "filename": filename,
+            "subtitle": subtitle_label,
             "detail": detail,
             **columns,
         })
@@ -7459,6 +7483,13 @@ class VideoPlayerGUI:
             label=t("loop"),
             command=lambda: self.toggle_loop(index),
             state="disabled" if self.playlist[index].is_image else "normal",
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Deutsche Untertitel erzeugen…",
+            command=lambda: show_subtitle_generation(
+                self.root, self.playlist[index].path, self._scan_playlist_subtitles),
+            state="disabled" if missing or entry.is_image else "normal",
         )
         menu.add_separator()
         menu.add_command(
