@@ -882,8 +882,18 @@ def envelope_from_pcm(stream, rate=ENVELOPE_RATE, window_hz=ENVELOPE_WINDOW_HZ, 
     return resample_peak_envelope(windows, bins)
 
 
-def probe_audio(path, ffmpeg_path=None):
-    """One ffmpeg decode: integrated LUFS plus a stored peak envelope."""
+class AudioAnalysisCancelled(Exception):
+    """Raised when a running FFmpeg loudness analysis is cancelled."""
+
+
+def probe_audio(path, ffmpeg_path=None, *, cancel_event=None):
+    """One cancellable FFmpeg decode: integrated LUFS plus peak envelope.
+
+    Cancelling terminates the running FFmpeg subprocess. Incomplete results
+    are discarded rather than being stored in the playlist.
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        raise AudioAnalysisCancelled("LUFS-Berechnung abgebrochen")
     ffmpeg = ffmpeg_path or find_ffmpeg()
     command = [
         ffmpeg, "-hide_banner", "-nostats",
@@ -893,31 +903,50 @@ def probe_audio(path, ffmpeg_path=None):
         "-af", "ebur128=video=0,aformat=sample_fmts=flt:channel_layouts=mono,aresample=%d" % ENVELOPE_RATE,
         "-f", "f32le", "-",
     ]
-    proc = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     err_chunks = []
+    completed = threading.Event()
 
     def _read_stderr():
         try:
             err_chunks.append(proc.stderr.read())
-        except OSError:
+        except (OSError, ValueError):
             pass
+
+    def _watch_cancel():
+        while not completed.is_set():
+            if cancel_event.wait(0.1):
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                return
 
     reader = threading.Thread(target=_read_stderr, daemon=True)
     reader.start()
+    watcher = None
+    if cancel_event is not None:
+        watcher = threading.Thread(target=_watch_cancel, daemon=True)
+        watcher.start()
     envelope = None
     try:
         envelope = envelope_from_pcm(proc.stdout)
     finally:
         if proc.stdout is not None:
             proc.stdout.close()
+        if proc.poll() is None and cancel_event is not None and cancel_event.is_set():
+            proc.terminate()
         proc.wait()
+        completed.set()
         reader.join()
+        if watcher is not None:
+            watcher.join(timeout=0.5)
         if proc.stderr is not None:
             proc.stderr.close()
+    if cancel_event is not None and cancel_event.is_set():
+        raise AudioAnalysisCancelled("LUFS-Berechnung abgebrochen")
     err_bytes = err_chunks[0] if err_chunks else b""
     text = err_bytes.decode("utf-8", errors="replace") if isinstance(err_bytes, bytes) else str(err_bytes)
     return parse_integrated_lufs(text), envelope
