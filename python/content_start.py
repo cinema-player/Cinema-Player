@@ -103,3 +103,52 @@ def detect_content_start(path, ffmpeg, *, scan_seconds=120.0, lead_seconds=1.0,
     audio_start = parse_audio_start(audio) if "Stream #0" in audio else None
     picture_start = parse_picture_start(picture) if "Stream #0" in picture else None
     return audio_start, picture_start, calculate_in_point(audio_start, picture_start, lead_seconds)
+
+
+def parse_audio_end(log, window_start, duration):
+    """Absolute start of trailing silence, or duration if audio stays audible."""
+    starts = [float(x) for x in re.findall(r"silence_start:\\s*([0-9.]+)", log)]
+    ends = [float(x) for x in SILENCE_END.findall(log)]
+    if not starts or (ends and ends[-1] >= starts[-1]):
+        return duration
+    # FFmpeg timestamps with -ss before -i are normally reset to zero.
+    return min(duration, window_start + starts[-1])
+
+
+def parse_picture_end(log, window_start, duration):
+    """Absolute start of trailing black, or duration if picture stays visible."""
+    starts = [float(x) for x in BLACK_START.findall(log)]
+    ends = [float(x) for x in BLACK_END.findall(log)]
+    if not starts or (ends and ends[-1] >= starts[-1]):
+        return duration
+    return min(duration, window_start + starts[-1])
+
+
+def calculate_out_point(audio_end, picture_end, duration, tail_seconds):
+    """Later of the two ends plus tail, clamped to media duration."""
+    if tail_seconds < 0:
+        raise ValueError("Nachlauf darf nicht negativ sein")
+    ends = [value for value in (audio_end, picture_end) if value is not None]
+    return min(duration, max(ends) + tail_seconds) if ends else None
+
+
+def detect_content_end(path, ffmpeg, *, duration, scan_seconds=120.0,
+                       tail_seconds=1.0, silence_db=-45.0,
+                       black_threshold=0.10, cancel_event=None):
+    """Return (audio_end, picture_end, out_point) from final scan window."""
+    if duration <= 0 or scan_seconds <= 0:
+        raise ValueError("Gültige Filmdauer und Suchdauer erforderlich")
+    offset = max(0.0, duration - scan_seconds)
+    length = duration - offset
+    base = [ffmpeg, "-hide_banner", "-nostats", "-ss", str(offset),
+            "-i", str(path), "-t", str(length)]
+    audio_log = _run_probe(base + ["-map", "0:a:0?", "-vn", "-sn", "-dn",
+        "-af", f"silencedetect=noise={float(silence_db)}dB:d=0.15",
+        "-f", "null", "-"], cancel_event)
+    picture_log = _run_probe(base + ["-map", "0:v:0?", "-an", "-sn", "-dn",
+        "-vf", f"blackdetect=d=0.05:pix_th={float(black_threshold)}",
+        "-f", "null", "-"], cancel_event)
+    audio_end = parse_audio_end(audio_log, offset, duration) if "Stream #0" in audio_log else None
+    picture_end = parse_picture_end(picture_log, offset, duration) if "Stream #0" in picture_log else None
+    return audio_end, picture_end, calculate_out_point(
+        audio_end, picture_end, duration, tail_seconds)
