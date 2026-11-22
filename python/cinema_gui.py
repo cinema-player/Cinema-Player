@@ -84,6 +84,7 @@ from language import LANGUAGES, t, set_language, current_language
 from subtitle_style import apply_subtitle_style, show_subtitle_settings
 from subtitle_discovery import subtitle_status, subtitle_badge
 from subtitle_dialog import show_subtitle_generation
+from film_analysis_dialog import show_film_analysis
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
 import qr_code
 import dmx
@@ -5300,8 +5301,8 @@ class VideoPlayerGUI:
         )
         menu.add_separator()
         menu.add_command(
-            label=t("analyze_loudness"),
-            command=self.analyze_playlist_loudness,
+            label="Filmanalyse – LUFS und Untertitel…",
+            command=self.show_film_analysis,
             state="normal" if self.program_state == "OFF" else "disabled",
         )
 
@@ -13256,6 +13257,18 @@ class VideoPlayerGUI:
         if self.playlist:
             self._move_program_cursor(0)
         self.refresh_all()
+
+    def show_film_analysis(self):
+        """Combined batch analysis using existing LUFS and offline subtitle backends."""
+        if self.program_state != "OFF":
+            messagebox.showinfo("Filmanalyse", "Die Filmanalyse ist nur bei gestopptem Programm verfügbar.")
+            return
+        show_film_analysis(
+            self.root, self.playlist, probe_audio=probe_audio,
+            find_ffmpeg=find_ffmpeg,
+            on_update=lambda: (self.repaint_playlist(), self.refresh_preview_meta(),
+                               self._scan_playlist_subtitles()),
+        )
 
     def analyze_playlist_loudness(self):
         """Measure LUFS and a peak envelope for every playable video while the program is stopped."""
