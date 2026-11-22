@@ -1,6 +1,6 @@
 # Offline German subtitles and projector-only notice
 
-Status: foundation implemented; no GUI or playback integration yet.
+Status: offline processing backend implemented; no GUI or playback integration yet.
 
 ## Playback contract
 
@@ -17,9 +17,19 @@ Status: foundation implemented; no GUI or playback integration yet.
 
 `python/subtitle_media.py` provides ffprobe stream extraction, stable manual audio mapping, an immutable insert profile and a predicate for whether the notice is needed.
 
+## Offline processing backend
+
+`python/subtitle_jobs.py` provides cancellable background jobs, explicit FFmpeg audio-stream extraction, local faster-whisper recognition, installed Argos Translate packages, SRT writing and provenance JSON. Model installation is deliberately separate and must be completed before running a job. The processor can run synchronously for CLI/tests or via `start()` in a worker thread. UI callbacks must be marshalled to the Tkinter main thread. The current translator operates cue by cue; context-aware translation and subtitle line wrapping remain future improvements. Source audio/video timestamp offsets need validation against real files before projection use.
+
+Run unit tests:
+
+```sh
+PYTHONPATH=python python -m unittest python/test_subtitle_media.py python/test_subtitle_jobs.py
+```
+
 ## Next integration stages
 
-1. Implement a persistent background subtitle job: selected-track extraction, local ASR, offline German translation, SRT output and provenance JSON. Ensure cancellation, retries and atomic final output.
+1. Improve subtitle-job persistence/restart, source timestamp alignment, context-aware translation, cue readability and robust output replacement.
 2. Add the Tkinter audio-track selector and progress dialog, then playlist and preview indicators.
 3. Render and cache the Cinema Player logo notice using the resolved output profile; derive the tool list from provenance metadata.
 4. Integrate a projector-only pre-roll into the existing main mpv playback state machine without modifying preview mpv or user playlist.
