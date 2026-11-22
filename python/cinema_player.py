@@ -886,7 +886,7 @@ class AudioAnalysisCancelled(Exception):
     """Raised when a running FFmpeg loudness analysis is cancelled."""
 
 
-def probe_audio(path, ffmpeg_path=None, *, cancel_event=None):
+def probe_audio(path, ffmpeg_path=None, *, cancel_event=None, progress_callback=None, duration=None):
     """One cancellable FFmpeg decode: integrated LUFS plus peak envelope.
 
     Cancelling terminates the running FFmpeg subprocess. Incomplete results
@@ -932,7 +932,26 @@ def probe_audio(path, ffmpeg_path=None, *, cancel_event=None):
         watcher.start()
     envelope = None
     try:
-        envelope = envelope_from_pcm(proc.stdout)
+        if progress_callback is not None and duration and duration > 0:
+            class TrackedPCM:
+                def __init__(self, stream):
+                    self.stream = stream
+                    self.bytes_read = 0
+                    self.last_percent = -1
+
+                def read(self, count):
+                    chunk = self.stream.read(count)
+                    self.bytes_read += len(chunk)
+                    percent = min(99, int(self.bytes_read * 100 /
+                                          (4 * ENVELOPE_RATE * duration)))
+                    if percent > self.last_percent:
+                        self.last_percent = percent
+                        progress_callback(percent)
+                    return chunk
+
+            envelope = envelope_from_pcm(TrackedPCM(proc.stdout))
+        else:
+            envelope = envelope_from_pcm(proc.stdout)
     finally:
         if proc.stdout is not None:
             proc.stdout.close()
@@ -949,6 +968,10 @@ def probe_audio(path, ffmpeg_path=None, *, cancel_event=None):
         raise AudioAnalysisCancelled("LUFS-Berechnung abgebrochen")
     err_bytes = err_chunks[0] if err_chunks else b""
     text = err_bytes.decode("utf-8", errors="replace") if isinstance(err_bytes, bytes) else str(err_bytes)
+    if proc.returncode != 0:
+        raise RuntimeError("FFmpeg-LUFS-Analyse fehlgeschlagen")
+    if progress_callback is not None:
+        progress_callback(100)
     return parse_integrated_lufs(text), envelope
 
 
