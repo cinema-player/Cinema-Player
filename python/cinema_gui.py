@@ -6182,18 +6182,23 @@ class VideoPlayerGUI:
         paths = [(i, e, getattr(e, "path", "")) for i, e in enumerate(self.playlist)
                  if not entry_is_action(e) and not getattr(e, "is_image", False)
                  and not getattr(e, "missing", False)]
+        import queue
         token = object()
         self._subtitle_scan_token = token
+        results_queue = queue.SimpleQueue()
         def worker():
-            results = [(i, e, subtitle_status(path)) for i, e, path in paths]
-            def finish():
-                if getattr(self, "_subtitle_scan_token", None) is not token:
-                    return
-                for i, entry, status in results:
-                    if i < len(self.playlist) and self.playlist[i] is entry and i < len(self.row_widgets):
-                        self.row_widgets[i]["subtitle"].config(text=subtitle_badge(status))
-            self.root.after(0, finish)
+            results_queue.put([(i, e, subtitle_status(path)) for i, e, path in paths])
+        def poll():
+            if getattr(self, "_subtitle_scan_token", None) is not token:
+                return
+            if results_queue.empty():
+                self.root.after(150, poll)
+                return
+            for i, entry, status in results_queue.get_nowait():
+                if i < len(self.playlist) and self.playlist[i] is entry and i < len(self.row_widgets):
+                    self.row_widgets[i]["subtitle"].config(text=subtitle_badge(status))
         threading.Thread(target=worker, daemon=True).start()
+        self.root.after(150, poll)
 
     def _row_is_preview(self, index):
         if not self.playlist:
