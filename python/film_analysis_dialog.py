@@ -244,7 +244,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     getattr(row["entry"], "loudness_lufs", None),
                     status["original"] or status["generated"])
                 row["lufs"].set(selection["lufs"])
-                row["subtitles"].set(selection["subtitles"] and bool(tracks))
+                # Subtitle generation is always opt-in, regardless of existing subtitles.
+                row["subtitles"].set(False)
                 found = []
                 if getattr(row["entry"], "loudness_lufs", None) is not None:
                     found.append("LUFS vorhanden")
