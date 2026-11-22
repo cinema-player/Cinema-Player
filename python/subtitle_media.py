@@ -72,7 +72,7 @@ def selected_audio_map(track: AudioTrack) -> str:
 
 def _ratio(value: Any, name: str) -> Fraction:
     try:
-        ratio = Fraction(str(value))
+        ratio = Fraction(str(value).replace(":", "/"))
         if ratio <= 0:
             raise ValueError
         return ratio
