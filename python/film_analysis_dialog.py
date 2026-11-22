@@ -34,7 +34,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         return None
     window = tk.Toplevel(parent)
     window.title("Filmanalyse – LUFS, Untertitel und Schnittpunkte")
-    window.geometry("920x580")
+    window.geometry("1020x580")
     window.transient(parent)
     outer = ttk.Frame(window, padding=12)
     outer.pack(fill="both", expand=True)
@@ -82,9 +82,14 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     for index, row in enumerate(rows):
         entry = row["entry"]
         ttk.Label(list_frame, text=Path(entry.path).name).grid(row=index, column=0, sticky="w", padx=4, pady=4)
-        ttk.Checkbutton(list_frame, variable=row["lufs"]).grid(row=index, column=1)
-        ttk.Checkbutton(list_frame, variable=row["subtitles"]).grid(row=index, column=2)
-        ttk.Checkbutton(list_frame, variable=row["start"]).grid(row=index, column=3)
+        row["progress"] = {}
+        for column, key in ((1, "lufs"), (2, "subtitles"), (3, "start")):
+            cell = ttk.Frame(list_frame)
+            cell.grid(row=index, column=column, padx=4, sticky="ew")
+            ttk.Checkbutton(cell, variable=row[key]).pack(side="left")
+            bar = ttk.Progressbar(cell, orient="horizontal", mode="indeterminate", length=42)
+            bar.pack(side="left", padx=(2, 0))
+            row["progress"][key] = bar
         ttk.Label(list_frame, textvariable=row["status"], width=32).grid(
             row=index, column=4, sticky="w", padx=8)
     # Bottom controls are outside the scrolling list.
@@ -121,6 +126,17 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 events.put(("scan_error", index, str(exc)))
         events.put(("ready",))
 
+    def set_progress(index, key, state):
+        """Update a per-film, per-action activity indicator on the Tk thread."""
+        bar = rows[index]["progress"][key]
+        if state == "running":
+            bar.configure(mode="indeterminate", value=0)
+            bar.start(12)
+        else:
+            bar.stop()
+            bar.configure(mode="determinate", maximum=100,
+                          value=100 if state == "completed" else 0)
+
     def start():
         if not ready["value"] or running["value"]:
             return
@@ -150,6 +166,10 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         selected_model = model_path.get()
         selected_tracks = {i: row["track_choice"].get() for i, row in enumerate(rows)}
         running["value"] = True
+        for row in rows:
+            for bar in row["progress"].values():
+                bar.stop()
+                bar.configure(mode="determinate", value=0)
         start_button.configure(state="disabled")
         def work():
             ffmpeg = None
@@ -160,6 +180,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 entry = rows[i]["entry"]
                 events.put(("working", i))
                 if do_start and not stopped.is_set():
+                    events.put(("action_started", i, "start"))
                     try:
                         if ffmpeg is None:
                             ffmpeg = find_ffmpeg()
@@ -175,9 +196,11 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                             events.put(("start_result", i, audio_at, picture_at, in_at,
                                         audio_end, picture_end, out_at))
                     except Exception as exc:
+                        events.put(("action_finished", i, "start", "cancelled" if stopped.is_set() else "error"))
                         events.put(("cancelled_task" if stopped.is_set() else "error",
                                     i, "In/Out abgebrochen" if stopped.is_set() else "In/Out: " + str(exc)))
                 if do_lufs and not stopped.is_set():
+                    events.put(("action_started", i, "lufs"))
                     try:
                         if ffmpeg is None:
                             ffmpeg = find_ffmpeg()
@@ -185,11 +208,13 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                         if not stopped.is_set():
                             events.put(("lufs", i, lufs, envelope))
                     except Exception as exc:
+                        events.put(("action_finished", i, "lufs", "cancelled" if stopped.is_set() else "error"))
                         if stopped.is_set():
                             events.put(("cancelled_task", i, "LUFS abgebrochen"))
                         else:
                             events.put(("error", i, "LUFS: " + str(exc)))
                 if do_subs and not stopped.is_set():
+                    events.put(("action_started", i, "subtitles"))
                     try:
                         if processor is None:
                             processor = SubtitleProcessor(
@@ -204,8 +229,10 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                         if job.state == JobState.COMPLETED:
                             events.put(("subtitles_done", i))
                         else:
+                            events.put(("action_finished", i, "subtitles", "error"))
                             events.put(("error", i, "Untertitel: " + (job.error or job.state.value)))
                     except Exception as exc:
+                        events.put(("action_finished", i, "subtitles", "cancelled" if stopped.is_set() else "error"))
                         events.put(("error", i, "Untertitel: " + str(exc)))
             events.put(("done",))
         threading.Thread(target=work, daemon=True).start()
@@ -270,6 +297,10 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 ready["value"] = True
                 overall.set(f"{len(rows)} Filme")
                 start_button.configure(state="normal")
+            elif kind == "action_started":
+                set_progress(event[1], event[2], "running")
+            elif kind == "action_finished":
+                set_progress(event[1], event[2], event[3])
             elif kind == "working":
                 overall.set(f"Analysiere {event[1]+1}/{len(rows)}")
                 rows[event[1]]["status"].set("Wird analysiert…")
@@ -282,6 +313,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     rows[i]["start"].set(False)
                     if on_update:
                         on_update()
+                set_progress(i, "start", "completed" if in_at is not None and out_at is not None and in_at <= out_at else "error")
                 fmt = lambda value: "—" if value is None else f"{value:.2f}s"
                 rows[i]["status"].set(f"In {fmt(in_at)} · Out {fmt(out_at)}")
             elif kind == "lufs":
@@ -289,11 +321,13 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 rows[i]["entry"].loudness_lufs = value
                 rows[i]["entry"].audio_envelope = envelope
                 rows[i]["lufs"].set(False)
+                set_progress(i, "lufs", "completed")
                 if on_update:
                     on_update()
                 rows[i]["status"].set("LUFS berechnet")
             elif kind == "subtitles_done":
                 rows[event[1]]["subtitles"].set(False)
+                set_progress(event[1], "subtitles", "completed")
                 rows[event[1]]["status"].set("Untertitel erzeugt")
                 if on_update:
                     on_update()
@@ -302,6 +336,11 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             elif kind == "error":
                 rows[event[1]]["status"].set(event[2][:80])
             elif kind == "done":
+                for row in rows:
+                    for bar in row["progress"].values():
+                        if str(bar.cget("mode")) == "indeterminate":
+                            bar.stop()
+                            bar.configure(mode="determinate", value=0)
                 running["value"] = False
                 start_button.configure(state="normal")
                 cancel_button.configure(state="normal")
