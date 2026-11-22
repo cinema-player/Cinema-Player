@@ -81,6 +81,7 @@ for _dialog_name in ("askstring", "askinteger", "askfloat"):
         setattr(simpledialog, _dialog_name, _bind_dialog_parent(getattr(simpledialog, _dialog_name)))
 
 from language import LANGUAGES, t, set_language, current_language
+from subtitle_style import apply_subtitle_style, show_subtitle_settings
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
 import qr_code
 import dmx
@@ -4854,6 +4855,11 @@ class VideoPlayerGUI:
         menu.add_command(
             label=t("media_directories"),
             command=self.show_media_directories,
+        )
+        menu.add_command(
+            label="Untertitel – Darstellung",
+            command=lambda: show_subtitle_settings(
+                self.root, self.settings, save_settings, self.main_mpv),
         )
         menu.add_separator()
 
@@ -13300,6 +13306,7 @@ class VideoPlayerGUI:
             arguments = self.output_manager.get_mpv_arguments(self.mpv_path)
             arguments.append(f"--af={PLAYBACK_AF}")
             self.main_mpv.start(arguments)
+            apply_subtitle_style(self.main_mpv, self.settings.get("subtitle_style"))
             self.main_mpv.observe("af-metadata/meter", 5)
         except Exception as exc:
             print(f"Videoausgang nicht verfuegbar: {exc}")
