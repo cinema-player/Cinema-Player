@@ -94,6 +94,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     events = queue.SimpleQueue()
     stopped = threading.Event()
     running = {"value": False}
+    cancel_requested = {"value": False}
     ready = {"value": False}
 
     def scan():
@@ -123,6 +124,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             if sub and not rows[i]["tracks"]:
                 messagebox.showerror("Filmanalyse", f"Keine Audiospur für {Path(rows[i]['entry'].path).name} verfügbar.", parent=window)
                 return
+        stopped.clear()
+        cancel_requested["value"] = False
         selected_model = model_path.get()
         selected_tracks = {i: row["track_choice"].get() for i, row in enumerate(rows)}
         running["value"] = True
@@ -139,10 +142,14 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     try:
                         if ffmpeg is None:
                             ffmpeg = find_ffmpeg()
-                        lufs, envelope = probe_audio(entry.path, ffmpeg)
-                        events.put(("lufs", i, lufs, envelope))
+                        lufs, envelope = probe_audio(entry.path, ffmpeg, cancel_event=stopped)
+                        if not stopped.is_set():
+                            events.put(("lufs", i, lufs, envelope))
                     except Exception as exc:
-                        events.put(("error", i, "LUFS: " + str(exc)))
+                        if stopped.is_set():
+                            events.put(("cancelled_task", i, "LUFS abgebrochen"))
+                        else:
+                            events.put(("error", i, "LUFS: " + str(exc)))
                 if do_subs and not stopped.is_set():
                     try:
                         if processor is None:
@@ -166,17 +173,21 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
 
     active_job = {"value": None}
     def cancel():
+        """Stop the active LUFS FFmpeg or subtitle job, without closing the window."""
+        if not running["value"]:
+            window.destroy()
+            return
+        cancel_requested["value"] = True
         stopped.set()
         if active_job["value"] is not None:
             active_job["value"].cancel()
-        if not running["value"]:
-            window.destroy()
-        else:
-            overall.set("Abbruch angefordert – laufende LUFS-Analyse endet regulär.")
+        overall.set("Abbruch angefordert – laufende Berechnung wird beendet…")
+        cancel_button.configure(state="disabled")
 
     start_button = ttk.Button(controls, text="Ausgewählte Analysen starten", command=start, state="disabled")
     start_button.pack(side="left")
-    ttk.Button(controls, text="Abbrechen / Schließen", command=cancel).pack(side="right")
+    cancel_button = ttk.Button(controls, text="Berechnung abbrechen", command=cancel)
+    cancel_button.pack(side="right")
 
     def poll():
         if not window.winfo_exists():
@@ -231,11 +242,14 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 rows[event[1]]["status"].set("Untertitel erzeugt")
                 if on_update:
                     on_update()
+            elif kind == "cancelled_task":
+                rows[event[1]]["status"].set(event[2])
             elif kind == "error":
                 rows[event[1]]["status"].set(event[2][:80])
             elif kind == "done":
                 running["value"] = False
                 start_button.configure(state="normal")
+                cancel_button.configure(state="normal")
                 overall.set("Analyse beendet" if not stopped.is_set() else "Abgebrochen")
         window.after(150, poll)
 
