@@ -47,19 +47,20 @@ def calculate_in_point(audio_start, picture_start, lead_seconds):
     return max(0.0, min(starts) - lead_seconds) if starts else None
 
 
-def _run_probe(command, cancel_event):
+def _run_probe(command, cancel_event, progress_callback=None, window_seconds=None):
+    """Read FFmpeg's measured output timestamp while collecting detection logs."""
     if cancel_event is not None and cancel_event.is_set():
         raise StartDetectionCancelled()
+    if progress_callback is not None and window_seconds and window_seconds > 0:
+        command = [command[0], "-progress", "pipe:2", "-stats_period", "0.25"] + command[1:]
     proc = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                            text=True, errors="replace")
-    cancelled = threading.Event()
+                            text=True, errors="replace", bufsize=1)
     finished = threading.Event()
     def watch():
         if cancel_event is None:
             return
         while not finished.wait(0.1):
             if cancel_event.is_set():
-                cancelled.set()
                 if proc.poll() is None:
                     proc.terminate()
                     try:
@@ -69,21 +70,34 @@ def _run_probe(command, cancel_event):
                 return
     thread = threading.Thread(target=watch, daemon=True)
     thread.start()
+    log = []
     try:
-        _out, log = proc.communicate()
+        for line in proc.stderr:
+            log.append(line)
+            if progress_callback is not None and line.startswith("out_time_us="):
+                try:
+                    seconds = int(line.partition("=")[2]) / 1_000_000
+                    progress_callback(min(99, max(0, int(seconds * 100 / window_seconds))))
+                except ValueError:
+                    pass
+        proc.wait()
     finally:
         finished.set()
         thread.join(timeout=0.5)
-    if cancelled.is_set() or (cancel_event is not None and cancel_event.is_set()):
+        if proc.stderr is not None:
+            proc.stderr.close()
+    if cancel_event is not None and cancel_event.is_set():
         raise StartDetectionCancelled()
     if proc.returncode:
-        raise RuntimeError((log or "").strip()[-400:] or "FFmpeg-Analyse fehlgeschlagen")
-    return log or ""
+        raise RuntimeError("".join(log).strip()[-400:] or "FFmpeg-Analyse fehlgeschlagen")
+    if progress_callback is not None:
+        progress_callback(100)
+    return "".join(log)
 
 
 def detect_content_start(path, ffmpeg, *, scan_seconds=120.0, lead_seconds=1.0,
                          silence_db=-45.0, black_threshold=0.10,
-                         cancel_event=None):
+                         cancel_event=None, progress_callback=None):
     """Return (audio_start, picture_start, in_point).
 
     Scans at most scan_seconds to avoid decoding an entire feature film.
@@ -96,10 +110,14 @@ def detect_content_start(path, ffmpeg, *, scan_seconds=120.0, lead_seconds=1.0,
             "-i", str(path)]
     audio = _run_probe(base + ["-map", "0:a:0?", "-vn", "-sn", "-dn",
         "-af", f"silencedetect=noise={float(silence_db)}dB:d=0.15",
-        "-f", "null", "-"], cancel_event)
+        "-f", "null", "-"], cancel_event,
+        progress_callback=(lambda p: progress_callback(p * 0.25)) if progress_callback else None,
+        window_seconds=scan_seconds)
     picture = _run_probe(base + ["-map", "0:v:0?", "-an", "-sn", "-dn",
         "-vf", f"blackdetect=d=0.05:pix_th={float(black_threshold)}",
-        "-f", "null", "-"], cancel_event)
+        "-f", "null", "-"], cancel_event,
+        progress_callback=(lambda p: progress_callback(25 + p * 0.25)) if progress_callback else None,
+        window_seconds=scan_seconds)
     audio_start = parse_audio_start(audio) if "Stream #0" in audio else None
     picture_start = parse_picture_start(picture) if "Stream #0" in picture else None
     return audio_start, picture_start, calculate_in_point(audio_start, picture_start, lead_seconds)
@@ -107,7 +125,7 @@ def detect_content_start(path, ffmpeg, *, scan_seconds=120.0, lead_seconds=1.0,
 
 def parse_audio_end(log, window_start, duration):
     """Absolute start of trailing silence, or duration if audio stays audible."""
-    starts = [float(x) for x in re.findall(r"silence_start:\\s*([0-9.]+)", log)]
+    starts = [float(x) for x in re.findall(r"silence_start:\s*([0-9.]+)", log)]
     ends = [float(x) for x in SILENCE_END.findall(log)]
     if not starts or (ends and ends[-1] >= starts[-1]):
         return duration
@@ -134,7 +152,8 @@ def calculate_out_point(audio_end, picture_end, duration, tail_seconds):
 
 def detect_content_end(path, ffmpeg, *, duration, scan_seconds=120.0,
                        tail_seconds=1.0, silence_db=-45.0,
-                       black_threshold=0.10, cancel_event=None):
+                       black_threshold=0.10, cancel_event=None,
+                       progress_callback=None):
     """Return (audio_end, picture_end, out_point) from final scan window."""
     if duration <= 0 or scan_seconds <= 0:
         raise ValueError("Gültige Filmdauer und Suchdauer erforderlich")
@@ -144,10 +163,14 @@ def detect_content_end(path, ffmpeg, *, duration, scan_seconds=120.0,
             "-i", str(path), "-t", str(length)]
     audio_log = _run_probe(base + ["-map", "0:a:0?", "-vn", "-sn", "-dn",
         "-af", f"silencedetect=noise={float(silence_db)}dB:d=0.15",
-        "-f", "null", "-"], cancel_event)
+        "-f", "null", "-"], cancel_event,
+        progress_callback=(lambda p: progress_callback(50 + p * 0.25)) if progress_callback else None,
+        window_seconds=length)
     picture_log = _run_probe(base + ["-map", "0:v:0?", "-an", "-sn", "-dn",
         "-vf", f"blackdetect=d=0.05:pix_th={float(black_threshold)}",
-        "-f", "null", "-"], cancel_event)
+        "-f", "null", "-"], cancel_event,
+        progress_callback=(lambda p: progress_callback(75 + p * 0.25)) if progress_callback else None,
+        window_seconds=length)
     audio_end = parse_audio_end(audio_log, offset, duration) if "Stream #0" in audio_log else None
     picture_end = parse_picture_end(picture_log, offset, duration) if "Stream #0" in picture_log else None
     return audio_end, picture_end, calculate_out_point(
