@@ -3212,6 +3212,29 @@ class VideoPlayerGUI:
             image = image.subsample(factor)
         return image
 
+    def _film_analysis_icon(self):
+        """Create a small analysis glyph without requiring an external PNG asset."""
+        size = TRANSPORT_ICON_PX
+        image = tk.PhotoImage(master=self.root, width=size, height=size)
+        # Transparent background: waveform bars, framed by a filmstrip.
+        fg = COLOR_TEXT
+        accent = ACCENT
+        def rectangle(x0, y0, x1, y1, color):
+            image.put(color, to=(x0, y0, x1, y1))
+        scale = size / 32.0
+        def rect(x0, y0, x1, y1, color):
+            rectangle(round(x0 * scale), round(y0 * scale),
+                      max(round((x0 + 1) * scale), round(x1 * scale)),
+                      max(round((y0 + 1) * scale), round(y1 * scale)), color)
+        rect(3, 6, 29, 8, fg)
+        rect(3, 24, 29, 26, fg)
+        rect(3, 8, 5, 24, fg)
+        rect(27, 8, 29, 24, fg)
+        for x, y0, y1 in ((8, 13, 19), (12, 10, 22),
+                          (16, 14, 18), (20, 9, 23), (24, 12, 20)):
+            rect(x, y0, x + 2, y1, accent)
+        return image
+
     def _transport_icon(self, name):
         if name not in self.transport_icons:
             self.transport_icons[name] = self._load_icon(name)
@@ -4325,6 +4348,11 @@ class VideoPlayerGUI:
         self._icon_button(buttons, "video_import", self.import_media, t("import"), t("import_media"))
         self.insert_action_button = self._icon_button(
             buttons, "insert_action", self.insert_action_menu, t("insert_action"), t("insert_action"),
+        )
+        self.transport_icons["film_analysis"] = self._film_analysis_icon()
+        self.playlist_analysis_button = self._icon_button(
+            buttons, "film_analysis", self.show_film_analysis,
+            "Analyse", "Filmanalyse – LUFS, Untertitel und In/Out",
         )
         self.playlist_save_button = self._icon_button(
             buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"),
