@@ -11,7 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from content_start import detect_content_start
+from content_start import detect_content_start, detect_content_end
 from subtitle_discovery import subtitle_status
 from subtitle_jobs import (ArgosTranslator, FasterWhisperRecognizer,
                            JobState, SubtitleJob, SubtitleProcessor)
@@ -33,7 +33,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         messagebox.showinfo("Filmanalyse", "Keine analysierbaren Filme vorhanden.", parent=parent)
         return None
     window = tk.Toplevel(parent)
-    window.title("Filmanalyse – LUFS, Untertitel und Filmstart")
+    window.title("Filmanalyse – LUFS, Untertitel und Schnittpunkte")
     window.geometry("920x580")
     window.transient(parent)
     outer = ttk.Frame(window, padding=12)
@@ -48,7 +48,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     for entry in valid:
         rows.append({"entry": entry, "lufs": tk.BooleanVar(value=False),
                      "subtitles": tk.BooleanVar(value=False),
-                     "start": tk.BooleanVar(value=getattr(entry, "in_point", None) is None),
+                     "start": tk.BooleanVar(value=(getattr(entry, "in_point", None) is None
+                                                  or getattr(entry, "out_point", None) is None)),
                      "subtitle_info": None, "tracks": [], "track_choice": tk.StringVar(),
                      "status": tk.StringVar(value="Prüfung…")})
     def toggle_all(key):
@@ -57,14 +58,14 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             row[key].set(target)
     ttk.Button(top, text="LUFS: alle", command=lambda: toggle_all("lufs")).pack(side="left", padx=4)
     ttk.Button(top, text="Untertitel: alle", command=lambda: toggle_all("subtitles")).pack(side="left", padx=4)
-    ttk.Button(top, text="Filmstart: alle", command=lambda: toggle_all("start")).pack(side="left", padx=4)
+    ttk.Button(top, text="In/Out: alle", command=lambda: toggle_all("start")).pack(side="left", padx=4)
     columns = ttk.Frame(outer)
     columns.pack(fill="x", pady=(6, 0))
     columns.columnconfigure(0, weight=1)
     ttk.Label(columns, text="Film").grid(row=0, column=0, sticky="w")
     ttk.Label(columns, text="LUFS", width=8).grid(row=0, column=1)
     ttk.Label(columns, text="Untertitel", width=12).grid(row=0, column=2)
-    ttk.Label(columns, text="Filmstart", width=10).grid(row=0, column=3)
+    ttk.Label(columns, text="In/Out", width=10).grid(row=0, column=3)
     ttk.Label(columns, text="Vorhandene Daten / Status", width=32).grid(row=0, column=4, sticky="w")
     list_holder = ttk.Frame(outer)
     list_holder.pack(fill="both", expand=True)
@@ -95,6 +96,9 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     ttk.Label(footer, text="Vorlauf (s):").pack(side="left", padx=(10, 2))
     lead_seconds = tk.StringVar(value="1.0")
     ttk.Entry(footer, textvariable=lead_seconds, width=6).pack(side="left")
+    ttk.Label(footer, text="Nachlauf (s):").pack(side="left", padx=(10, 2))
+    tail_seconds = tk.StringVar(value="1.0")
+    ttk.Entry(footer, textvariable=tail_seconds, width=6).pack(side="left")
     overall = tk.StringVar(value="Filme werden geprüft…")
     ttk.Label(footer, textvariable=overall).pack(side="left", padx=8)
     controls = ttk.Frame(outer, padding=(0, 0, 0, 8))
@@ -125,10 +129,11 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                  if row["lufs"].get() or row["subtitles"].get() or row["start"].get()]
         try:
             lead = float(lead_seconds.get().replace(",", "."))
-            if not 0 <= lead <= 120:
+            tail = float(tail_seconds.get().replace(",", "."))
+            if not 0 <= lead <= 120 or not 0 <= tail <= 120:
                 raise ValueError()
         except ValueError:
-            messagebox.showerror("Filmanalyse", "Vorlauf muss zwischen 0 und 120 Sekunden liegen.", parent=window)
+            messagebox.showerror("Filmanalyse", "Vorlauf und Nachlauf müssen zwischen 0 und 120 Sekunden liegen.", parent=window)
             return
         if not tasks:
             messagebox.showinfo("Filmanalyse", "Keine Funktionen ausgewählt.", parent=window)
@@ -160,11 +165,18 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                             ffmpeg = find_ffmpeg()
                         audio_at, picture_at, in_at = detect_content_start(
                             entry.path, ffmpeg, lead_seconds=lead, cancel_event=stopped)
+                        duration = float(getattr(entry, "duration", 0) or 0)
+                        if duration <= 0:
+                            raise ValueError("Filmdauer unbekannt – Out-Punkt nicht berechnet")
+                        audio_end, picture_end, out_at = detect_content_end(
+                            entry.path, ffmpeg, duration=duration, tail_seconds=tail,
+                            cancel_event=stopped)
                         if not stopped.is_set():
-                            events.put(("start_result", i, audio_at, picture_at, in_at))
+                            events.put(("start_result", i, audio_at, picture_at, in_at,
+                                        audio_end, picture_end, out_at))
                     except Exception as exc:
                         events.put(("cancelled_task" if stopped.is_set() else "error",
-                                    i, "Filmstart abgebrochen" if stopped.is_set() else "Filmstart: " + str(exc)))
+                                    i, "In/Out abgebrochen" if stopped.is_set() else "In/Out: " + str(exc)))
                 if do_lufs and not stopped.is_set():
                     try:
                         if ffmpeg is None:
@@ -242,6 +254,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     found.append("UT KI")
                 if getattr(row["entry"], "in_point", None) is not None:
                     found.append(f"In {row['entry'].in_point:.2f}s")
+                if getattr(row["entry"], "out_point", None) is not None:
+                    found.append(f"Out {row['entry'].out_point:.2f}s")
                 row["status"].set(", ".join(found) or "Keine Analyse")
                 # A per-film selector is accessible via the row's subtitle checkbox tooltip-less menu.
                 if len(tracks) > 1:
@@ -259,15 +273,16 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 overall.set(f"Analysiere {event[1]+1}/{len(rows)}")
                 rows[event[1]]["status"].set("Wird analysiert…")
             elif kind == "start_result":
-                _, i, audio_at, picture_at, in_at = event
+                _, i, audio_at, picture_at, in_at, audio_end, picture_end, out_at = event
                 entry = rows[i]["entry"]
-                if in_at is not None:
-                    entry.in_point = min(in_at, entry.out_point) if entry.out_point is not None else in_at
+                if in_at is not None and out_at is not None and in_at <= out_at:
+                    entry.in_point = in_at
+                    entry.out_point = out_at
                     rows[i]["start"].set(False)
                     if on_update:
                         on_update()
                 fmt = lambda value: "—" if value is None else f"{value:.2f}s"
-                rows[i]["status"].set(f"Ton {fmt(audio_at)} · Bild {fmt(picture_at)} · In {fmt(in_at)}")
+                rows[i]["status"].set(f"In {fmt(in_at)} · Out {fmt(out_at)}")
             elif kind == "lufs":
                 _, i, value, envelope = event
                 rows[i]["entry"].loudness_lufs = value
