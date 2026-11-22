@@ -87,9 +87,12 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             cell = ttk.Frame(list_frame)
             cell.grid(row=index, column=column, padx=4, sticky="ew")
             ttk.Checkbutton(cell, variable=row[key]).pack(side="left")
-            bar = ttk.Progressbar(cell, orient="horizontal", mode="indeterminate", length=42)
+            bar = ttk.Progressbar(cell, orient="horizontal", mode="determinate",
+                                  maximum=100, length=54)
             bar.pack(side="left", padx=(2, 0))
-            row["progress"][key] = bar
+            percent = ttk.Label(cell, text="0%", width=4, anchor="e")
+            percent.pack(side="left", padx=(2, 0))
+            row["progress"][key] = (bar, percent)
         ttk.Label(list_frame, textvariable=row["status"], width=32).grid(
             row=index, column=4, sticky="w", padx=8)
     # Bottom controls are outside the scrolling list.
@@ -126,16 +129,14 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 events.put(("scan_error", index, str(exc)))
         events.put(("ready",))
 
-    def set_progress(index, key, state):
-        """Update a per-film, per-action activity indicator on the Tk thread."""
-        bar = rows[index]["progress"][key]
-        if state == "running":
-            bar.configure(mode="indeterminate", value=0)
-            bar.start(12)
-        else:
-            bar.stop()
-            bar.configure(mode="determinate", maximum=100,
-                          value=100 if state == "completed" else 0)
+    def set_progress(index, key, value):
+        """Show measured percent, clamped to the last known value."""
+        bar, label = rows[index]["progress"][key]
+        percent = max(0, min(100, int(value)))
+        if percent < float(bar["value"]):
+            return
+        bar.configure(value=percent)
+        label.configure(text=f"{percent}%")
 
     def start():
         if not ready["value"] or running["value"]:
@@ -167,9 +168,9 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         selected_tracks = {i: row["track_choice"].get() for i, row in enumerate(rows)}
         running["value"] = True
         for row in rows:
-            for bar in row["progress"].values():
-                bar.stop()
-                bar.configure(mode="determinate", value=0)
+            for bar, label in row["progress"].values():
+                bar.configure(value=0)
+                label.configure(text="0%")
         start_button.configure(state="disabled")
         def work():
             ffmpeg = None
@@ -185,13 +186,15 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                         if ffmpeg is None:
                             ffmpeg = find_ffmpeg()
                         audio_at, picture_at, in_at = detect_content_start(
-                            entry.path, ffmpeg, lead_seconds=lead, cancel_event=stopped)
+                            entry.path, ffmpeg, lead_seconds=lead, cancel_event=stopped,
+                            progress_callback=lambda p: events.put(("progress", i, "start", p)))
                         duration = float(getattr(entry, "duration", 0) or 0)
                         if duration <= 0:
                             raise ValueError("Filmdauer unbekannt – Out-Punkt nicht berechnet")
                         audio_end, picture_end, out_at = detect_content_end(
                             entry.path, ffmpeg, duration=duration, tail_seconds=tail,
-                            cancel_event=stopped)
+                            cancel_event=stopped,
+                            progress_callback=lambda p: events.put(("progress", i, "start", p)))
                         if not stopped.is_set():
                             events.put(("start_result", i, audio_at, picture_at, in_at,
                                         audio_end, picture_end, out_at))
@@ -204,7 +207,10 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     try:
                         if ffmpeg is None:
                             ffmpeg = find_ffmpeg()
-                        lufs, envelope = probe_audio(entry.path, ffmpeg, cancel_event=stopped)
+                        lufs, envelope = probe_audio(
+                            entry.path, ffmpeg, cancel_event=stopped,
+                            duration=float(getattr(entry, "duration", 0) or 0),
+                            progress_callback=lambda p: events.put(("progress", i, "lufs", p)))
                         if not stopped.is_set():
                             events.put(("lufs", i, lufs, envelope))
                     except Exception as exc:
@@ -224,7 +230,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                         job = SubtitleJob(Path(entry.path), int(track_index),
                                           Path(entry.path).parent)
                         active_job["value"] = job
-                        processor.run(job)
+                        processor.run(job, callback=lambda updated: events.put(
+                            ("progress", i, "subtitles", round(updated.progress * 100))))
                         active_job["value"] = None
                         if job.state == JobState.COMPLETED:
                             events.put(("subtitles_done", i))
@@ -297,10 +304,12 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 ready["value"] = True
                 overall.set(f"{len(rows)} Filme")
                 start_button.configure(state="normal")
-            elif kind == "action_started":
-                set_progress(event[1], event[2], "running")
-            elif kind == "action_finished":
+            elif kind == "progress":
                 set_progress(event[1], event[2], event[3])
+            elif kind == "action_started":
+                set_progress(event[1], event[2], 0)
+            elif kind == "action_finished":
+                pass  # Preserve last measured percentage on failure or cancellation
             elif kind == "working":
                 overall.set(f"Analysiere {event[1]+1}/{len(rows)}")
                 rows[event[1]]["status"].set("Wird analysiert…")
@@ -313,7 +322,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     rows[i]["start"].set(False)
                     if on_update:
                         on_update()
-                set_progress(i, "start", "completed" if in_at is not None and out_at is not None and in_at <= out_at else "error")
+                set_progress(i, "start", 100 if in_at is not None and out_at is not None and in_at <= out_at else 0)
                 fmt = lambda value: "—" if value is None else f"{value:.2f}s"
                 rows[i]["status"].set(f"In {fmt(in_at)} · Out {fmt(out_at)}")
             elif kind == "lufs":
@@ -321,13 +330,13 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 rows[i]["entry"].loudness_lufs = value
                 rows[i]["entry"].audio_envelope = envelope
                 rows[i]["lufs"].set(False)
-                set_progress(i, "lufs", "completed")
+                set_progress(i, "lufs", 100)
                 if on_update:
                     on_update()
                 rows[i]["status"].set("LUFS berechnet")
             elif kind == "subtitles_done":
                 rows[event[1]]["subtitles"].set(False)
-                set_progress(event[1], "subtitles", "completed")
+                set_progress(event[1], "subtitles", 100)
                 rows[event[1]]["status"].set("Untertitel erzeugt")
                 if on_update:
                     on_update()
@@ -336,11 +345,6 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             elif kind == "error":
                 rows[event[1]]["status"].set(event[2][:80])
             elif kind == "done":
-                for row in rows:
-                    for bar in row["progress"].values():
-                        if str(bar.cget("mode")) == "indeterminate":
-                            bar.stop()
-                            bar.configure(mode="determinate", value=0)
                 running["value"] = False
                 start_button.configure(state="normal")
                 cancel_button.configure(state="normal")
