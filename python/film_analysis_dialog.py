@@ -11,6 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from content_start import detect_content_start
 from subtitle_discovery import subtitle_status
 from subtitle_jobs import (ArgosTranslator, FasterWhisperRecognizer,
                            JobState, SubtitleJob, SubtitleProcessor)
@@ -32,7 +33,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         messagebox.showinfo("Filmanalyse", "Keine analysierbaren Filme vorhanden.", parent=parent)
         return None
     window = tk.Toplevel(parent)
-    window.title("Filmanalyse – LUFS und Untertitel")
+    window.title("Filmanalyse – LUFS, Untertitel und Filmstart")
     window.geometry("920x580")
     window.transient(parent)
     outer = ttk.Frame(window, padding=12)
@@ -47,6 +48,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     for entry in valid:
         rows.append({"entry": entry, "lufs": tk.BooleanVar(value=False),
                      "subtitles": tk.BooleanVar(value=False),
+                     "start": tk.BooleanVar(value=getattr(entry, "in_point", None) is None),
                      "subtitle_info": None, "tracks": [], "track_choice": tk.StringVar(),
                      "status": tk.StringVar(value="Prüfung…")})
     def toggle_all(key):
@@ -55,13 +57,15 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             row[key].set(target)
     ttk.Button(top, text="LUFS: alle", command=lambda: toggle_all("lufs")).pack(side="left", padx=4)
     ttk.Button(top, text="Untertitel: alle", command=lambda: toggle_all("subtitles")).pack(side="left", padx=4)
+    ttk.Button(top, text="Filmstart: alle", command=lambda: toggle_all("start")).pack(side="left", padx=4)
     columns = ttk.Frame(outer)
     columns.pack(fill="x", pady=(6, 0))
     columns.columnconfigure(0, weight=1)
     ttk.Label(columns, text="Film").grid(row=0, column=0, sticky="w")
     ttk.Label(columns, text="LUFS", width=8).grid(row=0, column=1)
     ttk.Label(columns, text="Untertitel", width=12).grid(row=0, column=2)
-    ttk.Label(columns, text="Vorhandene Daten / Status", width=32).grid(row=0, column=3, sticky="w")
+    ttk.Label(columns, text="Filmstart", width=10).grid(row=0, column=3)
+    ttk.Label(columns, text="Vorhandene Daten / Status", width=32).grid(row=0, column=4, sticky="w")
     list_holder = ttk.Frame(outer)
     list_holder.pack(fill="both", expand=True)
     canvas = tk.Canvas(list_holder, highlightthickness=0)
@@ -79,14 +83,18 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         ttk.Label(list_frame, text=Path(entry.path).name).grid(row=index, column=0, sticky="w", padx=4, pady=4)
         ttk.Checkbutton(list_frame, variable=row["lufs"]).grid(row=index, column=1)
         ttk.Checkbutton(list_frame, variable=row["subtitles"]).grid(row=index, column=2)
+        ttk.Checkbutton(list_frame, variable=row["start"]).grid(row=index, column=3)
         ttk.Label(list_frame, textvariable=row["status"], width=32).grid(
-            row=index, column=3, sticky="w", padx=8)
+            row=index, column=4, sticky="w", padx=8)
     # Bottom controls are outside the scrolling list.
     footer = ttk.Frame(outer, padding=(0, 8, 0, 4))
     footer.pack(side="bottom", fill="x")
     ttk.Label(footer, text="Lokales faster-whisper-Modell:").pack(side="left")
     model_path = tk.StringVar()
     ttk.Entry(footer, textvariable=model_path, width=30).pack(side="left", padx=6)
+    ttk.Label(footer, text="Vorlauf (s):").pack(side="left", padx=(10, 2))
+    lead_seconds = tk.StringVar(value="1.0")
+    ttk.Entry(footer, textvariable=lead_seconds, width=6).pack(side="left")
     overall = tk.StringVar(value="Filme werden geprüft…")
     ttk.Label(footer, textvariable=overall).pack(side="left", padx=8)
     controls = ttk.Frame(outer, padding=(0, 0, 0, 8))
@@ -112,15 +120,23 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     def start():
         if not ready["value"] or running["value"]:
             return
-        tasks = [(i, row["lufs"].get(), row["subtitles"].get())
-                 for i, row in enumerate(rows) if row["lufs"].get() or row["subtitles"].get()]
+        tasks = [(i, row["lufs"].get(), row["subtitles"].get(), row["start"].get())
+                 for i, row in enumerate(rows)
+                 if row["lufs"].get() or row["subtitles"].get() or row["start"].get()]
+        try:
+            lead = float(lead_seconds.get().replace(",", "."))
+            if not 0 <= lead <= 120:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Filmanalyse", "Vorlauf muss zwischen 0 und 120 Sekunden liegen.", parent=window)
+            return
         if not tasks:
             messagebox.showinfo("Filmanalyse", "Keine Funktionen ausgewählt.", parent=window)
             return
-        if any(sub for _, _, sub in tasks) and not Path(model_path.get()).is_dir():
+        if any(sub for _, _, sub, _ in tasks) and not Path(model_path.get()).is_dir():
             messagebox.showerror("Filmanalyse", "Für Untertitel bitte ein lokales faster-whisper-Modellverzeichnis angeben.", parent=window)
             return
-        for i, _, sub in tasks:
+        for i, _, sub, _ in tasks:
             if sub and not rows[i]["tracks"]:
                 messagebox.showerror("Filmanalyse", f"Keine Audiospur für {Path(rows[i]['entry'].path).name} verfügbar.", parent=window)
                 return
@@ -133,12 +149,23 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         def work():
             ffmpeg = None
             processor = None
-            for i, do_lufs, do_subs in tasks:
+            for i, do_lufs, do_subs, do_start in tasks:
                 if stopped.is_set():
                     break
                 entry = rows[i]["entry"]
                 events.put(("working", i))
-                if do_lufs:
+                if do_start and not stopped.is_set():
+                    try:
+                        if ffmpeg is None:
+                            ffmpeg = find_ffmpeg()
+                        audio_at, picture_at, in_at = detect_content_start(
+                            entry.path, ffmpeg, lead_seconds=lead, cancel_event=stopped)
+                        if not stopped.is_set():
+                            events.put(("start_result", i, audio_at, picture_at, in_at))
+                    except Exception as exc:
+                        events.put(("cancelled_task" if stopped.is_set() else "error",
+                                    i, "Filmstart abgebrochen" if stopped.is_set() else "Filmstart: " + str(exc)))
+                if do_lufs and not stopped.is_set():
                     try:
                         if ffmpeg is None:
                             ffmpeg = find_ffmpeg()
@@ -213,13 +240,15 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     found.append("UT Original")
                 if status["generated"]:
                     found.append("UT KI")
+                if getattr(row["entry"], "in_point", None) is not None:
+                    found.append(f"In {row['entry'].in_point:.2f}s")
                 row["status"].set(", ".join(found) or "Keine Analyse")
                 # A per-film selector is accessible via the row's subtitle checkbox tooltip-less menu.
                 if len(tracks) > 1:
                     choice = ttk.Combobox(list_frame, textvariable=row["track_choice"],
                                           values=[str(t.stream_index) for t in tracks],
                                           state="readonly", width=4)
-                    choice.grid(row=i, column=4, padx=4)
+                    choice.grid(row=i, column=5, padx=4)
             elif kind == "scan_error":
                 rows[event[1]]["status"].set("Prüffehler: " + event[2][:40])
             elif kind == "ready":
@@ -229,6 +258,16 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             elif kind == "working":
                 overall.set(f"Analysiere {event[1]+1}/{len(rows)}")
                 rows[event[1]]["status"].set("Wird analysiert…")
+            elif kind == "start_result":
+                _, i, audio_at, picture_at, in_at = event
+                entry = rows[i]["entry"]
+                if in_at is not None:
+                    entry.in_point = min(in_at, entry.out_point) if entry.out_point is not None else in_at
+                    rows[i]["start"].set(False)
+                    if on_update:
+                        on_update()
+                fmt = lambda value: "—" if value is None else f"{value:.2f}s"
+                rows[i]["status"].set(f"Ton {fmt(audio_at)} · Bild {fmt(picture_at)} · In {fmt(in_at)}")
             elif kind == "lufs":
                 _, i, value, envelope = event
                 rows[i]["entry"].loudness_lufs = value
