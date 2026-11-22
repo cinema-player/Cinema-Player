@@ -62,8 +62,10 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     ttk.Label(columns, text="LUFS", width=8).grid(row=0, column=1)
     ttk.Label(columns, text="Untertitel", width=12).grid(row=0, column=2)
     ttk.Label(columns, text="Vorhandene Daten / Status", width=32).grid(row=0, column=3, sticky="w")
-    canvas = tk.Canvas(outer, highlightthickness=0)
-    scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    list_holder = ttk.Frame(outer)
+    list_holder.pack(fill="both", expand=True)
+    canvas = tk.Canvas(list_holder, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(list_holder, orient="vertical", command=canvas.yview)
     list_frame = ttk.Frame(canvas)
     list_frame.columnconfigure(0, weight=1)
     list_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -80,14 +82,14 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
         ttk.Label(list_frame, textvariable=row["status"], width=32).grid(
             row=index, column=3, sticky="w", padx=8)
     # Bottom controls are outside the scrolling list.
-    footer = ttk.Frame(window, padding=12)
+    footer = ttk.Frame(outer, padding=(0, 8, 0, 4))
     footer.pack(side="bottom", fill="x")
     ttk.Label(footer, text="Lokales faster-whisper-Modell:").pack(side="left")
     model_path = tk.StringVar()
     ttk.Entry(footer, textvariable=model_path, width=30).pack(side="left", padx=6)
     overall = tk.StringVar(value="Filme werden geprüft…")
     ttk.Label(footer, textvariable=overall).pack(side="left", padx=8)
-    controls = ttk.Frame(window, padding=(12, 0, 12, 8))
+    controls = ttk.Frame(outer, padding=(0, 0, 0, 8))
     controls.pack(side="bottom", fill="x")
     events = queue.SimpleQueue()
     stopped = threading.Event()
@@ -121,6 +123,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
             if sub and not rows[i]["tracks"]:
                 messagebox.showerror("Filmanalyse", f"Keine Audiospur für {Path(rows[i]['entry'].path).name} verfügbar.", parent=window)
                 return
+        selected_model = model_path.get()
+        selected_tracks = {i: row["track_choice"].get() for i, row in enumerate(rows)}
         running["value"] = True
         start_button.configure(state="disabled")
         def work():
@@ -143,9 +147,9 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                     try:
                         if processor is None:
                             processor = SubtitleProcessor(
-                                FasterWhisperRecognizer(model_path.get()), ArgosTranslator())
+                                FasterWhisperRecognizer(selected_model), ArgosTranslator())
                         # Use explicitly selected audio track (default: first track).
-                        track_index = rows[i]["track_choice"].get()
+                        track_index = selected_tracks[i]
                         job = SubtitleJob(Path(entry.path), int(track_index),
                                           Path(entry.path).parent)
                         active_job["value"] = job
