@@ -5,6 +5,7 @@ from __future__ import annotations
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
 
 import json
+import queue
 import math
 import os
 import platform
@@ -14,6 +15,7 @@ import threading
 import time
 import webbrowser
 from datetime import datetime, timedelta
+from content_start import detect_content_start, detect_content_end
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -5837,6 +5839,10 @@ class VideoPlayerGUI:
         self.preview_io_buttons = {
             "set_in": self._icon_button(io, "set_in", self.set_in_point, t("set_in")),
             "set_out": self._icon_button(io, "set_out", self.set_out_point, t("set_out")),
+            "auto_in_out": self._icon_button(
+                io, "film_analysis", self.auto_set_preview_in_out,
+                "Auto", "In/Out für diesen Film automatisch analysieren",
+            ),
             "set_dim": self._icon_button(io, "set_dim", self.set_dim_point, t("set_dim")),
         }
         self._configure_light_combo_style(io)
@@ -14395,6 +14401,71 @@ class VideoPlayerGUI:
             entry.in_point, entry.out_point = entry.out_point, entry.in_point
         self._keep_dim_inside(entry)
         self.refresh_preview_meta()
+
+    def auto_set_preview_in_out(self):
+        """Analyze only the selected preview film without blocking Tk."""
+        entry = self.selected_entry()
+        if (entry is None or entry.is_image or entry_is_action(entry)
+                or getattr(entry, "missing", False) or not os.path.isfile(entry.path)):
+            messagebox.showinfo("In/Out-Automatik", "Bitte einen verfügbaren Film in der Vorschau auswählen.")
+            return
+        if self.program_state != "OFF":
+            messagebox.showinfo("In/Out-Automatik",
+                                "Die automatische Analyse ist nur bei gestopptem Programm verfügbar.")
+            return
+        if getattr(self, "_preview_in_out_running", False):
+            return
+        duration = float(getattr(entry, "duration", 0) or 0)
+        if duration <= 0:
+            messagebox.showerror("In/Out-Automatik", "Die Filmdauer ist nicht bekannt.")
+            return
+        self._preview_in_out_running = True
+        button = self.preview_io_buttons["auto_in_out"]
+        self._set_transport_active(button, False, enabled=False)
+        results = queue.SimpleQueue()
+
+        def worker():
+            try:
+                ffmpeg = find_ffmpeg()
+                audio_start, picture_start, in_point = detect_content_start(
+                    entry.path, ffmpeg, lead_seconds=1.0)
+                audio_end, picture_end, out_point = detect_content_end(
+                    entry.path, ffmpeg, duration=duration, tail_seconds=1.0)
+                results.put((in_point, out_point, None))
+            except Exception as exc:
+                results.put((None, None, str(exc)))
+
+        def finish():
+            try:
+                if not self.root.winfo_exists():
+                    return
+                try:
+                    in_point, out_point, error = results.get_nowait()
+                except queue.Empty:
+                    self.root.after(150, finish)
+                    return
+                if error:
+                    messagebox.showerror("In/Out-Automatik", error)
+                elif in_point is None or out_point is None or in_point > out_point:
+                    messagebox.showwarning("In/Out-Automatik",
+                                           "Es konnten keine gültigen In/Out-Punkte ermittelt werden.")
+                elif entry not in self.playlist:
+                    messagebox.showwarning("In/Out-Automatik",
+                                           "Der Film ist nicht mehr in der Playlist.")
+                else:
+                    entry.in_point = in_point
+                    entry.out_point = out_point
+                    self._keep_dim_inside(entry)
+                    self.refresh_preview_meta()
+                    self.repaint_playlist()
+            finally:
+                if not results.empty() or not self.root.winfo_exists():
+                    self._preview_in_out_running = False
+                    if self.root.winfo_exists():
+                        self._set_transport_active(button, False, enabled=True)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(150, finish)
 
     def set_dim_point(self):
         entry = self.selected_entry()
