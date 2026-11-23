@@ -24,7 +24,7 @@ def default_analysis_selection(lufs, subtitles):
 
 
 def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
-                       on_update=None):
+                       on_update=None, initial_model_path="", on_model_path_change=None):
     """Show a list of film tasks with independently selectable operations."""
     valid = [e for e in entries if not getattr(e, "missing", False)
              and not getattr(e, "is_image", False)
@@ -99,8 +99,15 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     footer = ttk.Frame(outer, padding=(0, 8, 0, 4))
     footer.pack(side="bottom", fill="x")
     ttk.Label(footer, text="Lokales faster-whisper-Modell:").pack(side="left")
-    model_path = tk.StringVar()
-    ttk.Entry(footer, textvariable=model_path, width=30).pack(side="left", padx=6)
+    model_path = tk.StringVar(value=initial_model_path)
+    model_entry = ttk.Entry(footer, textvariable=model_path, width=30)
+    model_entry.pack(side="left", padx=6)
+
+    def persist_model_path(_event=None):
+        if on_model_path_change is not None:
+            on_model_path_change(model_path.get().strip())
+
+    model_entry.bind("<FocusOut>", persist_model_path)
     ttk.Label(footer, text="Vorlauf (s):").pack(side="left", padx=(10, 2))
     lead_seconds = tk.StringVar(value="1.0")
     ttk.Entry(footer, textvariable=lead_seconds, width=6).pack(side="left")
@@ -164,7 +171,8 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
                 return
         stopped.clear()
         cancel_requested["value"] = False
-        selected_model = model_path.get()
+        persist_model_path()
+        selected_model = model_path.get().strip()
         selected_tracks = {i: row["track_choice"].get() for i, row in enumerate(rows)}
         running["value"] = True
         for row in rows:
@@ -248,6 +256,7 @@ def show_film_analysis(parent, entries, *, probe_audio, find_ffmpeg,
     def cancel():
         """Stop the active LUFS FFmpeg or subtitle job, without closing the window."""
         if not running["value"]:
+            persist_model_path()
             window.destroy()
             return
         cancel_requested["value"] = True
