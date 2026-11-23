@@ -13292,6 +13292,13 @@ class VideoPlayerGUI:
             self._move_program_cursor(0)
         self.refresh_all()
 
+    @staticmethod
+    def _save_whisper_model_path(path):
+        """Persist only this preference without replacing other app settings."""
+        settings = load_settings()
+        settings["whisper_model_path"] = path
+        save_settings(settings)
+
     def show_film_analysis(self):
         """Combined batch analysis using existing LUFS and offline subtitle backends."""
         if self.program_state != "OFF":
@@ -13300,6 +13307,8 @@ class VideoPlayerGUI:
         show_film_analysis(
             self.root, self.playlist, probe_audio=probe_audio,
             find_ffmpeg=find_ffmpeg,
+            initial_model_path=load_settings().get("whisper_model_path", ""),
+            on_model_path_change=self._save_whisper_model_path,
             on_update=lambda: (self.repaint_playlist(), self.refresh_preview_meta(),
                                self._scan_playlist_subtitles()),
         )
