@@ -5,6 +5,7 @@ from __future__ import annotations
 import font_setup  # noqa: F401  — load Inter before tkinter opens fontconfig
 
 import json
+import queue
 import math
 import os
 import platform
@@ -14,6 +15,7 @@ import threading
 import time
 import webbrowser
 from datetime import datetime, timedelta
+from content_start import detect_content_start, detect_content_end
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -81,6 +83,10 @@ for _dialog_name in ("askstring", "askinteger", "askfloat"):
         setattr(simpledialog, _dialog_name, _bind_dialog_parent(getattr(simpledialog, _dialog_name)))
 
 from language import LANGUAGES, t, set_language, current_language
+from subtitle_style import apply_subtitle_style, show_subtitle_settings
+from subtitle_discovery import subtitle_status, subtitle_badge
+from subtitle_dialog import show_subtitle_generation
+from film_analysis_dialog import show_film_analysis
 from remote_api import DEFAULT_PORT, RemoteAPIServer, clip_span, clip_times, connect_url
 import qr_code
 import dmx
@@ -3208,6 +3214,29 @@ class VideoPlayerGUI:
             image = image.subsample(factor)
         return image
 
+    def _film_analysis_icon(self):
+        """Create a small analysis glyph without requiring an external PNG asset."""
+        size = TRANSPORT_ICON_PX
+        image = tk.PhotoImage(master=self.root, width=size, height=size)
+        # Transparent background: waveform bars, framed by a filmstrip.
+        fg = COLOR_TEXT
+        accent = ACCENT
+        def rectangle(x0, y0, x1, y1, color):
+            image.put(color, to=(x0, y0, x1, y1))
+        scale = size / 32.0
+        def rect(x0, y0, x1, y1, color):
+            rectangle(round(x0 * scale), round(y0 * scale),
+                      max(round((x0 + 1) * scale), round(x1 * scale)),
+                      max(round((y0 + 1) * scale), round(y1 * scale)), color)
+        rect(3, 6, 29, 8, fg)
+        rect(3, 24, 29, 26, fg)
+        rect(3, 8, 5, 24, fg)
+        rect(27, 8, 29, 24, fg)
+        for x, y0, y1 in ((8, 13, 19), (12, 10, 22),
+                          (16, 14, 18), (20, 9, 23), (24, 12, 20)):
+            rect(x, y0, x + 2, y1, accent)
+        return image
+
     def _transport_icon(self, name):
         if name not in self.transport_icons:
             self.transport_icons[name] = self._load_icon(name)
@@ -4322,6 +4351,11 @@ class VideoPlayerGUI:
         self.insert_action_button = self._icon_button(
             buttons, "insert_action", self.insert_action_menu, t("insert_action"), t("insert_action"),
         )
+        self.transport_icons["film_analysis"] = self._film_analysis_icon()
+        self.playlist_analysis_button = self._icon_button(
+            buttons, "film_analysis", self.show_film_analysis,
+            "Analyse", "Filmanalyse – LUFS, Untertitel und In/Out",
+        )
         self.playlist_save_button = self._icon_button(
             buttons, "playlist_save", self.save_playlist, t("save"), t("save_playlist"),
         )
@@ -4855,6 +4889,11 @@ class VideoPlayerGUI:
             label=t("media_directories"),
             command=self.show_media_directories,
         )
+        menu.add_command(
+            label="Untertitel – Darstellung",
+            command=lambda: show_subtitle_settings(
+                self.root, self.settings, save_settings, self.main_mpv),
+        )
         menu.add_separator()
 
         program = self._menu(menu)
@@ -5292,8 +5331,8 @@ class VideoPlayerGUI:
         )
         menu.add_separator()
         menu.add_command(
-            label=t("analyze_loudness"),
-            command=self.analyze_playlist_loudness,
+            label="Filmanalyse – LUFS und Untertitel…",
+            command=self.show_film_analysis,
             state="normal" if self.program_state == "OFF" else "disabled",
         )
 
@@ -5800,6 +5839,10 @@ class VideoPlayerGUI:
         self.preview_io_buttons = {
             "set_in": self._icon_button(io, "set_in", self.set_in_point, t("set_in")),
             "set_out": self._icon_button(io, "set_out", self.set_out_point, t("set_out")),
+            "auto_in_out": self._icon_button(
+                io, "film_analysis", self.auto_set_preview_in_out,
+                "Auto", "In/Out für diesen Film automatisch analysieren",
+            ),
             "set_dim": self._icon_button(io, "set_dim", self.set_dim_point, t("set_dim")),
         }
         self._configure_light_combo_style(io)
@@ -6167,6 +6210,30 @@ class VideoPlayerGUI:
         self._sync_clip_settings_warning_option()
         self._refresh_settings_warning_status()
         self._refresh_playlist_save_button()
+        self._scan_playlist_subtitles()
+
+    def _scan_playlist_subtitles(self):
+        """Probe subtitle streams off the Tk main thread and update row badges."""
+        paths = [(i, e, getattr(e, "path", "")) for i, e in enumerate(self.playlist)
+                 if not entry_is_action(e) and not getattr(e, "is_image", False)
+                 and not getattr(e, "missing", False)]
+        import queue
+        token = object()
+        self._subtitle_scan_token = token
+        results_queue = queue.SimpleQueue()
+        def worker():
+            results_queue.put([(i, e, subtitle_status(path)) for i, e, path in paths])
+        def poll():
+            if getattr(self, "_subtitle_scan_token", None) is not token:
+                return
+            if results_queue.empty():
+                self.root.after(150, poll)
+                return
+            for i, entry, status in results_queue.get_nowait():
+                if i < len(self.playlist) and self.playlist[i] is entry and i < len(self.row_widgets):
+                    self.row_widgets[i]["subtitle"].config(text=subtitle_badge(status))
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(150, poll)
 
     def _row_is_preview(self, index):
         if not self.playlist:
@@ -6266,6 +6333,8 @@ class VideoPlayerGUI:
             bg=bg, fg=self._location_fg(fg), font=FONT_SMALL, wraplength=wrap,
         )
         filename.grid(row=0, column=1, sticky="ew")
+        subtitle_label = tk.Label(name, text="", bg=bg, fg=COLOR_PREVIEW, font=FONT_SMALL)
+        subtitle_label.grid(row=0, column=2, sticky="e", padx=(8, 0))
         detail.grid(row=1, column=1, sticky="ew", pady=(1, 0))
         filename.tooltip = IconTooltip(filename, getattr(entry, "path", "") or "")
 
@@ -6280,6 +6349,7 @@ class VideoPlayerGUI:
             "meta_frames": meta_frames,
             "plain": plain,
             "filename": filename,
+            "subtitle": subtitle_label,
             "detail": detail,
             **columns,
         })
@@ -7453,6 +7523,13 @@ class VideoPlayerGUI:
             label=t("loop"),
             command=lambda: self.toggle_loop(index),
             state="disabled" if self.playlist[index].is_image else "normal",
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Deutsche Untertitel erzeugen…",
+            command=lambda: show_subtitle_generation(
+                self.root, self.playlist[index].path, self._scan_playlist_subtitles),
+            state="disabled" if missing or entry.is_image else "normal",
         )
         menu.add_separator()
         menu.add_command(
@@ -13215,6 +13292,27 @@ class VideoPlayerGUI:
             self._move_program_cursor(0)
         self.refresh_all()
 
+    @staticmethod
+    def _save_whisper_model_path(path):
+        """Persist only this preference without replacing other app settings."""
+        settings = load_settings()
+        settings["whisper_model_path"] = path
+        save_settings(settings)
+
+    def show_film_analysis(self):
+        """Combined batch analysis using existing LUFS and offline subtitle backends."""
+        if self.program_state != "OFF":
+            messagebox.showinfo("Filmanalyse", "Die Filmanalyse ist nur bei gestopptem Programm verfügbar.")
+            return
+        show_film_analysis(
+            self.root, self.playlist, probe_audio=probe_audio,
+            find_ffmpeg=find_ffmpeg,
+            initial_model_path=load_settings().get("whisper_model_path", ""),
+            on_model_path_change=self._save_whisper_model_path,
+            on_update=lambda: (self.repaint_playlist(), self.refresh_preview_meta(),
+                               self._scan_playlist_subtitles()),
+        )
+
     def analyze_playlist_loudness(self):
         """Measure LUFS and a peak envelope for every playable video while the program is stopped."""
         if self.program_state != "OFF":
@@ -13300,6 +13398,7 @@ class VideoPlayerGUI:
             arguments = self.output_manager.get_mpv_arguments(self.mpv_path)
             arguments.append(f"--af={PLAYBACK_AF}")
             self.main_mpv.start(arguments)
+            apply_subtitle_style(self.main_mpv, self.settings.get("subtitle_style"))
             self.main_mpv.observe("af-metadata/meter", 5)
         except Exception as exc:
             print(f"Videoausgang nicht verfuegbar: {exc}")
@@ -14311,6 +14410,71 @@ class VideoPlayerGUI:
             entry.in_point, entry.out_point = entry.out_point, entry.in_point
         self._keep_dim_inside(entry)
         self.refresh_preview_meta()
+
+    def auto_set_preview_in_out(self):
+        """Analyze only the selected preview film without blocking Tk."""
+        entry = self.selected_entry()
+        if (entry is None or entry.is_image or entry_is_action(entry)
+                or getattr(entry, "missing", False) or not os.path.isfile(entry.path)):
+            messagebox.showinfo("In/Out-Automatik", "Bitte einen verfügbaren Film in der Vorschau auswählen.")
+            return
+        if self.program_state != "OFF":
+            messagebox.showinfo("In/Out-Automatik",
+                                "Die automatische Analyse ist nur bei gestopptem Programm verfügbar.")
+            return
+        if getattr(self, "_preview_in_out_running", False):
+            return
+        duration = float(getattr(entry, "duration", 0) or 0)
+        if duration <= 0:
+            messagebox.showerror("In/Out-Automatik", "Die Filmdauer ist nicht bekannt.")
+            return
+        self._preview_in_out_running = True
+        button = self.preview_io_buttons["auto_in_out"]
+        self._set_transport_active(button, False, enabled=False)
+        results = queue.SimpleQueue()
+
+        def worker():
+            try:
+                ffmpeg = find_ffmpeg()
+                audio_start, picture_start, in_point = detect_content_start(
+                    entry.path, ffmpeg, lead_seconds=1.0)
+                audio_end, picture_end, out_point = detect_content_end(
+                    entry.path, ffmpeg, duration=duration, tail_seconds=1.0)
+                results.put((in_point, out_point, None))
+            except Exception as exc:
+                results.put((None, None, str(exc)))
+
+        def finish():
+            try:
+                if not self.root.winfo_exists():
+                    return
+                try:
+                    in_point, out_point, error = results.get_nowait()
+                except queue.Empty:
+                    self.root.after(150, finish)
+                    return
+                if error:
+                    messagebox.showerror("In/Out-Automatik", error)
+                elif in_point is None or out_point is None or in_point > out_point:
+                    messagebox.showwarning("In/Out-Automatik",
+                                           "Es konnten keine gültigen In/Out-Punkte ermittelt werden.")
+                elif entry not in self.playlist:
+                    messagebox.showwarning("In/Out-Automatik",
+                                           "Der Film ist nicht mehr in der Playlist.")
+                else:
+                    entry.in_point = in_point
+                    entry.out_point = out_point
+                    self._keep_dim_inside(entry)
+                    self.refresh_preview_meta()
+                    self.repaint_playlist()
+            finally:
+                if not results.empty() or not self.root.winfo_exists():
+                    self._preview_in_out_running = False
+                    if self.root.winfo_exists():
+                        self._set_transport_active(button, False, enabled=True)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(150, finish)
 
     def set_dim_point(self):
         entry = self.selected_entry()
